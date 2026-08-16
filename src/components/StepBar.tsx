@@ -9,10 +9,10 @@ interface Step {
 
 const STEPS: Step[] = [
   { num: 1, label: 'Topic & Idea', desc: 'Claimed SEO keywords' },
-  { num: 2, label: 'AI Scriptwriter', desc: 'Spoken pacing & hook' },
-  { num: 3, label: 'Voiceover Synthesis', desc: 'Real neural TTS' },
+  { num: 2, label: 'Scriptwriting', desc: 'High-retention structure' },
+  { num: 3, label: 'Voiceover', desc: 'Neural TTS synthesis' },
   { num: 4, label: 'Video Attachment', desc: 'Screen recording' },
-  { num: 5, label: 'Review & Dispatch', desc: 'Stealth upload queue' },
+  { num: 5, label: 'Review & Queue', desc: 'Stealth dispatch' },
 ];
 
 interface StepBarProps {
@@ -27,8 +27,8 @@ export const StepBar: React.FC<StepBarProps> = ({
   onStepClick,
 }) => {
   return (
-    <div className="w-full bg-surface-100/80 backdrop-blur-md p-3 rounded-2xl border border-border">
-      <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 sm:pb-0">
+    <div className="w-full bg-surface-100 p-2 rounded-xl border border-border">
+      <div className="flex items-center justify-between gap-1 overflow-x-auto">
         {STEPS.map((step, idx) => {
           const isCurrent = step.num === activeStep;
           const isDone = step.num < activeStep;
@@ -40,35 +40,35 @@ export const StepBar: React.FC<StepBarProps> = ({
                 type="button"
                 disabled={!isUnlocked}
                 onClick={() => onStepClick(step.num)}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all flex-shrink-0 ${
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-left transition-all flex-shrink-0 ${
                   isCurrent
-                    ? 'bg-gradient-to-r from-accent-purple to-accent-violet text-white shadow-glow'
+                    ? 'bg-surface-300 text-foreground font-bold border border-border-strong'
                     : isDone
-                    ? 'bg-accent-emerald/10 border border-accent-emerald/30 text-accent-emerald hover:bg-accent-emerald/20'
+                    ? 'bg-surface-200/50 text-foreground hover:bg-surface-200'
                     : isUnlocked
-                    ? 'bg-white/5 text-slate-300 hover:bg-white/10'
-                    : 'bg-white/[0.02] text-slate-500 cursor-not-allowed opacity-50'
+                    ? 'text-muted hover:text-foreground hover:bg-surface-200/30'
+                    : 'text-muted/40 cursor-not-allowed opacity-50'
                 }`}
               >
-                {/* Step circle */}
+                {/* Step indicator */}
                 <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                  className={`w-5 h-5 rounded-md flex items-center justify-center font-mono text-[11px] font-bold ${
                     isCurrent
-                      ? 'bg-white/20 text-white'
+                      ? 'bg-foreground text-background'
                       : isDone
-                      ? 'bg-accent-emerald/20 text-accent-emerald'
-                      : 'bg-white/5 text-slate-400'
+                      ? 'bg-foreground/15 text-foreground'
+                      : 'bg-surface-300 text-muted'
                   }`}
                 >
-                  {isDone ? <Check className="w-4 h-4" /> : step.num}
+                  {isDone ? <Check className="w-3 h-3 stroke-[3]" /> : step.num}
                 </div>
 
                 {/* Step details */}
-                <div className="hidden lg:block">
-                  <div className="text-xs font-bold leading-tight">
+                <div className="hidden sm:block">
+                  <div className="text-xs font-semibold leading-tight">
                     {step.label}
                   </div>
-                  <div className="text-[10px] opacity-75 font-normal">
+                  <div className="text-[10px] text-muted font-normal">
                     {step.desc}
                   </div>
                 </div>
@@ -76,8 +76,8 @@ export const StepBar: React.FC<StepBarProps> = ({
 
               {idx < STEPS.length - 1 && (
                 <div
-                  className={`h-0.5 w-6 rounded-full flex-shrink-0 ${
-                    isDone ? 'bg-accent-emerald/40' : 'bg-white/10'
+                  className={`h-[1px] flex-1 min-w-4 max-w-8 ${
+                    isDone ? 'bg-foreground/30' : 'bg-border'
                   }`}
                 />
               )}

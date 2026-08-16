@@ -1,7 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
-  Sparkles, 
   Video, 
   Palette, 
   Search, 
@@ -9,9 +8,11 @@ import {
   Settings, 
   Tv, 
   UserCircle2, 
-  Activity,
-  Layers
+  Sun, 
+  Moon,
+  Workflow
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 import { StorageService, DEFAULT_CHANNELS, DEFAULT_USERS } from '../services/storageService';
 import { Channel, VAUser } from '../types';
 
@@ -28,54 +29,51 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeUser,
   onUserChange
 }) => {
+  const { theme, toggleTheme } = useTheme();
+
   return (
-    <header className="sticky top-0 z-50 bg-surface/90 backdrop-blur-xl border-b border-border">
+    <header className="sticky top-0 z-50 bg-surface-100/95 backdrop-blur-md border-b border-border transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-14">
           
-          {/* Logo & Title */}
+          {/* Workstation Logo & Title */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-accent-purple to-accent-cyan p-0.5 shadow-glow flex items-center justify-center">
-              <div className="w-full h-full bg-background rounded-[10px] flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-accent-purple animate-pulse" />
-              </div>
+            <div className="w-8 h-8 rounded-lg bg-foreground text-background flex items-center justify-center font-black text-sm tracking-tighter">
+              <Workflow className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-display font-black text-lg tracking-tight text-white">
-                  TUTORIAL <span className="text-accent-purple">LINE</span>
-                </span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent-purple/20 text-accent-purple border border-accent-purple/30">
-                  PRO
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 font-medium">Enterprise Creator Conveyor</p>
+            <div className="flex items-baseline gap-2">
+              <span className="font-display font-bold text-sm tracking-tight text-foreground">
+                TUTORIAL LINE
+              </span>
+              <span className="text-[10px] uppercase font-mono font-medium text-muted tracking-wider">
+                DaVinci Suite v1.0
+              </span>
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1 bg-surface-200/60 p-1 rounded-xl border border-border">
+          {/* Linear / Notion Segmented Workspace Tabs */}
+          <nav className="hidden md:flex items-center gap-0.5 bg-surface-200 p-1 rounded-lg border border-border">
             <NavLink
               to="/"
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   isActive
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-surface-100 text-foreground shadow-subtle border border-border'
+                    : 'text-muted hover:text-foreground'
                 }`
               }
             >
               <Video className="w-3.5 h-3.5" />
-              Production Wizard
+              Conveyor
             </NavLink>
 
             <NavLink
               to="/thumbnails"
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   isActive
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-surface-100 text-foreground shadow-subtle border border-border'
+                    : 'text-muted hover:text-foreground'
                 }`
               }
             >
@@ -86,38 +84,38 @@ export const Navbar: React.FC<NavbarProps> = ({
             <NavLink
               to="/keywords"
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   isActive
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-surface-100 text-foreground shadow-subtle border border-border'
+                    : 'text-muted hover:text-foreground'
                 }`
               }
             >
               <Search className="w-3.5 h-3.5" />
-              Keyword Hub
+              Keyword Pool
             </NavLink>
 
             <NavLink
               to="/finished"
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   isActive
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-surface-100 text-foreground shadow-subtle border border-border'
+                    : 'text-muted hover:text-foreground'
                 }`
               }
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              Finished Queue
+              Stealth Queue
             </NavLink>
 
             <NavLink
               to="/settings"
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   isActive
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-surface-100 text-foreground shadow-subtle border border-border'
+                    : 'text-muted hover:text-foreground'
                 }`
               }
             >
@@ -126,12 +124,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             </NavLink>
           </nav>
 
-          {/* Channel Selector & Active VA */}
-          <div className="flex items-center gap-3">
+          {/* Right Controls: Channel, User, Theme Toggle */}
+          <div className="flex items-center gap-2">
             
-            {/* Channel dropdown */}
-            <div className="relative flex items-center gap-1.5 bg-surface-100 px-3 py-1.5 rounded-xl border border-border hover:border-accent-purple/40 transition-colors">
-              <Tv className="w-3.5 h-3.5" style={{ color: activeChannel.badgeColor }} />
+            {/* Channel Switcher */}
+            <div className="flex items-center gap-1.5 bg-surface-200 px-2.5 py-1.5 rounded-lg border border-border text-xs">
+              <Tv className="w-3.5 h-3.5 text-muted" />
               <select
                 value={activeChannel.id}
                 onChange={(e) => {
@@ -141,10 +139,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     StorageService.setActiveChannel(ch);
                   }
                 }}
-                className="bg-transparent text-xs font-bold text-white outline-none cursor-pointer pr-2"
+                className="bg-transparent text-xs font-semibold text-foreground outline-none cursor-pointer pr-1"
               >
                 {DEFAULT_CHANNELS.map(ch => (
-                  <option key={ch.id} value={ch.id} className="bg-surface-100 text-white">
+                  <option key={ch.id} value={ch.id} className="bg-surface-100 text-foreground">
                     {ch.name}
                   </option>
                 ))}
@@ -152,8 +150,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* VA Profile */}
-            <div className="flex items-center gap-2 bg-surface-100 px-3 py-1.5 rounded-xl border border-border">
-              <UserCircle2 className="w-4 h-4 text-accent-cyan" />
+            <div className="hidden lg:flex items-center gap-1.5 bg-surface-200 px-2.5 py-1.5 rounded-lg border border-border text-xs">
+              <UserCircle2 className="w-3.5 h-3.5 text-muted" />
               <select
                 value={activeUser.id}
                 onChange={(e) => {
@@ -163,21 +161,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                     StorageService.setActiveUser(u);
                   }
                 }}
-                className="bg-transparent text-xs font-semibold text-slate-300 outline-none cursor-pointer"
+                className="bg-transparent text-xs font-semibold text-foreground outline-none cursor-pointer"
               >
                 {DEFAULT_USERS.map(u => (
-                  <option key={u.id} value={u.id} className="bg-surface-100 text-white">
-                    {u.name} ({u.role})
+                  <option key={u.id} value={u.id} className="bg-surface-100 text-foreground">
+                    {u.name}
                   </option>
                 ))}
               </select>
             </div>
 
-            {/* Live Indicator */}
-            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-emerald/10 border border-accent-emerald/30 text-accent-emerald text-[11px] font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent-emerald animate-ping" />
-              <span>Engine Live</span>
-            </div>
+            {/* Dark / Light Theme Toggle */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg bg-surface-200 hover:bg-surface-300 border border-border text-foreground transition-colors"
+              title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-muted hover:text-foreground" />
+              ) : (
+                <Moon className="w-4 h-4 text-muted hover:text-foreground" />
+              )}
+            </button>
 
           </div>
 

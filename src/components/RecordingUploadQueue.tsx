@@ -1,7 +1,6 @@
 import React, { useSyncExternalStore, useState } from 'react';
-import { CloudUpload, ChevronUp, ChevronDown, CheckCircle2, AlertCircle, RefreshCw, X } from 'lucide-react';
+import { CloudUpload, ChevronUp, ChevronDown, RefreshCw, X } from 'lucide-react';
 import { uploadManager } from '../services/uploadManager';
-import { UploadQueueItem } from '../types';
 
 export const RecordingUploadQueue: React.FC = () => {
   const uploads = useSyncExternalStore(
@@ -22,80 +21,74 @@ export const RecordingUploadQueue: React.FC = () => {
   const overallPct = totalBytes > 0 ? Math.min(100, (doneBytes / totalBytes) * 100) : 0;
 
   return (
-    <div className="fixed bottom-6 right-6 w-96 z-50 bg-surface/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-glass overflow-hidden transition-all duration-300">
+    <div className="fixed bottom-5 right-5 w-88 z-50 bg-surface-100 border border-border rounded-xl shadow-elevation overflow-hidden transition-all duration-200">
       
       {/* Header Bar */}
       <button
         type="button"
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center justify-between p-3.5 bg-white/5 hover:bg-white/10 transition-colors text-left"
+        className="w-full flex items-center justify-between p-3 bg-surface-200/60 hover:bg-surface-200 transition-colors text-left border-b border-border"
       >
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center text-accent-purple">
-            <CloudUpload className="w-4 h-4 animate-bounce" />
+          <div className="w-7 h-7 rounded-md bg-foreground text-background flex items-center justify-center">
+            <CloudUpload className="w-3.5 h-3.5" />
           </div>
           <div>
-            <div className="text-xs font-bold text-white flex items-center gap-2">
-              <span>Stealth Upload Queue</span>
+            <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <span>Background Dispatch</span>
               {active > 0 && (
-                <span className="px-1.5 py-0.5 rounded bg-accent-cyan/20 text-accent-cyan text-[10px] font-extrabold">
+                <span className="px-1.5 py-0.2 rounded bg-surface-300 text-foreground text-[10px] font-mono font-bold">
                   {overallPct.toFixed(0)}%
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-muted font-mono">
               {active > 0
-                ? `Uploading ${active} video${active > 1 ? 's' : ''}...`
+                ? `${active} stream${active > 1 ? 's' : ''} active`
                 : failed > 0
-                ? `${failed} need attention`
-                : `${done} video${done > 1 ? 's' : ''} staged & ready`}
+                ? `${failed} failed`
+                : `${done} job${done > 1 ? 's' : ''} staged`}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-muted">
           {collapsed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </div>
       </button>
 
       {/* Upload Item Rows */}
       {!collapsed && (
-        <div className="max-h-72 overflow-y-auto divide-y divide-white/5 p-2">
+        <div className="max-h-64 overflow-y-auto divide-y divide-border p-1">
           {uploads.map(item => {
             const pct = item.fileSize > 0 ? (item.uploadedBytes / item.fileSize) * 100 : 0;
 
             return (
-              <div key={item.jobId} className="p-3 hover:bg-white/[0.02] rounded-xl transition-colors">
-                <div className="flex items-start justify-between gap-2 mb-1.5">
+              <div key={item.jobId} className="p-2.5 hover:bg-surface-200/50 rounded-lg transition-colors">
+                <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="min-w-0 flex-1">
-                    <h5 className="text-xs font-semibold text-white truncate" title={item.jobTitle}>
+                    <h5 className="text-xs font-semibold text-foreground truncate" title={item.jobTitle}>
                       {item.jobTitle}
                     </h5>
-                    <span className="text-[10px] text-accent-purple font-medium">
+                    <span className="text-[10px] text-muted font-mono">
                       {item.channelName}
                     </span>
                   </div>
 
-                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                    item.state === 'done'
-                      ? 'bg-accent-emerald/20 text-accent-emerald'
-                      : item.state === 'error'
-                      ? 'bg-accent-rose/20 text-accent-rose'
-                      : 'bg-accent-cyan/20 text-accent-cyan'
-                  }`}>
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-surface-300 text-foreground font-bold">
                     {item.state}
                   </span>
                 </div>
 
-                {/* Progress bar */}
-                <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden my-2">
+                {/* Linear Style Monochrome Progress Bar */}
+                <div className="w-full bg-surface-300 h-1 rounded-full overflow-hidden my-1.5">
                   <div
-                    className="h-full bg-gradient-to-r from-accent-purple to-accent-cyan transition-all duration-300 rounded-full"
+                    className="h-full bg-foreground transition-all duration-200 rounded-full"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                <div className="flex items-center justify-between text-[10px] text-muted font-mono">
                   <span>
                     {(item.uploadedBytes / (1024 * 1024)).toFixed(1)}MB / {(item.fileSize / (1024 * 1024)).toFixed(1)}MB
                   </span>
@@ -104,19 +97,19 @@ export const RecordingUploadQueue: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Action buttons */}
-                <div className="flex items-center justify-end gap-2 mt-2">
+                {/* Actions */}
+                <div className="flex items-center justify-end gap-1.5 mt-1.5">
                   {item.state === 'error' && (
                     <button
                       onClick={() => uploadManager.retry(item.jobId)}
-                      className="px-2 py-1 rounded bg-accent-purple text-white text-[10px] font-bold flex items-center gap-1"
+                      className="btn-outline px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1"
                     >
                       <RefreshCw className="w-2.5 h-2.5" /> Retry
                     </button>
                   )}
                   <button
                     onClick={() => uploadManager.dismiss(item.jobId)}
-                    className="text-slate-400 hover:text-white p-1"
+                    className="text-muted hover:text-foreground p-0.5"
                     title="Dismiss"
                   >
                     <X className="w-3 h-3" />
@@ -130,8 +123,8 @@ export const RecordingUploadQueue: React.FC = () => {
 
       {/* Footer advice */}
       {!collapsed && (
-        <div className="p-2.5 bg-black/40 border-t border-white/5 text-[10px] text-slate-400 text-center">
-          Uploads persist across tabs. Feel free to start the next video.
+        <div className="p-2 bg-surface-200 text-[10px] text-muted text-center border-t border-border font-mono">
+          Uploads persist in background.
         </div>
       )}
 

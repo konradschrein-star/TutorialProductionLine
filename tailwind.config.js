@@ -8,44 +8,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#09090e',
+        background: 'var(--bg-app)',
         surface: {
-          50: '#1e1e2d',
-          100: '#161622',
-          200: '#101018',
-          300: '#0c0c12',
-          DEFAULT: '#13131c',
+          50: 'var(--bg-surface-50)',
+          100: 'var(--bg-surface-100)',
+          200: 'var(--bg-surface-200)',
+          300: 'var(--bg-surface-300)',
+          DEFAULT: 'var(--bg-surface-100)',
         },
-        border: 'rgba(255, 255, 255, 0.08)',
-        accent: {
-          purple: '#cb3cff',
-          violet: '#7b2cbf',
-          cyan: '#00e5ff',
-          emerald: '#00e5a0',
-          amber: '#ffd200',
-          rose: '#ff4d6a',
-        }
+        border: 'var(--border-color)',
+        'border-strong': 'var(--border-strong)',
+        foreground: 'var(--text-primary)',
+        muted: 'var(--text-muted)',
       },
       fontFamily: {
-        sans: ['Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
         display: ['Outfit', 'Plus Jakarta Sans', 'sans-serif'],
-        impact: ['Impact', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'Menlo', 'monospace'],
       },
       boxShadow: {
-        glow: '0 0 25px -5px rgba(203, 60, 255, 0.3)',
-        'glow-cyan': '0 0 25px -5px rgba(0, 229, 255, 0.3)',
-        'glow-emerald': '0 0 25px -5px rgba(0, 229, 160, 0.3)',
-        glass: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-      },
-      animation: {
-        'pulse-subtle': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'float': 'float 6s ease-in-out infinite',
-      },
-      keyframes: {
-        float: {
-          '0%, 100%': { transform: 'translateY(0)' },
-          '50%': { transform: 'translateY(-6px)' },
-        }
+        subtle: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+        card: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)',
+        elevation: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)',
+        pro: '0 0 0 1px var(--border-color), 0 4px 12px rgba(0, 0, 0, 0.08)',
       }
     },
   },

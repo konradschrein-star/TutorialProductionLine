@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
-  Sparkles, 
   ArrowRight, 
   ArrowLeft, 
   RefreshCw, 
@@ -9,14 +8,9 @@ import {
   Volume2, 
   CheckCircle2, 
   Send, 
-  FileText, 
-  Tv, 
-  Layers, 
-  HelpCircle,
-  Clock,
-  Search,
   ExternalLink,
-  Flame
+  Search,
+  Sparkles
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StepBar } from '../components/StepBar';
@@ -52,15 +46,12 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [script, setScript] = useState<string>('');
   const [regenPrompt, setRegenPrompt] = useState<string>('');
   const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
-  const [scriptError, setScriptError] = useState<string>('');
 
   // Step 3 State
   const [selectedVoice, setSelectedVoice] = useState<string>(activeChannel.defaultVoiceId || 'fish-paul-neutral');
-  const [voiceSpeed, setVoiceSpeed] = useState<number>(1.0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [synthProgress, setSynthProgress] = useState<number>(0);
-  const [synthError, setSynthError] = useState<string>('');
 
   // Step 4 State
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -71,7 +62,6 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [videoTitle, setVideoTitle] = useState<string>('');
   const [videoDesc, setVideoDesc] = useState<string>('');
   const [videoTags, setVideoTags] = useState<string>('');
-  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState<string>('/background/bg-gradient-1.png');
   const [isDispatching, setIsDispatching] = useState<boolean>(false);
   const [dispatchedSuccess, setDispatchedSuccess] = useState<boolean>(false);
@@ -118,7 +108,6 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     if (!t.trim()) return;
 
     setIsGeneratingScript(true);
-    setScriptError('');
     try {
       const generated = await AIService.generateScript(t, regenPrompt);
       setScript(generated);
@@ -131,7 +120,8 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       setStep(2);
       setRegenPrompt('');
     } catch (err: any) {
-      setScriptError(err.message || 'Script generation failed.');
+      console.error(err);
+      alert('Script generation failed: ' + err.message);
     } finally {
       setIsGeneratingScript(false);
     }
@@ -142,19 +132,19 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     if (!script.trim()) return;
     setStep(3);
     setIsSynthesizing(true);
-    setSynthError('');
-    setSynthProgress(10);
+    setSynthProgress(15);
 
     try {
       const { blob } = await TTSService.synthesizeVoice(
         script,
         selectedVoice,
-        voiceSpeed,
+        1.0,
         (pct) => setSynthProgress(pct)
       );
       setAudioBlob(blob);
     } catch (err: any) {
-      setSynthError(err.message || 'Speech synthesis failed.');
+      console.error(err);
+      alert('Voice synthesis failed: ' + err.message);
     } finally {
       setIsSynthesizing(false);
     }
@@ -209,15 +199,15 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
       // Confetti celebration
       confetti({
-        particleCount: 100,
-        spread: 70,
+        particleCount: 80,
+        spread: 60,
         origin: { y: 0.6 }
       });
 
       setDispatchedSuccess(true);
       setTimeout(() => {
         navigate('/finished');
-      }, 2000);
+      }, 1800);
     } catch (e) {
       console.error(e);
     } finally {
@@ -239,26 +229,23 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
       
       {/* Header & Step Stepper */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black font-display text-white tracking-tight flex items-center gap-2.5">
-              <span>Tutorial Production Line</span>
-              <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-accent-purple/20 text-accent-purple border border-accent-purple/30">
-                5-Step Conveyor
-              </span>
+            <h1 className="text-xl font-bold font-display text-foreground tracking-tight">
+              Conveyor Workspace
             </h1>
-            <p className="text-xs text-slate-400">
-              High-retention tutorial creation pipeline from idea to Stealth Upload Queue.
+            <p className="text-xs text-muted">
+              DaVinci Resolve inspired production line: Script ➔ Voice ➔ Video ➔ Stealth Queue.
             </p>
           </div>
 
           <button
             onClick={handleReset}
-            className="px-3 py-1.5 rounded-xl bg-surface-100 hover:bg-surface-50 text-xs font-semibold text-slate-400 hover:text-white border border-border transition-colors flex items-center gap-1.5"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Reset Conveyor
@@ -274,48 +261,40 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
       {/* ══════════════════ STEP 1: TOPIC & CLAIMED KEYWORDS ══════════════════ */}
       {step === 1 && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           
-          {/* Claimed Keywords Queue (From KTv2) */}
-          <div className="glass-panel p-5 rounded-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-accent-emerald animate-ping" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Your Claimed Keywords Queue ({claimedKeywords.length})
-                </h3>
-              </div>
-              <span className="text-xs text-slate-400">
+          {/* Claimed Keywords Queue */}
+          <div className="pro-panel p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                Claimed Keywords Queue ({claimedKeywords.length})
+              </h3>
+              <span className="text-[11px] font-mono text-muted">
                 Assigned in Keyword Tool v2
               </span>
             </div>
 
             {claimedKeywords.length === 0 ? (
-              <div className="text-center py-6 text-xs text-slate-400 bg-white/[0.02] rounded-xl border border-white/5">
-                No keywords claimed yet. Pick from the Keyword Hub or enter a custom topic below.
+              <div className="text-center py-5 text-xs text-muted bg-surface-200/50 rounded-lg border border-border">
+                No active claims. Select a topic from the Keyword Pool or enter a custom topic below.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 {claimedKeywords.map(kw => (
                   <div
                     key={kw.id}
-                    className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                    className={`p-3 rounded-lg border transition-all flex items-center justify-between gap-2.5 ${
                       keywordId === kw.id
-                        ? 'bg-accent-purple/15 border-accent-purple shadow-glow'
-                        : 'bg-white/[0.02] border-white/5 hover:border-white/20'
+                        ? 'bg-surface-300 border-foreground/30 shadow-subtle'
+                        : 'bg-surface-200/50 border-border hover:border-border-strong'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-white truncate">{kw.keyword}</div>
-                      <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                        <span className="text-accent-cyan font-semibold">{kw.software}</span>
+                      <div className="text-xs font-bold text-foreground truncate">{kw.keyword}</div>
+                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted font-mono">
+                        <span className="font-semibold">{kw.software}</span>
                         <span>•</span>
-                        <span>{kw.volume.toLocaleString()} searches/mo</span>
-                        {kw.targetChannelId && (
-                          <span className="px-1.5 py-0.2 rounded bg-white/5 text-[10px] font-bold text-slate-300">
-                            {DEFAULT_CHANNELS.find(c => c.id === kw.targetChannelId)?.name}
-                          </span>
-                        )}
+                        <span>{kw.volume.toLocaleString()} /mo</span>
                       </div>
                     </div>
 
@@ -325,13 +304,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                         setKeywordId(kw.id);
                         if (kw.targetChannelId) setSelectedChannelId(kw.targetChannelId);
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${
+                      className={`px-2.5 py-1 rounded text-xs font-semibold transition-all flex-shrink-0 ${
                         keywordId === kw.id
-                          ? 'bg-accent-purple text-white'
-                          : 'bg-white/10 hover:bg-white/20 text-white'
+                          ? 'btn-solid'
+                          : 'btn-outline'
                       }`}
                     >
-                      {keywordId === kw.id ? 'Selected' : 'Use This'}
+                      {keywordId === kw.id ? 'Selected' : 'Use'}
                     </button>
                   </div>
                 ))}
@@ -340,11 +319,8 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
           </div>
 
           {/* Custom Topic Input */}
-          <div className="glass-panel p-6 rounded-2xl space-y-4">
-            <h3 className="text-base font-bold text-white">Choose or Type Video Topic</h3>
-            <p className="text-xs text-slate-400">
-              Enter any problem, workflow, or software tutorial topic you want to produce.
-            </p>
+          <div className="pro-panel p-5 rounded-xl space-y-3.5">
+            <h3 className="text-sm font-bold text-foreground">Video Topic &amp; Channel Target</h3>
 
             <div className="relative">
               <input
@@ -353,20 +329,20 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleGenerateScript()}
                 placeholder="e.g. How to Automate Invoices in Excel 2026..."
-                className="w-full bg-surface-200 border border-white/10 focus:border-accent-purple rounded-xl px-4 py-3.5 text-sm text-white placeholder-slate-500 outline-none transition-all"
+                className="pro-input w-full rounded-lg px-3.5 py-2.5 text-xs text-foreground placeholder-muted font-sans"
               />
-              <Sparkles className="w-5 h-5 text-accent-purple absolute right-4 top-3.5" />
+              <Search className="w-4 h-4 text-muted absolute right-3 top-3" />
             </div>
 
-            {/* Google Suggest pills */}
+            {/* Trending Suggestions */}
             {suggestions.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-[11px] text-slate-400 font-semibold">Trending Autocomplete:</span>
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-mono uppercase text-muted">Suggestions:</span>
                 {suggestions.map((sug, i) => (
                   <button
                     key={i}
                     onClick={() => setTopic(sug)}
-                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-accent-purple/20 text-[11px] text-slate-300 hover:text-white border border-white/10 transition-colors"
+                    className="px-2 py-0.5 rounded bg-surface-200 hover:bg-surface-300 text-[11px] text-foreground border border-border transition-colors font-mono"
                   >
                     {sug}
                   </button>
@@ -374,25 +350,25 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-2">
-              <div className="text-xs text-slate-400">
-                Target Channel: <span className="text-white font-bold">{DEFAULT_CHANNELS.find(c => c.id === selectedChannelId)?.name}</span>
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <div className="text-xs text-muted font-mono">
+                Target: <span className="text-foreground font-bold">{DEFAULT_CHANNELS.find(c => c.id === selectedChannelId)?.name}</span>
               </div>
 
               <button
                 disabled={!topic.trim() || isGeneratingScript}
                 onClick={() => handleGenerateScript()}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-accent-purple to-accent-violet hover:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-glow transition-all"
+                className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isGeneratingScript ? (
                   <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Generating Script with Groq...
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Generating Script...
                   </>
                 ) : (
                   <>
-                    Next: Generate Script
-                    <ArrowRight className="w-4 h-4" />
+                    Generate Script
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </>
                 )}
               </button>
@@ -402,69 +378,65 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         </div>
       )}
 
-      {/* ══════════════════ STEP 2: AI SCRIPTWRITER ══════════════════ */}
+      {/* ══════════════════ STEP 2: SCRIPTWRITING ══════════════════ */}
       {step === 2 && (
-        <div className="space-y-6">
-          <div className="glass-panel p-6 rounded-2xl space-y-4">
+        <div className="space-y-4">
+          <div className="pro-panel p-5 rounded-xl space-y-3.5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold text-white">Step 2: Review &amp; Edit Spoken Script</h3>
-                <p className="text-xs text-slate-400">
-                  Formatted for maximum retention with early hook, spoken pauses ("..."), and zero fluff.
+                <h3 className="text-sm font-bold text-foreground">Step 2: Spoken Narration Script</h3>
+                <p className="text-xs text-muted">
+                  High-retention tutorial layout with early hook, natural pauses ("..."), and zero fluff.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-accent-purple/10 text-accent-purple border border-accent-purple/30">
-                  {script.split(/\s+/).filter(Boolean).length} words (~{Math.round(script.split(/\s+/).filter(Boolean).length / 2.5)}s)
-                </span>
-              </div>
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-surface-200 border border-border text-muted font-bold">
+                {script.split(/\s+/).filter(Boolean).length} words (~{Math.round(script.split(/\s+/).filter(Boolean).length / 2.5)}s)
+              </span>
             </div>
 
-            {/* Editable Script Textarea */}
             <textarea
-              rows={12}
+              rows={11}
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              className="w-full bg-surface-200 border border-white/15 focus:border-accent-purple rounded-xl p-4 text-sm text-white font-sans leading-relaxed outline-none transition-all"
+              className="pro-input w-full rounded-lg p-3.5 text-xs text-foreground font-mono leading-relaxed resize-y"
               placeholder="Script narration..."
             />
 
-            {/* Prompt Tuning & Regenerator */}
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col sm:flex-row gap-3 items-center">
+            {/* Regen tuning */}
+            <div className="p-2.5 rounded-lg bg-surface-200/60 border border-border flex flex-col sm:flex-row gap-2 items-center">
               <input
                 type="text"
                 value={regenPrompt}
                 onChange={(e) => setRegenPrompt(e.target.value)}
-                placeholder="Regen instructions (e.g. 'add step about shortcuts' or 'make opening punchier')..."
-                className="flex-1 bg-surface-300 border border-white/10 rounded-lg px-3.5 py-2 text-xs text-white outline-none focus:border-accent-purple"
+                placeholder="Regen instructions (e.g. 'add shortcut steps' or 'shorten intro')..."
+                className="pro-input flex-1 rounded-md px-3 py-1.5 text-xs"
               />
               <button
                 disabled={isGeneratingScript}
                 onClick={() => handleGenerateScript()}
-                className="px-4 py-2 rounded-lg bg-surface-50 hover:bg-surface-100 border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 flex-shrink-0 transition-colors"
+                className="btn-outline px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingScript ? 'animate-spin' : ''}`} />
-                Regenerate
+                Regen
               </button>
             </div>
 
-            {/* Navigation buttons */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between pt-2 border-t border-border">
               <button
                 onClick={() => setStep(1)}
-                className="px-4 py-2.5 rounded-xl bg-surface-100 hover:bg-surface-50 border border-border text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-2"
+                className="btn-outline px-4 py-2 rounded-lg text-xs flex items-center gap-1.5"
               >
-                <ArrowLeft className="w-4 h-4" /> Back
+                <ArrowLeft className="w-3.5 h-3.5" /> Back
               </button>
 
               <button
                 disabled={!script.trim()}
                 onClick={handleGenerateAudio}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan hover:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-glow transition-all"
+                className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
-                Next: Synthesize Audio
-                <ArrowRight className="w-4 h-4" />
+                Next: Synthesize Voice
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
 
@@ -472,82 +444,81 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         </div>
       )}
 
-      {/* ══════════════════ STEP 3: VOICEOVER SYNTHESIS ══════════════════ */}
+      {/* ══════════════════ STEP 3: VOICEOVER ══════════════════ */}
       {step === 3 && (
-        <div className="space-y-6">
-          <div className="glass-panel p-6 rounded-2xl space-y-6">
+        <div className="space-y-4">
+          <div className="pro-panel p-5 rounded-xl space-y-4">
             
             <div>
-              <h3 className="text-base font-bold text-white">Step 3: Neural Voiceover Synthesis</h3>
-              <p className="text-xs text-slate-400">
-                Generate crisp studio audio using Fish Audio or ElevenLabs neural models.
+              <h3 className="text-sm font-bold text-foreground">Step 3: Neural Voice Synthesis</h3>
+              <p className="text-xs text-muted">
+                Studio voiceover generated via Fish Audio or ElevenLabs models.
               </p>
             </div>
 
-            {/* Voice Options Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* Voices Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
               {AVAILABLE_VOICES.map(voice => (
                 <div
                   key={voice.id}
                   onClick={() => setSelectedVoice(voice.id)}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
                     selectedVoice === voice.id
-                      ? 'bg-accent-purple/15 border-accent-purple shadow-glow'
-                      : 'bg-white/[0.02] border-white/5 hover:border-white/20'
+                      ? 'bg-surface-300 border-foreground/40 shadow-subtle'
+                      : 'bg-surface-200/40 border-border hover:border-border-strong'
                   }`}
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="text-xs font-bold text-white">{voice.name}</div>
-                      <div className="text-[10px] text-accent-cyan font-semibold mt-0.5">{voice.accent}</div>
+                      <div className="text-xs font-bold text-foreground">{voice.name}</div>
+                      <div className="text-[10px] font-mono text-muted mt-0.5">{voice.accent}</div>
                     </div>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded uppercase font-bold bg-white/5 text-slate-400">
+                    <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-surface-300 text-muted font-bold">
                       {voice.provider}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-2 line-clamp-2">{voice.description}</p>
+                  <p className="text-[11px] text-muted mt-1.5 line-clamp-2">{voice.description}</p>
                 </div>
               ))}
             </div>
 
-            {/* Audio Synthesis Progress or Player */}
+            {/* Synthesis Progress / Player */}
             {isSynthesizing ? (
-              <div className="p-8 rounded-2xl bg-black/40 border border-white/10 text-center space-y-3">
-                <Volume2 className="w-8 h-8 text-accent-purple animate-bounce mx-auto" />
-                <div className="text-sm font-bold text-white">Synthesizing Neural Audio...</div>
-                <div className="w-64 max-w-full bg-white/10 h-2 rounded-full overflow-hidden mx-auto">
+              <div className="p-6 rounded-xl bg-surface-200 border border-border text-center space-y-2.5">
+                <Volume2 className="w-6 h-6 text-foreground animate-pulse mx-auto" />
+                <div className="text-xs font-bold text-foreground">Synthesizing Neural Audio...</div>
+                <div className="w-56 max-w-full bg-surface-300 h-1.5 rounded-full overflow-hidden mx-auto">
                   <div
-                    className="h-full bg-gradient-to-r from-accent-purple to-accent-cyan transition-all duration-300"
+                    className="h-full bg-foreground transition-all duration-200"
                     style={{ width: `${synthProgress}%` }}
                   />
                 </div>
-                <div className="text-xs text-slate-400">{synthProgress}% completed</div>
+                <div className="text-[10px] font-mono text-muted">{synthProgress}% processed</div>
               </div>
             ) : audioBlob ? (
-              <div className="space-y-3">
-                <div className="text-xs font-bold text-accent-emerald flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> Audio Voiceover Generated Successfully
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Audio Ready
                 </div>
                 <AudioPlayer blob={audioBlob} topicTitle={topic} />
               </div>
             ) : null}
 
-            {/* Navigation buttons */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between pt-2 border-t border-border">
               <button
                 onClick={() => setStep(2)}
-                className="px-4 py-2.5 rounded-xl bg-surface-100 hover:bg-surface-50 border border-border text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-2"
+                className="btn-outline px-4 py-2 rounded-lg text-xs flex items-center gap-1.5"
               >
-                <ArrowLeft className="w-4 h-4" /> Back to Script
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Script
               </button>
 
               <button
                 disabled={isSynthesizing || !audioBlob}
                 onClick={() => setStep(4)}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan hover:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-glow transition-all"
+                className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 Next: Attach Video
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
 
@@ -557,13 +528,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
       {/* ══════════════════ STEP 4: VIDEO ATTACHMENT ══════════════════ */}
       {step === 4 && (
-        <div className="space-y-6">
-          <div className="glass-panel p-6 rounded-2xl space-y-6">
+        <div className="space-y-4">
+          <div className="pro-panel p-5 rounded-xl space-y-4">
             
             <div>
-              <h3 className="text-base font-bold text-white">Step 4: Attach Screen Recording</h3>
-              <p className="text-xs text-slate-400">
-                Upload the video recording matching the narration voiceover.
+              <h3 className="text-sm font-bold text-foreground">Step 4: Attach Screen Recording</h3>
+              <p className="text-xs text-muted">
+                Drop your recorded software walkthrough to pair with the audio.
               </p>
             </div>
 
@@ -576,22 +547,22 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 setIsDragging(false);
                 if (e.dataTransfer.files?.[0]) handleVideoSelect(e.dataTransfer.files[0]);
               }}
-              className={`p-10 border-2 border-dashed rounded-2xl text-center transition-all ${
+              className={`p-8 border border-dashed rounded-xl text-center transition-all ${
                 isDragging
-                  ? 'border-accent-purple bg-accent-purple/10'
+                  ? 'border-foreground bg-surface-300'
                   : videoFile
-                  ? 'border-accent-emerald bg-accent-emerald/5'
-                  : 'border-white/15 bg-white/[0.02] hover:border-white/30'
+                  ? 'border-border-strong bg-surface-200/50'
+                  : 'border-border bg-surface-200/20 hover:border-border-strong'
               }`}
             >
               {videoFile ? (
-                <div className="space-y-4">
-                  <div className="w-12 h-12 rounded-full bg-accent-emerald/20 text-accent-emerald flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-6 h-6" />
+                <div className="space-y-3">
+                  <div className="w-10 h-10 rounded-full bg-surface-300 text-foreground flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-white">{videoFile.name}</div>
-                    <div className="text-xs text-slate-400 mt-1">
+                    <div className="text-xs font-bold text-foreground">{videoFile.name}</div>
+                    <div className="text-[11px] text-muted font-mono mt-0.5">
                       {(videoFile.size / (1024 * 1024)).toFixed(1)} MB • {videoFile.type}
                     </div>
                   </div>
@@ -600,11 +571,11 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                     <video
                       controls
                       src={videoUrl}
-                      className="max-h-64 rounded-xl mx-auto border border-white/10 shadow-lg"
+                      className="max-h-56 rounded-lg mx-auto border border-border"
                     />
                   )}
 
-                  <label className="inline-block px-4 py-2 rounded-xl bg-surface-100 hover:bg-surface-50 border border-white/10 text-xs font-bold text-white cursor-pointer transition-colors">
+                  <label className="inline-block btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
                     Replace Video File
                     <input
                       type="file"
@@ -615,16 +586,16 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   </label>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-accent-purple/20 text-accent-purple flex items-center justify-center mx-auto">
-                    <Upload className="w-6 h-6 animate-bounce" />
+                <div className="space-y-2.5">
+                  <div className="w-10 h-10 rounded-lg bg-surface-300 text-foreground flex items-center justify-center mx-auto">
+                    <Upload className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-white">Drag &amp; drop video recording here</div>
-                    <div className="text-xs text-slate-400 mt-1">Supports MP4, WebM, MOV (1080p recommended)</div>
+                    <div className="text-xs font-bold text-foreground">Drag and drop video recording here</div>
+                    <div className="text-[11px] text-muted mt-0.5">Supports MP4, WebM, MOV</div>
                   </div>
-                  <label className="inline-block px-5 py-2.5 rounded-xl bg-accent-purple text-white text-xs font-bold cursor-pointer hover:opacity-90 shadow-glow transition-all">
-                    Browse Files
+                  <label className="inline-block btn-solid px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer">
+                    Browse File
                     <input
                       type="file"
                       accept="video/mp4,video/webm,video/mkv"
@@ -636,21 +607,20 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               )}
             </div>
 
-            {/* Navigation buttons */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between pt-2 border-t border-border">
               <button
                 onClick={() => setStep(3)}
-                className="px-4 py-2.5 rounded-xl bg-surface-100 hover:bg-surface-50 border border-border text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-2"
+                className="btn-outline px-4 py-2 rounded-lg text-xs flex items-center gap-1.5"
               >
-                <ArrowLeft className="w-4 h-4" /> Back to Audio
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Voice
               </button>
 
               <button
                 onClick={() => setStep(5)}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan hover:opacity-90 text-white font-bold text-xs flex items-center gap-2 shadow-glow transition-all"
+                className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5"
               >
-                Next: Review &amp; Dispatch
-                <ArrowRight className="w-4 h-4" />
+                Next: Review &amp; Queue
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
 
@@ -660,137 +630,117 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
       {/* ══════════════════ STEP 5: REVIEW & DISPATCH ══════════════════ */}
       {step === 5 && (
-        <div className="space-y-6">
-          <div className="glass-panel p-6 rounded-2xl space-y-6">
+        <div className="space-y-4">
+          <div className="pro-panel p-5 rounded-xl space-y-4">
             
             <div>
-              <h3 className="text-base font-bold text-white">Step 5: Review &amp; Dispatch to Stealth Uploader</h3>
-              <p className="text-xs text-slate-400">
-                Final check of video metadata, target channel routing, and thumbnail before queuing.
+              <h3 className="text-sm font-bold text-foreground">Step 5: Review &amp; Dispatch to Stealth Uploader</h3>
+              <p className="text-xs text-muted">
+                Final metadata audit and stealth staging.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               
-              {/* Left Column: Metadata */}
-              <div className="lg:col-span-2 space-y-4">
-                
-                {/* Title */}
+              {/* Metadata */}
+              <div className="lg:col-span-2 space-y-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">YouTube Video Title</label>
+                  <label className="block text-xs font-bold text-foreground mb-1">YouTube Title</label>
                   <input
                     type="text"
                     value={videoTitle}
                     onChange={(e) => setVideoTitle(e.target.value)}
-                    className="w-full bg-surface-200 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-accent-purple"
+                    className="pro-input w-full rounded-lg px-3.5 py-2 text-xs text-foreground font-medium"
                   />
                 </div>
 
-                {/* Description */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">YouTube Description</label>
+                  <label className="block text-xs font-bold text-foreground mb-1">YouTube Description</label>
                   <textarea
-                    rows={6}
+                    rows={5}
                     value={videoDesc}
                     onChange={(e) => setVideoDesc(e.target.value)}
-                    className="w-full bg-surface-200 border border-white/10 rounded-xl p-3 text-xs text-white outline-none focus:border-accent-purple font-sans"
+                    className="pro-input w-full rounded-lg p-3 text-xs text-foreground font-mono leading-relaxed"
                   />
                 </div>
 
-                {/* Tags */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">Tags (Comma Separated)</label>
+                  <label className="block text-xs font-bold text-foreground mb-1">Tags (Comma Separated)</label>
                   <input
                     type="text"
                     value={videoTags}
                     onChange={(e) => setVideoTags(e.target.value)}
-                    className="w-full bg-surface-200 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-accent-purple"
+                    className="pro-input w-full rounded-lg px-3.5 py-2 text-xs text-foreground font-mono"
                   />
                 </div>
-
               </div>
 
-              {/* Right Column: Thumbnail & Target Channel */}
-              <div className="space-y-4">
-                
-                {/* Channel Confirmation */}
-                <div className="p-4 rounded-xl bg-surface-200 border border-white/10 space-y-2">
-                  <div className="text-xs font-bold text-slate-300">Target Channel Routing</div>
-                  <div className="flex items-center gap-2">
-                    <Tv className="w-4 h-4 text-accent-purple" />
-                    <span className="text-xs font-black text-white">{activeChannel.name}</span>
-                  </div>
-                  <div className="text-[11px] text-slate-400">{activeChannel.niche}</div>
+              {/* Thumbnail & Channel Preview */}
+              <div className="space-y-3">
+                <div className="p-3.5 rounded-lg bg-surface-200 border border-border space-y-1">
+                  <div className="text-xs font-bold text-foreground">Target Channel</div>
+                  <div className="text-xs font-semibold text-foreground">{activeChannel.name}</div>
+                  <div className="text-[11px] text-muted">{activeChannel.niche}</div>
                 </div>
 
-                {/* Thumbnail Preview */}
-                <div className="p-4 rounded-xl bg-surface-200 border border-white/10 space-y-3">
+                <div className="p-3.5 rounded-lg bg-surface-200 border border-border space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-300">Thumbnail Preview</span>
+                    <span className="text-xs font-bold text-foreground">Thumbnail</span>
                     <button
                       onClick={() => navigate('/thumbnails', { state: { title: topic } })}
-                      className="text-[11px] text-accent-purple hover:underline font-bold flex items-center gap-1"
+                      className="text-[11px] text-foreground font-bold hover:underline flex items-center gap-1"
                     >
-                      Open Studio <ExternalLink className="w-3 h-3" />
+                      Studio <ExternalLink className="w-3 h-3" />
                     </button>
                   </div>
 
-                  <div className="aspect-video rounded-lg overflow-hidden bg-black border border-white/10 relative">
-                    <img
-                      src={thumbnailUrl}
-                      alt="Thumbnail preview"
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="aspect-video rounded-lg overflow-hidden bg-black border border-border">
+                    <img src={thumbnailUrl} alt="Preview" className="w-full h-full object-cover" />
                   </div>
 
-                  <label className="block text-center py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white cursor-pointer transition-colors">
-                    Upload Custom Thumbnail
+                  <label className="block text-center py-1.5 rounded-md btn-outline text-[11px] font-semibold cursor-pointer">
+                    Upload Custom Image
                     <input
                       type="file"
                       accept="image/*"
                       className="hidden"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
-                        if (f) {
-                          setThumbnailFile(f);
-                          setThumbnailUrl(URL.createObjectURL(f));
-                        }
+                        if (f) setThumbnailUrl(URL.createObjectURL(f));
                       }}
                     />
                   </label>
                 </div>
-
               </div>
 
             </div>
 
-            {/* Navigation buttons */}
-            <div className="flex items-center justify-between pt-4 border-t border-white/10">
+            <div className="flex items-center justify-between pt-3 border-t border-border">
               <button
                 onClick={() => setStep(4)}
-                className="px-4 py-2.5 rounded-xl bg-surface-100 hover:bg-surface-50 border border-border text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-2"
+                className="btn-outline px-4 py-2 rounded-lg text-xs flex items-center gap-1.5"
               >
-                <ArrowLeft className="w-4 h-4" /> Back to Video
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Video
               </button>
 
               <button
                 disabled={isDispatching || dispatchedSuccess}
                 onClick={handleDispatchToStealthQueue}
-                className="px-8 py-3.5 rounded-xl bg-gradient-to-r from-accent-purple via-accent-cyan to-accent-emerald hover:opacity-95 text-white font-black text-sm flex items-center gap-2 shadow-glow transition-all"
+                className="btn-solid px-6 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2"
               >
                 {dispatchedSuccess ? (
                   <>
-                    <CheckCircle2 className="w-5 h-5 text-white" />
+                    <CheckCircle2 className="w-4 h-4" />
                     Queued for Stealth Upload!
                   </>
                 ) : isDispatching ? (
                   <>
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                    Dispatching to Queue...
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Dispatching...
                   </>
                 ) : (
                   <>
-                    <Send className="w-5 h-5" />
+                    <Send className="w-4 h-4" />
                     Push to Stealth Upload Queue
                   </>
                 )}

@@ -5,27 +5,15 @@ import { toBlob } from 'html-to-image';
 import { 
   Sparkles, 
   Download, 
-  Layers, 
-  RotateCw, 
   Trash2, 
-  Undo, 
-  Redo, 
-  ZoomIn, 
-  ZoomOut, 
-  Type, 
-  Image as ImageIcon, 
-  Smile, 
   Search,
-  Globe,
-  Check,
-  Plus
+  Maximize2
 } from 'lucide-react';
 import { AIService } from '../services/aiService';
-import { ThumbnailElement, ThumbnailBrief } from '../types';
+import { ThumbnailElement } from '../types';
 
 const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian', 'French', 'Dutch', 'Japanese', 'Korean', 'Swedish'];
 
-// Predefined static asset catalogs
 const STATIC_BGS = [
   '/background/bg-gradient-1.png',
   '/background/bg-gradient-2.png',
@@ -60,7 +48,6 @@ export const ThumbnailStudio: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS'>('PERSONAS');
   const [activeLang, setActiveLang] = useState<string>('English');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [zoom, setZoom] = useState<number>(1);
 
   // Canvas elements state
   const [elements, setElements] = useState<ThumbnailElement[]>([
@@ -78,19 +65,19 @@ export const ThumbnailStudio: React.FC = () => {
       id: 'person-1',
       type: 'PERSON',
       url: '/English/0a7b453e-00a4-44df-9d32-23f269a8427f_removalai_preview.png',
-      x: 30,
-      y: 50,
+      x: 20,
+      y: 40,
       width: 340,
-      height: 400,
+      height: 410,
       zIndex: 2,
     },
     {
       id: 'text-top',
       type: 'TEXT',
       text: 'LEARN FAST',
-      x: 380,
-      y: 40,
-      width: 380,
+      x: 370,
+      y: 45,
+      width: 400,
       height: 80,
       zIndex: 4,
       fontFamily: 'Impact',
@@ -105,14 +92,14 @@ export const ThumbnailStudio: React.FC = () => {
       id: 'text-bottom',
       type: 'TEXT',
       text: 'IN 10 MINS',
-      x: 380,
-      y: 120,
-      width: 380,
+      x: 370,
+      y: 125,
+      width: 400,
       height: 80,
       zIndex: 5,
       fontFamily: 'Impact',
       fontSize: 64,
-      color: '#fff500',
+      color: '#ffffff',
       strokeColor: '#000000',
       strokeWidth: 8,
       fontWeight: 'bold',
@@ -122,7 +109,7 @@ export const ThumbnailStudio: React.FC = () => {
       id: 'logo-1',
       type: 'LOGO',
       url: '/app_logos_png/Excel.png',
-      x: 460,
+      x: 450,
       y: 230,
       width: 170,
       height: 170,
@@ -136,7 +123,7 @@ export const ThumbnailStudio: React.FC = () => {
       type: 'SYMBOL',
       url: '/bulk_symbols_110_colored/curved-arrow.png',
       x: 620,
-      y: 140,
+      y: 150,
       width: 120,
       height: 120,
       zIndex: 6,
@@ -149,7 +136,6 @@ export const ThumbnailStudio: React.FC = () => {
   const [autoGenTitle, setAutoGenTitle] = useState<string>('');
   const [isGeneratingBrief, setIsGeneratingBrief] = useState<boolean>(false);
 
-  // Pre-fill from location state if passed from Wizard
   useEffect(() => {
     if (location.state?.title) {
       setAutoGenTitle(location.state.title);
@@ -169,7 +155,6 @@ export const ThumbnailStudio: React.FC = () => {
     try {
       const brief = await AIService.generateThumbnailBrief(autoGenTitle);
       
-      // Update canvas text elements with the extracted white top line and yellow bottom line
       setElements(prev => prev.map(el => {
         if (el.id === 'text-top') {
           return { ...el, text: brief.thumbnail_text_line1 };
@@ -179,7 +164,6 @@ export const ThumbnailStudio: React.FC = () => {
         }
         return el;
       }));
-
     } catch (e: any) {
       console.error(e);
       alert('Failed to generate thumbnail brief: ' + e.message);
@@ -194,8 +178,8 @@ export const ThumbnailStudio: React.FC = () => {
       id: `el_${Date.now()}`,
       type,
       url,
-      x: 200,
-      y: 100,
+      x: 220,
+      y: 120,
       width: type === 'LOGO' ? 140 : type === 'PERSON' ? 300 : 100,
       height: type === 'LOGO' ? 140 : type === 'PERSON' ? 360 : 100,
       zIndex: elements.length + 1,
@@ -208,12 +192,12 @@ export const ThumbnailStudio: React.FC = () => {
   const handleExportPNG = async () => {
     if (!canvasRef.current) return;
     setIsExporting(true);
-    setSelectedId(null); // Deselect to hide resize handles
+    setSelectedId(null);
 
     try {
       await new Promise(r => setTimeout(r, 200));
       const blob = await toBlob(canvasRef.current, {
-        pixelRatio: 2.4, // 800x450 * 2.4 = 1920x1080 Full HD!
+        pixelRatio: 2.4, // 1920x1080 Full HD output
       });
 
       if (blob) {
@@ -235,17 +219,17 @@ export const ThumbnailStudio: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4">
       
       {/* Header & AI Brief Bar */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 glass-panel p-4 rounded-2xl">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center text-accent-purple">
-            <Sparkles className="w-5 h-5" />
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pro-panel p-3.5 rounded-xl">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-surface-200 text-foreground flex items-center justify-center font-bold text-xs border border-border">
+            16:9
           </div>
           <div>
-            <h2 className="text-base font-black font-display text-white">AI Thumbnail Studio</h2>
-            <p className="text-xs text-slate-400">High-CTR template generator with multi-language packs.</p>
+            <h2 className="text-sm font-bold font-display text-foreground">Thumbnail Canvas Inspector</h2>
+            <p className="text-[11px] text-muted">DaVinci Resolve style graphic layer editor &amp; asset compositor.</p>
           </div>
         </div>
 
@@ -255,44 +239,44 @@ export const ThumbnailStudio: React.FC = () => {
             type="text"
             value={autoGenTitle}
             onChange={(e) => setAutoGenTitle(e.target.value)}
-            placeholder="Enter title for AI brief extraction..."
-            className="flex-1 md:w-80 bg-surface-200 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-accent-purple"
+            placeholder="Enter title for AI brief..."
+            className="pro-input flex-1 md:w-72 rounded-lg px-3 py-1.5 text-xs text-foreground font-sans"
           />
           <button
             disabled={isGeneratingBrief}
             onClick={handleGenerateAIBrief}
-            className="px-4 py-2 rounded-xl bg-accent-purple hover:opacity-90 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 shadow-glow flex-shrink-0"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
           >
-            <Sparkles className={`w-3.5 h-3.5 ${isGeneratingBrief ? 'animate-spin' : ''}`} />
-            Auto Generate
+            <Sparkles className="w-3.5 h-3.5" />
+            AI Brief
           </button>
           <button
             disabled={isExporting}
             onClick={handleExportPNG}
-            className="px-4 py-2 rounded-xl bg-accent-cyan hover:opacity-90 disabled:opacity-50 text-black text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
+            className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
-            Export 1080p PNG
+            Export 1080p
           </button>
         </div>
       </div>
 
-      {/* Main Studio Grid: Left Asset Library / Right Canvas */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Main Studio Grid: Left Asset Library (4 cols) / Right Canvas (8 cols) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        {/* Left Side: Asset Library (4 cols) */}
-        <div className="lg:col-span-4 glass-panel p-4 rounded-2xl space-y-4 flex flex-col h-[600px]">
+        {/* Left Side: Asset Library */}
+        <div className="lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[560px]">
           
           {/* Asset Category Tabs */}
-          <div className="grid grid-cols-4 gap-1 p-1 bg-surface-200 rounded-xl border border-white/5">
+          <div className="grid grid-cols-4 gap-1 p-1 bg-surface-200 rounded-lg border border-border">
             {(['PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`py-2 text-[10px] font-extrabold uppercase tracking-wider rounded-lg transition-all ${
+                className={`py-1.5 text-[10px] font-mono font-bold uppercase rounded-md transition-all ${
                   activeTab === tab
-                    ? 'bg-accent-purple text-white shadow-glow'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-surface-100 text-foreground shadow-subtle'
+                    : 'text-muted hover:text-foreground'
                 }`}
               >
                 {tab}
@@ -307,10 +291,10 @@ export const ThumbnailStudio: React.FC = () => {
                 <button
                   key={lang}
                   onClick={() => setActiveLang(lang)}
-                  className={`px-2 py-1 rounded-md text-[10px] font-bold ${
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
                     activeLang === lang
-                      ? 'bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40'
-                      : 'bg-white/5 text-slate-400 hover:text-white'
+                      ? 'bg-surface-300 text-foreground border border-border-strong'
+                      : 'bg-surface-200 text-muted hover:text-foreground'
                   }`}
                 >
                   {lang}
@@ -325,21 +309,21 @@ export const ThumbnailStudio: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search assets..."
-              className="w-full bg-surface-200 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent-purple"
+              placeholder="Search library assets..."
+              className="pro-input w-full rounded-md px-2.5 py-1 text-xs"
             />
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+            <Search className="w-3.5 h-3.5 text-muted absolute right-2.5 top-2" />
           </div>
 
           {/* Asset Items Grid */}
-          <div className="flex-1 overflow-y-auto grid grid-cols-3 gap-2 p-1">
+          <div className="flex-1 overflow-y-auto grid grid-cols-3 gap-2 p-0.5">
             
             {activeTab === 'PERSONAS' && (
               (STATIC_PERSONAS[activeLang] || STATIC_PERSONAS['English']).map((url, i) => (
                 <button
                   key={i}
                   onClick={() => handleAddAsset('PERSON', url)}
-                  className="aspect-square rounded-xl bg-black/40 border border-white/10 hover:border-accent-purple p-1.5 flex items-center justify-center transition-all hover:scale-105"
+                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-1 flex items-center justify-center transition-transform hover:scale-105"
                 >
                   <img src={url} alt="Persona" className="max-h-full object-contain" />
                 </button>
@@ -351,10 +335,10 @@ export const ThumbnailStudio: React.FC = () => {
                 <button
                   key={i}
                   onClick={() => handleAddAsset('LOGO', `/app_logos_png/${name}`)}
-                  className="aspect-square rounded-xl bg-black/40 border border-white/10 hover:border-accent-purple p-2 flex flex-col items-center justify-center gap-1 transition-all hover:scale-105"
+                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex flex-col items-center justify-center gap-1 transition-transform hover:scale-105"
                 >
                   <img src={`/app_logos_png/${name}`} alt={name} className="w-8 h-8 object-contain" />
-                  <span className="text-[9px] text-slate-300 truncate w-full text-center">
+                  <span className="text-[9px] font-mono text-muted truncate w-full text-center">
                     {name.replace('.png', '').replace('_', ' ')}
                   </span>
                 </button>
@@ -366,7 +350,7 @@ export const ThumbnailStudio: React.FC = () => {
                 <button
                   key={i}
                   onClick={() => handleAddAsset('SYMBOL', `/bulk_symbols_110_colored/${sym}`)}
-                  className="aspect-square rounded-xl bg-black/40 border border-white/10 hover:border-accent-purple p-2 flex items-center justify-center transition-all hover:scale-105"
+                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex items-center justify-center transition-transform hover:scale-105"
                 >
                   <img src={`/bulk_symbols_110_colored/${sym}`} alt={sym} className="w-8 h-8 object-contain" />
                 </button>
@@ -380,7 +364,7 @@ export const ThumbnailStudio: React.FC = () => {
                   onClick={() => {
                     setElements(prev => prev.map(el => el.type === 'BACKGROUND' ? { ...el, url } : el));
                   }}
-                  className="aspect-video col-span-3 rounded-xl overflow-hidden border border-white/10 hover:border-accent-purple relative"
+                  className="aspect-video col-span-3 rounded-lg overflow-hidden border border-border hover:border-border-strong relative"
                 >
                   <img src={url} alt="Background" className="w-full h-full object-cover" />
                 </button>
@@ -391,18 +375,16 @@ export const ThumbnailStudio: React.FC = () => {
 
         </div>
 
-        {/* Right Side: Interactive Canvas Workspace (8 cols) */}
-        <div className="lg:col-span-8 space-y-4">
+        {/* Right Side: Interactive Canvas */}
+        <div className="lg:col-span-8 space-y-3">
           
-          {/* Canvas Wrapper */}
-          <div className="glass-panel p-4 rounded-2xl flex flex-col items-center justify-center overflow-hidden">
+          <div className="pro-panel p-4 rounded-xl flex flex-col items-center justify-center overflow-hidden">
             
-            {/* 16:9 Canvas (800x450 rendered size) */}
+            {/* 16:9 Canvas */}
             <div
               ref={canvasRef}
               id="thumbnail-canvas"
-              className="w-[800px] h-[450px] bg-black rounded-lg overflow-hidden relative shadow-2xl select-none"
-              style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+              className="w-[800px] h-[450px] bg-black rounded-md overflow-hidden relative shadow-elevation select-none"
             >
               {elements.map((el) => {
                 const isSelected = selectedId === el.id;
@@ -438,7 +420,7 @@ export const ThumbnailStudio: React.FC = () => {
                     bounds="parent"
                     style={{ zIndex: el.zIndex }}
                     onClick={() => setSelectedId(el.id)}
-                    className={`${isSelected ? 'ring-2 ring-accent-purple' : ''}`}
+                    className={`${isSelected ? 'ring-1 ring-foreground' : ''}`}
                   >
                     {el.type === 'TEXT' ? (
                       <div
@@ -478,11 +460,11 @@ export const ThumbnailStudio: React.FC = () => {
 
           </div>
 
-          {/* Bottom Property Controls for Selected Element */}
+          {/* Property Controls */}
           {selectedElement && (
-            <div className="glass-panel p-4 rounded-xl flex items-center justify-between gap-4">
+            <div className="pro-panel p-3 rounded-lg flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-white uppercase">{selectedElement.type}</span>
+                <span className="text-[10px] font-mono uppercase font-bold text-muted">{selectedElement.type}</span>
                 {selectedElement.type === 'TEXT' && (
                   <input
                     type="text"
@@ -491,22 +473,20 @@ export const ThumbnailStudio: React.FC = () => {
                       const val = e.target.value;
                       setElements(prev => prev.map(el => el.id === selectedElement.id ? { ...el, text: val } : el));
                     }}
-                    className="bg-surface-200 border border-white/10 rounded-lg px-3 py-1 text-xs text-white font-bold"
+                    className="pro-input rounded px-2.5 py-1 text-xs font-bold"
                   />
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setElements(prev => prev.filter(el => el.id !== selectedElement.id));
-                    setSelectedId(null);
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-accent-rose/20 text-accent-rose text-xs font-bold flex items-center gap-1 hover:bg-accent-rose/30"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Remove
-                </button>
-              </div>
+              <button
+                onClick={() => {
+                  setElements(prev => prev.filter(el => el.id !== selectedElement.id));
+                  setSelectedId(null);
+                }}
+                className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-red-500 hover:text-red-400"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Remove
+              </button>
             </div>
           )}
 
