@@ -1,78 +1,73 @@
-# Deployment & VPS Infrastructure Guide
+# Hetzner Dedicated Server Deployment Guide (Ubuntu 24.04 / Debian 12)
 
-**Target System:** Tutorial Production Line (`TutorialProductionLine`)  
-**Date:** August 16, 2026
+This guide documents how to provision and deploy the **Tutorial Production Line** on your Hetzner dedicated server (`Intel Core i7-6700, 64 GB RAM, 2x512 GB SSD` at `#FSN1-DC1`).
 
 ---
 
-## 1. VPS SSH Access & Authentication
+## 🔑 1. Server Access & SSH Key
+Add the generated public key to your Hetzner root `~/.ssh/authorized_keys`:
 
-A dedicated ed25519 SSH keypair has been generated for secure access to the client's deployment VPS.
-
-### Public Key (Add to VPS `~/.ssh/authorized_keys`):
 ```text
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII5QOEymvbfIHSvt72ELGfmiMYrArKnBX7XpJAye51yH konrad-tutorial-automation
 ```
 
-### Local Key Pair Locations:
-* **Private Key:** `C:\Users\konra\.ssh\tutorial_vps_ed25519`
-* **Public Key:** `C:\Users\konra\.ssh\tutorial_vps_ed25519.pub`
-
-### Verification Command:
+Connect to the server:
 ```bash
-ssh -i ~/.ssh/tutorial_vps_ed25519 <USER>@<VPS_IP>
+ssh -i C:\Users\konra\.ssh\tutorial_vps_ed25519 root@<HETZNER_IP>
 ```
 
 ---
 
-## 2. Server Environment Prerequisites
-
-On the target Ubuntu 22.04 / 24.04 LTS host:
+## 🚀 2. 1-Click Automated Provisioning
+Clone the repository and run the automated provisioning script:
 
 ```bash
-# 1. System packages
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git ffmpeg nginx
+git clone https://github.com/konradschrein-star/TutorialProductionLine.git /opt/tutorial-line
+cd /opt/tutorial-line
 
-# 2. Node.js 20 LTS
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+# Make the setup script executable and run it
+chmod +x deploy/hetzner_setup.sh
+sudo ./deploy/hetzner_setup.sh
+```
 
-# 3. Process Manager
-sudo npm install -g pm2
+### What `hetzner_setup.sh` Configures Automatically:
+1. **16 GB RAM Disk (`/mnt/ramdisk`):** Mounts a dedicated in-memory `tmpfs` disk for instant FFmpeg video/audio stream-copy remuxing with zero SSD wear.
+2. **Intel QuickSync & FFmpeg:** Installs `intel-media-va-driver-non-free` and `vainfo` for hardware-accelerated video transcoding.
+3. **Node.js 22 LTS & PM2:** Sets up modern Node.js and PM2 cluster process management.
+4. **Nginx Reverse Proxy:** Configures Nginx with `client_max_body_size 2000M` for high-throughput video file streaming on ports `3000` (Web UI) and `3001` (API).
+5. **Auto-Purge Cron Job:** Automatically cleans staging files older than 2 days from the RAM disk.
+
+---
+
+## 🏃 3. Launching the Services
+
+Install project dependencies and build:
+```bash
+cd /opt/tutorial-line
+npm install
+npm run build
+```
+
+Start the PM2 cluster:
+```bash
+pm2 start deploy/ecosystem.config.cjs
+pm2 save
+pm2 startup
 ```
 
 ---
 
-## 3. Reverse Proxy Configuration (`/etc/nginx/sites-available/tutorial-line`)
+## 📊 4. Monitoring & Logs
 
-```nginx
-server {
-    listen 80;
-    server_name _;
-
-    client_max_body_size 2G;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_cache_bypass $http_upgrade;
-
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-    }
-}
-```
-
----
-
-## 4. Security Protocols (No Secret Leaks)
-
-1. **Environment Variables:** All API keys (Groq, Mistral, ElevenLabs, Fish Audio, Database credentials) must reside strictly in `.env.production` on the VPS.
-2. **Git Hygiene:** Never commit `.env*`, `*.key`, `*.pem`, or user session directories to version control.
-3. **Storage Hygiene:** Uploaded temp artifacts must be purged on job completion or rotated via automated cron.
+* **Monitor CPU, RAM Disk & Processes:**
+  ```bash
+  pm2 monit
+  ```
+* **View API Logs:**
+  ```bash
+  pm2 logs tutorial-line-api
+  ```
+* **Check RAM Disk Space:**
+  ```bash
+  df -h /mnt/ramdisk
+  ```
