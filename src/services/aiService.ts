@@ -1,34 +1,47 @@
 import { StorageService } from './storageService';
 import { ThumbnailBrief } from '../types';
 
+export type ScriptStyle = 'standard' | 'short_60s' | 'deep_dive' | 'troubleshoot';
+
 export class AIService {
   /**
-   * Generates a spoken narration tutorial script following the high-retention structure:
-   * 1. Hook & Topic Statement + CTA to like/subscribe
-   * 2. Direct, actionable, fluff-free step-by-step instructions with natural pause markers '...'
-   * 3. Quick outro with closing CTA
+   * Generates a spoken narration tutorial script with selectable format archetypes
    */
-  static async generateScript(topic: string, extraInstructions: string = ''): Promise<string> {
+  static async generateScript(
+    topic: string, 
+    extraInstructions: string = '',
+    style: ScriptStyle = 'standard'
+  ): Promise<string> {
     const apiKey = StorageService.getApiKey('groq');
+
+    let styleInstructions = '';
+    if (style === 'short_60s') {
+      styleInstructions = `FORMAT: Rapid 60-Second Short/Reel. Under 130 words total. Ultra-fast hook, 3 rapid bullet-point actions, 5-second outro.`;
+    } else if (style === 'deep_dive') {
+      styleInstructions = `FORMAT: Comprehensive Masterclass Walkthrough (~400 words). Include prerequisite checks, pro-tips, common pitfalls to avoid, and shortcut key combinations.`;
+    } else if (style === 'troubleshoot') {
+      styleInstructions = `FORMAT: Problem & Error Fix Guide. State the common error message or bug symptom, diagnose the 2 most frequent root causes, then deliver the foolproof step-by-step fix.`;
+    } else {
+      styleInstructions = `FORMAT: Standard High-Retention Tutorial (~200 words). Early hook + subscribe/like CTA in sentence 2, clear step-by-step instructions with '...' pause markers, and 5-second closing CTA.`;
+    }
 
     const systemPrompt = `You are a world-class tutorial scriptwriter for a high-retention YouTube channel.
 Write a spoken narration script for a video titled "${topic}".
 
 STRICT FORMATTING & PACING RULES:
-1. Topic Statement & Early CTA: Start immediately by stating what the video is about, followed by a quick call to action, then jump straight into step 1.
-   Example opening: "In this video, I will show you how to ${topic}. If you find this helpful, consider subscribing and liking the video. First, ..."
-2. Body & Step Pacing: Provide clear, concise step-by-step instructions.
-   - Use second person conversational tone ("Click on the top right menu...", "Next, select...").
-   - Include natural spoken pauses using ellipsis "..." where the viewer needs 1-2 seconds to follow the on-screen action.
-   - ZERO fluff, ZERO filler phrases like "Let's dive in" or "Without further ado".
-3. Outro: A fast 5-second wrap-up reminding the viewer to like, comment with any questions, and subscribe.
-4. Output Format: Return PLAIN SPOKEN TEXT ONLY. No markdown headers, no stage directions in brackets, no bullet points.
+1. Spoken Audio Pacing: Use second person conversational tone ("Click on the top right menu...", "Next, select...").
+2. Include natural spoken pauses using ellipsis "..." where the viewer needs 1-2 seconds to follow the on-screen action.
+3. ZERO fluff, ZERO filler phrases like "Let's dive in" or "Without further ado".
+4. ${styleInstructions}
+5. Output Format: Return PLAIN SPOKEN TEXT ONLY. No markdown headers, no stage directions in brackets, no bullet points.
 
 ${extraInstructions ? `EXTRA CUSTOM INSTRUCTIONS: ${extraInstructions}` : ''}`;
 
     if (!apiKey) {
-      // High-quality mock simulation for instant preview when no API key is provided
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, 800));
+      if (style === 'short_60s') {
+        return `Here is how to ${topic} in under 60 seconds. Make sure to drop a like! First, open settings... click integrations, and hit connect. Next, pick your default preset... and click save. That is literally all it takes. Subscribe for more quick tricks!`;
+      }
       return `In this video, I will show you how to ${topic}. If you find this helpful, make sure to like the video and subscribe for more quick guides.
 
 First, open up your dashboard and navigate to the top settings menu in the upper right corner... 
@@ -36,7 +49,7 @@ Once you're in settings, scroll down to the integrations tab and click on connec
 
 Next, select your desired preset configuration from the dropdown list. You will see three options appear on screen... Choose the primary setup and confirm your selection.
 
-Finally, click the blue save button at the bottom of the page to apply all changes immediately... Your setup is now completely configured and ready to use.
+Finally, click the save button at the bottom of the page to apply all changes immediately... Your setup is now completely configured and ready to use.
 
 If this helped you out, drop a like and subscribe to the channel. Let me know in the comments what tutorial you want to see next!`;
     }
@@ -70,6 +83,52 @@ If this helped you out, drop a like and subscribe to the channel. Let me know in
       console.error('AI generation error:', e);
       throw new Error(`AI generation failed: ${e.message}`);
     }
+  }
+
+  /**
+   * Refines or transforms an existing script (Add pauses, Punch Up Hook, Shorten Fluff)
+   */
+  static async refineScript(script: string, action: 'add_pauses' | 'punch_hook' | 'shorten_fluff'): Promise<string> {
+    const apiKey = StorageService.getApiKey('groq');
+
+    const actionPrompts = {
+      add_pauses: 'Insert natural spoken pause markers ("...") after every key click or instructional action so the pacing is natural for voiceover audio.',
+      punch_hook: 'Rewrite ONLY the opening two sentences to make the hook dramatically punchier, high-stakes, and immediate.',
+      shorten_fluff: 'Remove any remaining filler phrases, duplicate explanations, or wordy descriptions. Make the script razor-sharp and concise.'
+    };
+
+    if (!apiKey) {
+      await new Promise(r => setTimeout(r, 600));
+      if (action === 'add_pauses') {
+        return script.replace(/(\. )/g, '... ');
+      }
+      return script;
+    }
+
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an elite tutorial editor. Output PLAIN SPOKEN SCRIPT ONLY. Do not add quotes or markdown.'
+          },
+          {
+            role: 'user',
+            content: `Original Script:\n${script}\n\nTask: ${actionPrompts[action]}`
+          }
+        ],
+        temperature: 0.5,
+      })
+    });
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || script;
   }
 
   /**
@@ -117,7 +176,7 @@ ${script.slice(0, 240)}...
     const apiKey = StorageService.getApiKey('groq');
 
     if (!apiKey) {
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 600));
       const cleanSoftware = topic.split(' ')[0] || 'App';
       return {
         software_name: cleanSoftware,

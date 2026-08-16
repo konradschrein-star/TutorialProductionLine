@@ -2,15 +2,21 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Rnd } from 'react-rnd';
 import { toBlob } from 'html-to-image';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { 
   Sparkles, 
   Download, 
   Trash2, 
   Search,
-  Maximize2
+  Layers,
+  Copy,
+  FolderArchive,
+  RefreshCw,
+  Sliders
 } from 'lucide-react';
 import { AIService } from '../services/aiService';
-import { ThumbnailElement } from '../types';
+import { ThumbnailElement, ThumbnailBrief } from '../types';
 
 const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian', 'French', 'Dutch', 'Japanese', 'Korean', 'Swedish'];
 
@@ -45,9 +51,10 @@ export const ThumbnailStudio: React.FC = () => {
   const location = useLocation();
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS'>('PERSONAS');
+  const [activeTab, setActiveTab] = useState<'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS' | 'LAYERS'>('PERSONAS');
   const [activeLang, setActiveLang] = useState<string>('English');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
 
   // Canvas elements state
   const [elements, setElements] = useState<ThumbnailElement[]>([
@@ -133,8 +140,10 @@ export const ThumbnailStudio: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isBatchExporting, setIsBatchExporting] = useState<boolean>(false);
   const [autoGenTitle, setAutoGenTitle] = useState<string>('');
   const [isGeneratingBrief, setIsGeneratingBrief] = useState<boolean>(false);
+  const [currentBrief, setCurrentBrief] = useState<ThumbnailBrief | null>(null);
 
   useEffect(() => {
     if (location.state?.title) {
@@ -154,7 +163,8 @@ export const ThumbnailStudio: React.FC = () => {
     setIsGeneratingBrief(true);
     try {
       const brief = await AIService.generateThumbnailBrief(autoGenTitle);
-      
+      setCurrentBrief(brief);
+
       setElements(prev => prev.map(el => {
         if (el.id === 'text-top') {
           return { ...el, text: brief.thumbnail_text_line1 };
@@ -188,7 +198,20 @@ export const ThumbnailStudio: React.FC = () => {
     setSelectedId(newEl.id);
   };
 
-  // Export 1080p PNG
+  // Duplicate Layer
+  const handleDuplicate = (el: ThumbnailElement) => {
+    const dupe: ThumbnailElement = {
+      ...el,
+      id: `el_${Date.now()}`,
+      x: el.x + 20,
+      y: el.y + 20,
+      zIndex: elements.length + 1
+    };
+    setElements([...elements, dupe]);
+    setSelectedId(dupe.id);
+  };
+
+  // Single PNG Export
   const handleExportPNG = async () => {
     if (!canvasRef.current) return;
     setIsExporting(true);
@@ -197,7 +220,7 @@ export const ThumbnailStudio: React.FC = () => {
     try {
       await new Promise(r => setTimeout(r, 200));
       const blob = await toBlob(canvasRef.current, {
-        pixelRatio: 2.4, // 1920x1080 Full HD output
+        pixelRatio: 2.4,
       });
 
       if (blob) {
@@ -218,29 +241,84 @@ export const ThumbnailStudio: React.FC = () => {
     }
   };
 
+  // Batch 10-Language Pack Exporter (ZIP)
+  const handleBatchExportZip = async () => {
+    if (!canvasRef.current) return;
+    setIsBatchExporting(true);
+    setSelectedId(null);
+
+    try {
+      const zip = new JSZip();
+      const brief = currentBrief || await AIService.generateThumbnailBrief(autoGenTitle || 'Custom Tutorial');
+
+      for (const lang of LANGUAGES) {
+        const trans = brief.translations?.[lang] || { top: 'LEARN FAST', bottom: 'STEP BY STEP' };
+        
+        // Update canvas text elements synchronously for this language
+        setElements(prev => prev.map(el => {
+          if (el.id === 'text-top') return { ...el, text: trans.top };
+          if (el.id === 'text-bottom') return { ...el, text: trans.bottom };
+          return el;
+        }));
+
+        // Allow canvas React re-render cycle
+        await new Promise(r => setTimeout(r, 250));
+
+        const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
+        if (blob) {
+          const folder = zip.folder(lang.toLowerCase());
+          folder?.file(`thumbnail_${lang.toLowerCase()}.png`, blob);
+        }
+      }
+
+      const zipContent = await zip.generateAsync({ type: 'blob' });
+      saveAs(zipContent, `thumbnail_pack_${(autoGenTitle || 'tutorial').replace(/[^a-z0-9]/gi, '_')}_10langs.zip`);
+
+    } catch (err: any) {
+      console.error('Batch export failed:', err);
+      alert('Batch export failed: ' + err.message);
+    } finally {
+      setIsBatchExporting(false);
+    }
+  };
+
+  const canvasWidth = aspectRatio === '16:9' ? 800 : 450;
+  const canvasHeight = aspectRatio === '16:9' ? 450 : 800;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4">
       
       {/* Header & AI Brief Bar */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pro-panel p-3.5 rounded-xl">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-surface-200 text-foreground flex items-center justify-center font-bold text-xs border border-border">
-            16:9
+          <div className="flex items-center bg-surface-200 rounded-lg p-0.5 border border-border text-xs font-mono font-bold">
+            <button
+              onClick={() => setAspectRatio('16:9')}
+              className={`px-2 py-1 rounded transition-colors ${aspectRatio === '16:9' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
+            >
+              16:9 HD
+            </button>
+            <button
+              onClick={() => setAspectRatio('9:16')}
+              className={`px-2 py-1 rounded transition-colors ${aspectRatio === '9:16' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
+            >
+              9:16 Shorts
+            </button>
           </div>
           <div>
             <h2 className="text-sm font-bold font-display text-foreground">Thumbnail Canvas Inspector</h2>
-            <p className="text-[11px] text-muted">DaVinci Resolve style graphic layer editor &amp; asset compositor.</p>
+            <p className="text-[11px] text-muted">DaVinci Resolve compositor with 10-language batch pack builder.</p>
           </div>
         </div>
 
-        {/* AI Brief Input */}
+        {/* AI Brief Input & Exporters */}
         <div className="flex items-center gap-2 w-full md:w-auto">
           <input
             type="text"
             value={autoGenTitle}
             onChange={(e) => setAutoGenTitle(e.target.value)}
             placeholder="Enter title for AI brief..."
-            className="pro-input flex-1 md:w-72 rounded-lg px-3 py-1.5 text-xs text-foreground font-sans"
+            className="pro-input flex-1 md:w-64 rounded-lg px-3 py-1.5 text-xs text-foreground font-sans"
           />
           <button
             disabled={isGeneratingBrief}
@@ -251,12 +329,20 @@ export const ThumbnailStudio: React.FC = () => {
             AI Brief
           </button>
           <button
-            disabled={isExporting}
+            disabled={isExporting || isBatchExporting}
             onClick={handleExportPNG}
-            className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
-            Export 1080p
+            Export PNG
+          </button>
+          <button
+            disabled={isBatchExporting || isExporting}
+            onClick={handleBatchExportZip}
+            className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
+          >
+            <FolderArchive className="w-3.5 h-3.5" />
+            {isBatchExporting ? 'Packaging ZIP...' : '10-Lang ZIP'}
           </button>
         </div>
       </div>
@@ -264,16 +350,16 @@ export const ThumbnailStudio: React.FC = () => {
       {/* Main Studio Grid: Left Asset Library (4 cols) / Right Canvas (8 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
-        {/* Left Side: Asset Library */}
-        <div className="lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[560px]">
+        {/* Left Side: Asset Library & Layer Tree */}
+        <div className="lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[580px]">
           
-          {/* Asset Category Tabs */}
-          <div className="grid grid-cols-4 gap-1 p-1 bg-surface-200 rounded-lg border border-border">
-            {(['PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS'] as const).map(tab => (
+          {/* Tabs */}
+          <div className="grid grid-cols-5 gap-0.5 p-1 bg-surface-200 rounded-lg border border-border">
+            {(['PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS', 'LAYERS'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`py-1.5 text-[10px] font-mono font-bold uppercase rounded-md transition-all ${
+                className={`py-1.5 text-[9px] font-mono font-bold uppercase rounded-md transition-all ${
                   activeTab === tab
                     ? 'bg-surface-100 text-foreground shadow-subtle'
                     : 'text-muted hover:text-foreground'
@@ -304,87 +390,148 @@ export const ThumbnailStudio: React.FC = () => {
           )}
 
           {/* Search Box */}
-          <div className="relative">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search library assets..."
-              className="pro-input w-full rounded-md px-2.5 py-1 text-xs"
-            />
-            <Search className="w-3.5 h-3.5 text-muted absolute right-2.5 top-2" />
-          </div>
+          {activeTab !== 'LAYERS' && (
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search library assets..."
+                className="pro-input w-full rounded-md px-2.5 py-1 text-xs"
+              />
+              <Search className="w-3.5 h-3.5 text-muted absolute right-2.5 top-2" />
+            </div>
+          )}
 
-          {/* Asset Items Grid */}
-          <div className="flex-1 overflow-y-auto grid grid-cols-3 gap-2 p-0.5">
+          {/* Content Area */}
+          <div className="flex-1 overflow-y-auto p-0.5">
             
+            {activeTab === 'LAYERS' && (
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-mono uppercase text-muted font-bold px-1">Active Layers ({elements.length})</div>
+                {elements.map(el => (
+                  <div
+                    key={el.id}
+                    onClick={() => setSelectedId(el.id)}
+                    className={`p-2 rounded-lg border flex items-center justify-between text-xs cursor-pointer transition-colors ${
+                      selectedId === el.id ? 'bg-surface-300 border-foreground/40 font-bold' : 'bg-surface-200/50 border-border hover:bg-surface-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-surface-300 text-muted">
+                        {el.type}
+                      </span>
+                      <span className="truncate text-foreground text-[11px]">
+                        {el.text || el.url?.split('/').pop() || el.id}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDuplicate(el); }}
+                        className="p-1 text-muted hover:text-foreground"
+                        title="Duplicate"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setElements(prev => prev.filter(item => item.id !== el.id));
+                          if (selectedId === el.id) setSelectedId(null);
+                        }}
+                        className="p-1 text-muted hover:text-red-500"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {activeTab === 'PERSONAS' && (
-              (STATIC_PERSONAS[activeLang] || STATIC_PERSONAS['English']).map((url, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleAddAsset('PERSON', url)}
-                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-1 flex items-center justify-center transition-transform hover:scale-105"
-                >
-                  <img src={url} alt="Persona" className="max-h-full object-contain" />
-                </button>
-              ))
+              <div className="grid grid-cols-3 gap-2">
+                {(STATIC_PERSONAS[activeLang] || STATIC_PERSONAS['English']).map((url, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleAddAsset('PERSON', url)}
+                    className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-1 flex items-center justify-center transition-transform hover:scale-105"
+                  >
+                    <img src={url} alt="Persona" className="max-h-full object-contain" />
+                  </button>
+                ))}
+              </div>
             )}
 
             {activeTab === 'LOGOS' && (
-              SAMPLE_LOGOS.map((name, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleAddAsset('LOGO', `/app_logos_png/${name}`)}
-                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex flex-col items-center justify-center gap-1 transition-transform hover:scale-105"
-                >
-                  <img src={`/app_logos_png/${name}`} alt={name} className="w-8 h-8 object-contain" />
-                  <span className="text-[9px] font-mono text-muted truncate w-full text-center">
-                    {name.replace('.png', '').replace('_', ' ')}
-                  </span>
-                </button>
-              ))
+              <div className="grid grid-cols-3 gap-2">
+                {SAMPLE_LOGOS.map((name, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleAddAsset('LOGO', `/app_logos_png/${name}`)}
+                    className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex flex-col items-center justify-center gap-1 transition-transform hover:scale-105"
+                  >
+                    <img src={`/app_logos_png/${name}`} alt={name} className="w-8 h-8 object-contain" />
+                    <span className="text-[9px] font-mono text-muted truncate w-full text-center">
+                      {name.replace('.png', '').replace('_', ' ')}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
 
             {activeTab === 'SYMBOLS' && (
-              ['curved-arrow.png', 'badge-check.png', 'alert-triangle.png', 'flame.png', 'star.png', 'zap.png'].map((sym, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleAddAsset('SYMBOL', `/bulk_symbols_110_colored/${sym}`)}
-                  className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex items-center justify-center transition-transform hover:scale-105"
-                >
-                  <img src={`/bulk_symbols_110_colored/${sym}`} alt={sym} className="w-8 h-8 object-contain" />
-                </button>
-              ))
+              <div className="grid grid-cols-3 gap-2">
+                {['curved-arrow.png', 'badge-check.png', 'alert-triangle.png', 'flame.png', 'star.png', 'zap.png'].map((sym, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleAddAsset('SYMBOL', `/bulk_symbols_110_colored/${sym}`)}
+                    className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex items-center justify-center transition-transform hover:scale-105"
+                  >
+                    <img src={`/bulk_symbols_110_colored/${sym}`} alt={sym} className="w-8 h-8 object-contain" />
+                  </button>
+                ))}
+              </div>
             )}
 
             {activeTab === 'BGS' && (
-              STATIC_BGS.map((url, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setElements(prev => prev.map(el => el.type === 'BACKGROUND' ? { ...el, url } : el));
-                  }}
-                  className="aspect-video col-span-3 rounded-lg overflow-hidden border border-border hover:border-border-strong relative"
-                >
-                  <img src={url} alt="Background" className="w-full h-full object-cover" />
-                </button>
-              ))
+              <div className="grid grid-cols-1 gap-2">
+                {STATIC_BGS.map((url, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setElements(prev => prev.map(el => el.type === 'BACKGROUND' ? { ...el, url } : el));
+                    }}
+                    className="aspect-video rounded-lg overflow-hidden border border-border hover:border-border-strong relative"
+                  >
+                    <img src={url} alt="Background" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
             )}
 
           </div>
 
         </div>
 
-        {/* Right Side: Interactive Canvas */}
+        {/* Right Side: Interactive Canvas Workspace */}
         <div className="lg:col-span-8 space-y-3">
           
-          <div className="pro-panel p-4 rounded-xl flex flex-col items-center justify-center overflow-hidden">
+          <div className="pro-panel p-4 rounded-xl flex flex-col items-center justify-center overflow-hidden min-h-[480px]">
             
-            {/* 16:9 Canvas */}
+            {/* Canvas */}
             <div
               ref={canvasRef}
               id="thumbnail-canvas"
-              className="w-[800px] h-[450px] bg-black rounded-md overflow-hidden relative shadow-elevation select-none"
+              className="bg-black rounded-md overflow-hidden relative shadow-elevation select-none"
+              style={{
+                width: `${canvasWidth}px`,
+                height: `${canvasHeight}px`,
+                transform: aspectRatio === '9:16' ? 'scale(0.65)' : 'scale(1)',
+                transformOrigin: 'top center'
+              }}
             >
               {elements.map((el) => {
                 const isSelected = selectedId === el.id;
@@ -478,15 +625,23 @@ export const ThumbnailStudio: React.FC = () => {
                 )}
               </div>
 
-              <button
-                onClick={() => {
-                  setElements(prev => prev.filter(el => el.id !== selectedElement.id));
-                  setSelectedId(null);
-                }}
-                className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-red-500 hover:text-red-400"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Remove
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDuplicate(selectedElement)}
+                  className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1"
+                >
+                  <Copy className="w-3 h-3" /> Duplicate
+                </button>
+                <button
+                  onClick={() => {
+                    setElements(prev => prev.filter(el => el.id !== selectedElement.id));
+                    setSelectedId(null);
+                  }}
+                  className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-red-500 hover:text-red-400"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Remove
+                </button>
+              </div>
             </div>
           )}
 

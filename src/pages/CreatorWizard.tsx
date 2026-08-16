@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ArrowRight, 
@@ -10,16 +10,26 @@ import {
   Send, 
   ExternalLink,
   Search,
-  Sparkles
+  Sparkles,
+  Video,
+  Mic,
+  StopCircle,
+  Pause,
+  Play,
+  Sliders,
+  Tv,
+  Layers
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StepBar } from '../components/StepBar';
 import { AudioPlayer } from '../components/AudioPlayer';
-import { AIService } from '../services/aiService';
+import { TeleprompterModal } from '../components/TeleprompterModal';
+import { AIService, ScriptStyle } from '../services/aiService';
 import { TTSService, AVAILABLE_VOICES } from '../services/ttsService';
 import { KeywordService } from '../services/keywordService';
 import { StorageService, DEFAULT_CHANNELS } from '../services/storageService';
 import { uploadManager } from '../services/uploadManager';
+import { screenRecorder } from '../services/screenRecorder';
 import { Channel, KeywordItem, VAUser } from '../types';
 
 interface CreatorWizardProps {
@@ -44,8 +54,10 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
   // Step 2 State
   const [script, setScript] = useState<string>('');
+  const [scriptStyle, setScriptStyle] = useState<ScriptStyle>('standard');
   const [regenPrompt, setRegenPrompt] = useState<string>('');
   const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
+  const [isTeleprompterOpen, setIsTeleprompterOpen] = useState<boolean>(false);
 
   // Step 3 State
   const [selectedVoice, setSelectedVoice] = useState<string>(activeChannel.defaultVoiceId || 'fish-paul-neutral');
@@ -53,10 +65,14 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [synthProgress, setSynthProgress] = useState<number>(0);
 
-  // Step 4 State
+  // Step 4 State: Screen Recorder & Video File
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isRecordingScreen, setIsRecordingScreen] = useState<boolean>(false);
+  const [recordingTime, setRecordingTime] = useState<number>(0);
+  const [isRecordingPaused, setIsRecordingPaused] = useState<boolean>(false);
+  const timerRef = useRef<any>(null);
 
   // Step 5 State
   const [videoTitle, setVideoTitle] = useState<string>('');
@@ -103,13 +119,14 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   }, [topic, step]);
 
   // Step 1 ➔ 2: Generate Script
-  const handleGenerateScript = async (customTopic?: string) => {
+  const handleGenerateScript = async (customTopic?: string, customStyle?: ScriptStyle) => {
     const t = customTopic || topic;
+    const s = customStyle || scriptStyle;
     if (!t.trim()) return;
 
     setIsGeneratingScript(true);
     try {
-      const generated = await AIService.generateScript(t, regenPrompt);
+      const generated = await AIService.generateScript(t, regenPrompt, s);
       setScript(generated);
 
       const meta = AIService.generateMetadata(t, generated, activeChannel.name);
@@ -122,6 +139,20 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     } catch (err: any) {
       console.error(err);
       alert('Script generation failed: ' + err.message);
+    } finally {
+      setIsGeneratingScript(false);
+    }
+  };
+
+  // Quick Refine Action
+  const handleRefine = async (action: 'add_pauses' | 'punch_hook' | 'shorten_fluff') => {
+    if (!script.trim()) return;
+    setIsGeneratingScript(true);
+    try {
+      const refined = await AIService.refineScript(script, action);
+      setScript(refined);
+    } catch (e: any) {
+      alert('Refine failed: ' + e.message);
     } finally {
       setIsGeneratingScript(false);
     }
@@ -150,7 +181,48 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     }
   };
 
-  // Step 4: Handle Video File
+  // Step 4: In-Browser Screen Recorder Controls
+  const handleStartScreenRecording = async () => {
+    try {
+      await screenRecorder.startRecording({ includeMic: true });
+      setIsRecordingScreen(true);
+      setIsRecordingPaused(false);
+      setRecordingTime(0);
+
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn('Screen recording cancelled or failed:', err);
+    }
+  };
+
+  const handleStopScreenRecording = async () => {
+    clearInterval(timerRef.current);
+    setIsRecordingScreen(false);
+    setIsRecordingPaused(false);
+
+    try {
+      const { file, url } = await screenRecorder.stopRecording();
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      setVideoFile(file);
+      setVideoUrl(url);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTogglePauseScreenRecording = () => {
+    if (isRecordingPaused) {
+      screenRecorder.resumeRecording();
+      setIsRecordingPaused(false);
+    } else {
+      screenRecorder.pauseRecording();
+      setIsRecordingPaused(true);
+    }
+  };
+
+  // Step 4: Handle Video File Upload
   const handleVideoSelect = (file: File) => {
     if (!file.type.startsWith('video/')) {
       alert('Please upload a valid MP4 or WebM video file.');
@@ -168,7 +240,6 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     try {
       const jobId = `job_${Date.now()}`;
       
-      // 1. Enqueue in background upload manager
       if (videoFile) {
         uploadManager.enqueue({
           jobId,
@@ -179,7 +250,6 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         });
       }
 
-      // 2. Save to finished videos list
       StorageService.addFinishedVideo({
         id: jobId,
         title: videoTitle || topic,
@@ -192,12 +262,10 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         createdAt: new Date().toISOString().split('T')[0]
       });
 
-      // 3. Mark keyword completed
       if (keywordId) {
         KeywordService.completeKeyword(keywordId);
       }
 
-      // Confetti celebration
       confetti({
         particleCount: 80,
         spread: 60,
@@ -239,7 +307,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               Conveyor Workspace
             </h1>
             <p className="text-xs text-muted">
-              DaVinci Resolve inspired production line: Script ➔ Voice ➔ Video ➔ Stealth Queue.
+              DaVinci Resolve inspired video workstation with in-app screen capture &amp; neural audio.
             </p>
           </div>
 
@@ -320,7 +388,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
           {/* Custom Topic Input */}
           <div className="pro-panel p-5 rounded-xl space-y-3.5">
-            <h3 className="text-sm font-bold text-foreground">Video Topic &amp; Channel Target</h3>
+            <h3 className="text-sm font-bold text-foreground">Video Topic &amp; Format Archetype</h3>
 
             <div className="relative">
               <input
@@ -351,8 +419,18 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
             )}
 
             <div className="flex items-center justify-between pt-2 border-t border-border">
-              <div className="text-xs text-muted font-mono">
-                Target: <span className="text-foreground font-bold">{DEFAULT_CHANNELS.find(c => c.id === selectedChannelId)?.name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted font-mono">Format:</span>
+                <select
+                  value={scriptStyle}
+                  onChange={(e) => setScriptStyle(e.target.value as ScriptStyle)}
+                  className="pro-input text-xs rounded-md px-2 py-1 cursor-pointer font-sans"
+                >
+                  <option value="standard">Standard Tutorial (~2 mins)</option>
+                  <option value="short_60s">Rapid Short (&lt; 60s)</option>
+                  <option value="deep_dive">Masterclass Deep Dive (~5 mins)</option>
+                  <option value="troubleshoot">Error &amp; Bug Fix Guide</option>
+                </select>
               </div>
 
               <button
@@ -386,13 +464,22 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               <div>
                 <h3 className="text-sm font-bold text-foreground">Step 2: Spoken Narration Script</h3>
                 <p className="text-xs text-muted">
-                  High-retention tutorial layout with early hook, natural pauses ("..."), and zero fluff.
+                  High-retention structure with spoken pauses ("...").
                 </p>
               </div>
 
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-surface-200 border border-border text-muted font-bold">
-                {script.split(/\s+/).filter(Boolean).length} words (~{Math.round(script.split(/\s+/).filter(Boolean).length / 2.5)}s)
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsTeleprompterOpen(true)}
+                  className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  Teleprompter Pro
+                </button>
+                <span className="text-[11px] font-mono px-2 py-1 rounded bg-surface-200 border border-border text-muted font-bold">
+                  {script.split(/\s+/).filter(Boolean).length} words (~{Math.round(script.split(/\s+/).filter(Boolean).length / 2.5)}s)
+                </span>
+              </div>
             </div>
 
             <textarea
@@ -403,23 +490,47 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               placeholder="Script narration..."
             />
 
-            {/* Regen tuning */}
-            <div className="p-2.5 rounded-lg bg-surface-200/60 border border-border flex flex-col sm:flex-row gap-2 items-center">
-              <input
-                type="text"
-                value={regenPrompt}
-                onChange={(e) => setRegenPrompt(e.target.value)}
-                placeholder="Regen instructions (e.g. 'add shortcut steps' or 'shorten intro')..."
-                className="pro-input flex-1 rounded-md px-3 py-1.5 text-xs"
-              />
-              <button
-                disabled={isGeneratingScript}
-                onClick={() => handleGenerateScript()}
-                className="btn-outline px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingScript ? 'animate-spin' : ''}`} />
-                Regen
-              </button>
+            {/* Quick Refine & Tuning Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-surface-200/60 border border-border">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono uppercase text-muted font-bold">AI Refine:</span>
+                <button
+                  onClick={() => handleRefine('add_pauses')}
+                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
+                >
+                  + Add Spoken Pauses
+                </button>
+                <button
+                  onClick={() => handleRefine('punch_hook')}
+                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
+                >
+                  ⚡ Punch Up Hook
+                </button>
+                <button
+                  onClick={() => handleRefine('shorten_fluff')}
+                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
+                >
+                  ✂️ Cut Fluff
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 flex-1 max-w-xs">
+                <input
+                  type="text"
+                  value={regenPrompt}
+                  onChange={(e) => setRegenPrompt(e.target.value)}
+                  placeholder="Custom regen prompt..."
+                  className="pro-input flex-1 rounded-md px-2.5 py-1 text-xs font-sans"
+                />
+                <button
+                  disabled={isGeneratingScript}
+                  onClick={() => handleGenerateScript()}
+                  className="btn-outline px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 flex-shrink-0"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isGeneratingScript ? 'animate-spin' : ''}`} />
+                  Regen
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-border">
@@ -526,86 +637,134 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         </div>
       )}
 
-      {/* ══════════════════ STEP 4: VIDEO ATTACHMENT ══════════════════ */}
+      {/* ══════════════════ STEP 4: SCREEN RECORDER & VIDEO ══════════════════ */}
       {step === 4 && (
         <div className="space-y-4">
           <div className="pro-panel p-5 rounded-xl space-y-4">
             
-            <div>
-              <h3 className="text-sm font-bold text-foreground">Step 4: Attach Screen Recording</h3>
-              <p className="text-xs text-muted">
-                Drop your recorded software walkthrough to pair with the audio.
-              </p>
-            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Step 4: Screen Recording Attachment</h3>
+                <p className="text-xs text-muted">
+                  Record directly in-browser or drag &amp; drop an existing recording.
+                </p>
+              </div>
 
-            {/* Video Dropzone */}
-            <div
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                if (e.dataTransfer.files?.[0]) handleVideoSelect(e.dataTransfer.files[0]);
-              }}
-              className={`p-8 border border-dashed rounded-xl text-center transition-all ${
-                isDragging
-                  ? 'border-foreground bg-surface-300'
-                  : videoFile
-                  ? 'border-border-strong bg-surface-200/50'
-                  : 'border-border bg-surface-200/20 hover:border-border-strong'
-              }`}
-            >
-              {videoFile ? (
-                <div className="space-y-3">
-                  <div className="w-10 h-10 rounded-full bg-surface-300 text-foreground flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-foreground">{videoFile.name}</div>
-                    <div className="text-[11px] text-muted font-mono mt-0.5">
-                      {(videoFile.size / (1024 * 1024)).toFixed(1)} MB • {videoFile.type}
-                    </div>
-                  </div>
-
-                  {videoUrl && (
-                    <video
-                      controls
-                      src={videoUrl}
-                      className="max-h-56 rounded-lg mx-auto border border-border"
-                    />
-                  )}
-
-                  <label className="inline-block btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
-                    Replace Video File
-                    <input
-                      type="file"
-                      accept="video/mp4,video/webm,video/mkv"
-                      className="hidden"
-                      onChange={(e) => e.target.files?.[0] && handleVideoSelect(e.target.files[0])}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  <div className="w-10 h-10 rounded-lg bg-surface-300 text-foreground flex items-center justify-center mx-auto">
-                    <Upload className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-foreground">Drag and drop video recording here</div>
-                    <div className="text-[11px] text-muted mt-0.5">Supports MP4, WebM, MOV</div>
-                  </div>
-                  <label className="inline-block btn-solid px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer">
-                    Browse File
-                    <input
-                      type="file"
-                      accept="video/mp4,video/webm,video/mkv"
-                      className="hidden"
-                      onChange={(e) => e.target.files?.[0] && handleVideoSelect(e.target.files[0])}
-                    />
-                  </label>
-                </div>
+              {/* Direct Screen Recorder Action */}
+              {!isRecordingScreen && !videoFile && (
+                <button
+                  onClick={handleStartScreenRecording}
+                  className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
+                >
+                  <Video className="w-3.5 h-3.5 text-red-500" />
+                  Record Screen &amp; Mic
+                </button>
               )}
             </div>
+
+            {/* In-Browser Screen Recorder Active HUD */}
+            {isRecordingScreen && (
+              <div className="p-5 rounded-xl bg-surface-200 border border-border text-center space-y-3 animate-pulse-subtle">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+                  <span className="text-xs font-bold text-foreground font-mono">
+                    RECORDING LIVE: {Math.floor(recordingTime / 60).toString().padStart(2, '0')}:{(recordingTime % 60).toString().padStart(2, '0')}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted">
+                  Perform your software walkthrough on screen. Click Stop Recording when finished.
+                </p>
+
+                <div className="flex items-center justify-center gap-2 pt-2">
+                  <button
+                    onClick={handleTogglePauseScreenRecording}
+                    className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1"
+                  >
+                    {isRecordingPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                    {isRecordingPaused ? 'Resume' : 'Pause'}
+                  </button>
+
+                  <button
+                    onClick={handleStopScreenRecording}
+                    className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-red-600 text-white"
+                  >
+                    <StopCircle className="w-4 h-4" />
+                    Stop &amp; Attach
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Video Dropzone */}
+            {!isRecordingScreen && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  if (e.dataTransfer.files?.[0]) handleVideoSelect(e.dataTransfer.files[0]);
+                }}
+                className={`p-8 border border-dashed rounded-xl text-center transition-all ${
+                  isDragging
+                    ? 'border-foreground bg-surface-300'
+                    : videoFile
+                    ? 'border-border-strong bg-surface-200/50'
+                    : 'border-border bg-surface-200/20 hover:border-border-strong'
+                }`}
+              >
+                {videoFile ? (
+                  <div className="space-y-3">
+                    <div className="w-10 h-10 rounded-full bg-surface-300 text-foreground flex items-center justify-center mx-auto">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">{videoFile.name}</div>
+                      <div className="text-[11px] text-muted font-mono mt-0.5">
+                        {(videoFile.size / (1024 * 1024)).toFixed(1)} MB • {videoFile.type}
+                      </div>
+                    </div>
+
+                    {videoUrl && (
+                      <video
+                        controls
+                        src={videoUrl}
+                        className="max-h-56 rounded-lg mx-auto border border-border"
+                      />
+                    )}
+
+                    <label className="inline-block btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
+                      Replace Video File
+                      <input
+                        type="file"
+                        accept="video/mp4,video/webm,video/mkv"
+                        className="hidden"
+                        onChange={(e) => e.target.files?.[0] && handleVideoSelect(e.target.files[0])}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    <div className="w-10 h-10 rounded-lg bg-surface-300 text-foreground flex items-center justify-center mx-auto">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Drag and drop video recording here</div>
+                      <div className="text-[11px] text-muted mt-0.5">Supports MP4, WebM, MOV</div>
+                    </div>
+                    <label className="inline-block btn-solid px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer">
+                      Browse File
+                      <input
+                        type="file"
+                        accept="video/mp4,video/webm,video/mkv"
+                        className="hidden"
+                        onChange={(e) => e.target.files?.[0] && handleVideoSelect(e.target.files[0])}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-between pt-2 border-t border-border">
               <button
@@ -750,6 +909,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
           </div>
         </div>
       )}
+
+      {/* Teleprompter Modal */}
+      <TeleprompterModal
+        script={script}
+        isOpen={isTeleprompterOpen}
+        onClose={() => setIsTeleprompterOpen(false)}
+      />
 
     </div>
   );
