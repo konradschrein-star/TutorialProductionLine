@@ -11,6 +11,15 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+
+# SSH and Secrets
+*deploy_key*
+*.key
+*.pem
+*.id_ed25519
 
 # Editor directories and files
 .vscode/*
