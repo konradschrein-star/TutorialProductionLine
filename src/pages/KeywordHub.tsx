@@ -5,9 +5,11 @@ import {
   Send, 
   CheckCircle2, 
   Database,
-  Filter
+  RefreshCw,
+  Server
 } from 'lucide-react';
 import { KeywordService, POPULAR_SOFTWARES } from '../services/keywordService';
+import { KTv2SyncService } from '../services/ktv2SyncService';
 import { DEFAULT_CHANNELS } from '../services/storageService';
 import { KeywordItem, Channel } from '../types';
 
@@ -18,11 +20,13 @@ interface KeywordHubProps {
 export const KeywordHub: React.FC<KeywordHubProps> = () => {
   const navigate = useNavigate();
 
-  const [keywords] = useState<KeywordItem[]>(() => KeywordService.getKeywords());
+  const [keywords, setKeywords] = useState<KeywordItem[]>(() => KeywordService.getKeywords());
   const [search, setSearch] = useState<string>('');
   const [selectedSoftware, setSelectedSoftware] = useState<string>('all');
   const [selectedChannelFilter, setSelectedChannelFilter] = useState<string>('all');
   const [onlyHowTo, setOnlyHowTo] = useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string>('');
 
   // Filtered list
   const filteredKeywords = useMemo(() => {
@@ -46,6 +50,21 @@ export const KeywordHub: React.FC<KeywordHubProps> = () => {
     });
   };
 
+  const handleSyncWithVPS = async () => {
+    setIsSyncing(true);
+    setSyncMessage('');
+    try {
+      const res = await KTv2SyncService.syncWithVPS('decastroian76@gmail.com');
+      setKeywords(KeywordService.getKeywords());
+      setSyncMessage(res.message);
+      setTimeout(() => setSyncMessage(''), 3000);
+    } catch (e: any) {
+      setSyncMessage('Sync failed: ' + e.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4">
       
@@ -67,6 +86,21 @@ export const KeywordHub: React.FC<KeywordHubProps> = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {syncMessage && (
+            <span className="text-[11px] font-mono text-emerald-500 font-bold animate-fadeIn">
+              {syncMessage}
+            </span>
+          )}
+
+          <button
+            onClick={handleSyncWithVPS}
+            disabled={isSyncing}
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing...' : 'Sync KTv2 VPS'}
+          </button>
+
           <div className="px-3 py-1.5 rounded-lg bg-surface-200 border border-border text-center">
             <div className="text-[9px] uppercase font-mono font-bold text-muted">Approved Pool</div>
             <div className="text-xs font-mono font-bold text-foreground">16,146</div>
@@ -133,7 +167,7 @@ export const KeywordHub: React.FC<KeywordHubProps> = () => {
 
       </div>
 
-      {/* Palantir / Linear Style Data Table */}
+      {/* Palantir / Linear Data Table */}
       <div className="pro-panel rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-foreground">
@@ -187,7 +221,7 @@ export const KeywordHub: React.FC<KeywordHubProps> = () => {
                     <td className="py-2.5 px-4 text-right">
                       {row.status === 'COMPLETED' ? (
                         <span className="text-muted font-mono text-[11px] inline-flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Done
                         </span>
                       ) : (
                         <button
