@@ -54,6 +54,17 @@ export class KeywordService {
    * Claims a keyword for a specific VA user
    */
   static claimKeyword(id: string, userName: string): KeywordItem | undefined {
+    return this.updateKeywordStatus(id, 'IN_PRODUCTION', userName);
+  }
+
+  /**
+   * Updates state of a single keyword with persistence
+   */
+  static updateKeywordStatus(
+    id: string,
+    status: 'NEW' | 'CLAIMED' | 'IN_PRODUCTION' | 'COMPLETED',
+    claimedBy?: string
+  ): KeywordItem | undefined {
     const list = this.getKeywords();
     let updatedItem: KeywordItem | undefined;
 
@@ -61,8 +72,8 @@ export class KeywordService {
       if (item.id === id) {
         updatedItem = {
           ...item,
-          status: 'CLAIMED' as const,
-          claimedBy: userName,
+          status,
+          claimedBy: status === 'NEW' ? undefined : (claimedBy || item.claimedBy),
         };
         return updatedItem;
       }
@@ -74,20 +85,63 @@ export class KeywordService {
   }
 
   /**
-   * Marks a keyword as completed
+   * Batch updates status across multiple keyword IDs
    */
-  static completeKeyword(id: string): void {
+  static batchUpdateStatus(ids: string[], status: 'NEW' | 'IN_PRODUCTION' | 'COMPLETED'): void {
     const list = this.getKeywords();
+    const idSet = new Set(ids);
+
     const nextList = list.map(item => {
-      if (item.id === id) {
+      if (idSet.has(item.id)) {
         return {
           ...item,
-          status: 'COMPLETED' as const,
+          status,
+          claimedBy: status === 'NEW' ? undefined : item.claimedBy,
         };
       }
       return item;
     });
+
     this.saveKeywords(nextList);
+  }
+
+  /**
+   * Marks a keyword as completed
+   */
+  static completeKeyword(id: string): void {
+    this.updateKeywordStatus(id, 'COMPLETED');
+  }
+
+  /**
+   * Returns real-time metrics for keyword states
+   */
+  static getKeywordCounts(keywords?: KeywordItem[]): {
+    total: number;
+    available: number;
+    inProduction: number;
+    completed: number;
+  } {
+    const list = keywords || this.getKeywords();
+    let available = 0;
+    let inProduction = 0;
+    let completed = 0;
+
+    for (const k of list) {
+      if (k.status === 'COMPLETED') {
+        completed++;
+      } else if (k.status === 'IN_PRODUCTION' || k.status === 'CLAIMED') {
+        inProduction++;
+      } else {
+        available++;
+      }
+    }
+
+    return {
+      total: list.length,
+      available,
+      inProduction,
+      completed,
+    };
   }
 
   /**
