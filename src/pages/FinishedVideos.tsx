@@ -15,8 +15,10 @@ import { StorageService, DEFAULT_CHANNELS } from '../services/storageService';
 import { FinishedVideo } from '../types';
 
 export const FinishedVideos: React.FC = () => {
-  const [videos] = useState<FinishedVideo[]>(() => StorageService.getFinishedVideos());
+  const [videos, setVideos] = useState<FinishedVideo[]>(() => StorageService.getFinishedVideos());
   const [selectedVideo, setSelectedVideo] = useState<FinishedVideo | null>(null);
+  const [editingScript, setEditingScript] = useState<string>('');
+  const [isEditingScript, setIsEditingScript] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
   const [selectedChannel, setSelectedChannel] = useState<string>('all');
 
@@ -25,6 +27,20 @@ export const FinishedVideos: React.FC = () => {
     if (search && !v.title.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const handleOpenVideo = (video: FinishedVideo) => {
+    setSelectedVideo(video);
+    setEditingScript(video.script);
+    setIsEditingScript(false);
+  };
+
+  const handleSaveScript = () => {
+    if (!selectedVideo) return;
+    StorageService.updateFinishedVideo(selectedVideo.id, { script: editingScript });
+    setVideos(StorageService.getFinishedVideos());
+    setSelectedVideo({ ...selectedVideo, script: editingScript });
+    setIsEditingScript(false);
+  };
 
   const handleExportManifest = (video: FinishedVideo) => {
     const manifest = {
@@ -124,7 +140,7 @@ export const FinishedVideos: React.FC = () => {
             
             {/* Thumbnail Header */}
             <div
-              onClick={() => setSelectedVideo(video)}
+              onClick={() => handleOpenVideo(video)}
               className="aspect-video relative overflow-hidden bg-black cursor-pointer"
             >
               <img
@@ -149,7 +165,7 @@ export const FinishedVideos: React.FC = () => {
             <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2.5">
               <div>
                 <h4
-                  onClick={() => setSelectedVideo(video)}
+                  onClick={() => handleOpenVideo(video)}
                   className="text-xs font-bold text-foreground line-clamp-2 leading-snug cursor-pointer hover:underline"
                 >
                   {video.title}
@@ -162,7 +178,7 @@ export const FinishedVideos: React.FC = () => {
               {/* Status Badge & Actions */}
               <div className="pt-2 border-t border-border flex items-center justify-between">
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-surface-200 text-foreground border border-border flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                   {video.status}
                 </span>
 
@@ -171,7 +187,7 @@ export const FinishedVideos: React.FC = () => {
                   className="btn-outline px-2 py-1 rounded text-[10px] font-mono font-bold flex items-center gap-1"
                   title="Download Stealth Manifest (.json)"
                 >
-                  <Download className="w-3 h-3" /> Manifest
+                  <Download className="w-3.5 h-3.5" /> Manifest
                 </button>
               </div>
 
@@ -205,11 +221,49 @@ export const FinishedVideos: React.FC = () => {
               <img src={selectedVideo.thumbnailUrl} alt={selectedVideo.title} className="w-full h-full object-cover" />
             </div>
 
-            <div>
-              <h3 className="text-sm font-bold text-foreground">{selectedVideo.title}</h3>
-              <div className="mt-2 p-3 rounded-lg bg-surface-200 text-xs font-mono text-muted leading-relaxed max-h-32 overflow-y-auto">
-                {selectedVideo.script}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-foreground">{selectedVideo.title}</h3>
+                <button
+                  onClick={() => setIsEditingScript(!isEditingScript)}
+                  className="text-xs text-muted hover:text-foreground underline font-mono"
+                >
+                  {isEditingScript ? 'Cancel Edit' : 'Edit Script'}
+                </button>
               </div>
+
+              {isEditingScript ? (
+                <div className="space-y-2">
+                  <textarea
+                    rows={5}
+                    value={editingScript}
+                    onChange={(e) => setEditingScript(e.target.value)}
+                    className="pro-input w-full rounded-lg p-3 text-xs font-mono leading-relaxed resize-y"
+                    placeholder="Edit script..."
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingScript(selectedVideo.script);
+                        setIsEditingScript(false);
+                      }}
+                      className="btn-outline px-3 py-1 rounded text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveScript}
+                      className="btn-solid px-3 py-1 rounded text-xs font-semibold"
+                    >
+                      Save Script
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-lg bg-surface-200 text-xs font-mono text-muted leading-relaxed max-h-32 overflow-y-auto">
+                  {selectedVideo.script}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-border">

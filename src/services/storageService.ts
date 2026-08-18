@@ -78,11 +78,11 @@ export class StorageService {
     this.set('active_channel', channel);
   }
 
-  static getApiKey(service: 'groq' | 'elevenlabs' | 'fishaudio' | 'openai'): string {
+  static getApiKey(service: 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai'): string {
     return this.get<string>(`api_key_${service}`, '');
   }
 
-  static setApiKey(service: 'groq' | 'elevenlabs' | 'fishaudio' | 'openai', key: string): void {
+  static setApiKey(service: 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai', key: string): void {
     this.set(`api_key_${service}`, key.trim());
   }
 
@@ -105,5 +105,11 @@ export class StorageService {
   static addFinishedVideo(video: FinishedVideo): void {
     const list = this.getFinishedVideos();
     this.set('finished_videos', [video, ...list]);
+  }
+
+  static updateFinishedVideo(id: string, updates: Partial<FinishedVideo>): void {
+    const list = this.getFinishedVideos();
+    const updated = list.map(v => v.id === id ? { ...v, ...updates } : v);
+    this.set('finished_videos', updated);
   }
 }

@@ -9,14 +9,20 @@ import {
   CheckCircle2, 
   Send, 
   ExternalLink, 
-  Search,
-  Video,
-  StopCircle,
-  Pause,
-  Play,
-  Globe,
-  Layers,
-  Sparkles
+  Search, 
+  Video, 
+  StopCircle, 
+  Pause, 
+  Play, 
+  Globe, 
+  Sparkles,
+  Copy,
+  Check,
+  Edit3,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StepBar } from '../components/StepBar';
@@ -68,12 +74,15 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [regenPrompt, setRegenPrompt] = useState<string>('');
   const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
   const [isTeleprompterOpen, setIsTeleprompterOpen] = useState<boolean>(false);
+  const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
   // Step 3 State
   const [selectedVoice, setSelectedVoice] = useState<string>(activeChannel.defaultVoiceId || 'fish-paul-neutral');
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [lastSynthesizedScript, setLastSynthesizedScript] = useState<string>('');
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [synthProgress, setSynthProgress] = useState<number>(0);
+  const [isStep3ScriptOpen, setIsStep3ScriptOpen] = useState<boolean>(true);
 
   // Step 4 State: Screen Recorder & Video File
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -82,6 +91,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [isRecordingScreen, setIsRecordingScreen] = useState<boolean>(false);
   const [recordingTime, setRecordingTime] = useState<number>(0);
   const [isRecordingPaused, setIsRecordingPaused] = useState<boolean>(false);
+  const [isStep4ScriptOpen, setIsStep4ScriptOpen] = useState<boolean>(false);
   const timerRef = useRef<any>(null);
 
   // Step 5 State
@@ -91,6 +101,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [thumbnailUrl, setThumbnailUrl] = useState<string>('/background/bg-gradient-1.png');
   const [isDispatching, setIsDispatching] = useState<boolean>(false);
   const [dispatchedSuccess, setDispatchedSuccess] = useState<boolean>(false);
+  const [isStep5ScriptOpen, setIsStep5ScriptOpen] = useState<boolean>(false);
 
   // Batch Multi-Language Localization Suite State
   const [selectedBatchLangs, setSelectedBatchLangs] = useState<string[]>(['de', 'es', 'fr', 'pt', 'it']);
@@ -133,6 +144,14 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     }
   }, [topic, step]);
 
+  // Copy helper
+  const handleCopyScript = () => {
+    if (!script) return;
+    navigator.clipboard.writeText(script);
+    setCopiedScript(true);
+    setTimeout(() => setCopiedScript(false), 2000);
+  };
+
   // Step 1 ➔ 2: Generate Script
   const handleGenerateScript = async (customTopic?: string, customStyle?: ScriptStyle) => {
     const t = customTopic || topic;
@@ -173,26 +192,38 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     }
   };
 
-  // Step 2 ➔ 3: Generate Audio
-  const handleGenerateAudio = async () => {
-    if (!script.trim()) return;
-    setStep(3);
+  // Voice Synthesis & In-Place Regeneration
+  const handleSynthesizeVoice = async (overrideScript?: string, overrideVoice?: string) => {
+    const textToSynthesize = overrideScript !== undefined ? overrideScript : script;
+    const voiceToUse = overrideVoice || selectedVoice;
+    if (!textToSynthesize.trim()) return;
+
     setIsSynthesizing(true);
     setSynthProgress(15);
 
     try {
       const { blob } = await TTSService.synthesizeVoice(
-        script,
-        selectedVoice,
+        textToSynthesize,
+        voiceToUse,
         1.0,
         (pct) => setSynthProgress(pct)
       );
       setAudioBlob(blob);
+      setLastSynthesizedScript(textToSynthesize);
     } catch (err: any) {
       console.error(err);
       alert('Voice synthesis failed: ' + err.message);
     } finally {
       setIsSynthesizing(false);
+    }
+  };
+
+  // Step 2 ➔ 3: Proceed to Voice Synthesis
+  const handleProceedToStep3 = async () => {
+    if (!script.trim()) return;
+    setStep(3);
+    if (!audioBlob || script !== lastSynthesizedScript) {
+      await handleSynthesizeVoice();
     }
   };
 
@@ -315,7 +346,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
           status: 'Queued for Stealth Upload',
           thumbnailUrl: thumbnailUrl || '/background/bg-gradient-1.png',
           duration: '3:45',
-          script: `Localized ${langInfo?.name} narration generated via Groq LLaMA 3.3 and FFmpeg stream-copy remuxer.`,
+          script: `Localized ${langInfo?.name} narration generated via Groq LLaMA 3.3 / DeepSeek Flash and FFmpeg stream-copy remuxer.`,
           tags: [`${topic} ${langInfo?.name}`, ...videoTags.split(',').map(t => t.trim())],
           createdAt: new Date().toISOString().split('T')[0]
         });
@@ -356,12 +387,17 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     setTopic('');
     setKeywordId('');
     setScript('');
+    setLastSynthesizedScript('');
     setAudioBlob(null);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     setVideoFile(null);
     setVideoUrl('');
     setDispatchedSuccess(false);
   };
+
+  const wordCount = script.split(/\s+/).filter(Boolean).length;
+  const estimatedSeconds = Math.round(wordCount / 2.5);
+  const isScriptModified = audioBlob !== null && script !== lastSynthesizedScript;
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
@@ -520,19 +556,33 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         </div>
       )}
 
-      {/* ══════════════════ STEP 2: SCRIPTWRITING ══════════════════ */}
+      {/* ══════════════════ STEP 2: SCRIPTWRITING & EDITING ══════════════════ */}
       {step === 2 && (
         <div className="space-y-4">
           <div className="pro-panel p-5 rounded-xl space-y-3.5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-foreground">Step 2: Spoken Narration Script</h3>
-                <p className="text-xs text-muted">
-                  Formatted for voiceover pacing with spoken pauses ("...").
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-foreground">Step 2: Spoken Narration Script</h3>
+                  <span className="px-2 py-0.5 rounded bg-surface-200 border border-border text-[10px] font-mono text-foreground font-semibold flex items-center gap-1">
+                    <Edit3 className="w-3 h-3 text-muted" /> User-Editable
+                  </span>
+                </div>
+                <p className="text-xs text-muted mt-0.5">
+                  Directly edit or fine-tune spoken wording and pause markers ("...") for voiceover sync.
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyScript}
+                  className="btn-outline px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1"
+                  title="Copy script to clipboard"
+                >
+                  {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedScript ? 'Copied' : 'Copy'}
+                </button>
+
                 <button
                   onClick={() => setIsTeleprompterOpen(true)}
                   className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
@@ -540,18 +590,19 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   <Video className="w-3.5 h-3.5" />
                   Teleprompter Pro
                 </button>
+                
                 <span className="text-[11px] font-mono px-2 py-1 rounded bg-surface-200 border border-border text-muted font-bold">
-                  {script.split(/\s+/).filter(Boolean).length} words (~{Math.round(script.split(/\s+/).filter(Boolean).length / 2.5)}s)
+                  {wordCount} words (~{estimatedSeconds}s)
                 </span>
               </div>
             </div>
 
             <textarea
-              rows={11}
+              rows={12}
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              className="pro-input w-full rounded-lg p-3.5 text-xs text-foreground font-mono leading-relaxed resize-y"
-              placeholder="Script narration..."
+              className="pro-input w-full rounded-lg p-3.5 text-xs text-foreground font-mono leading-relaxed resize-y focus:ring-1 focus:ring-foreground/30"
+              placeholder="Type or paste narration script here..."
             />
 
             {/* Quick Refine & Tuning Actions */}
@@ -607,7 +658,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
               <button
                 disabled={!script.trim()}
-                onClick={handleGenerateAudio}
+                onClick={handleProceedToStep3}
                 className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 Next: Synthesize Voice
@@ -619,23 +670,39 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         </div>
       )}
 
-      {/* ══════════════════ STEP 3: VOICEOVER ══════════════════ */}
+      {/* ══════════════════ STEP 3: VOICEOVER & IN-PLACE SCRIPT EDITING ══════════════════ */}
       {step === 3 && (
         <div className="space-y-4">
           <div className="pro-panel p-5 rounded-xl space-y-4">
             
-            <div>
-              <h3 className="text-sm font-bold text-foreground">Step 3: Neural Voice Synthesis</h3>
-              <p className="text-xs text-muted">
-                Studio voiceover generated via Fish Audio or ElevenLabs models.
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Step 3: Neural Voice Synthesis &amp; Polish</h3>
+                <p className="text-xs text-muted">
+                  Choose voice model, listen to speech, or adjust the script and regenerate audio in-place.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsTeleprompterOpen(true)}
+                  className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  Teleprompter Pro
+                </button>
+              </div>
             </div>
 
+            {/* Voice Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
               {AVAILABLE_VOICES.map(voice => (
                 <div
                   key={voice.id}
-                  onClick={() => setSelectedVoice(voice.id)}
+                  onClick={() => {
+                    setSelectedVoice(voice.id);
+                    // If user switches voice, they can click Re-synthesize
+                  }}
                   className={`p-3 rounded-lg border cursor-pointer transition-all ${
                     selectedVoice === voice.id
                       ? 'bg-surface-300 border-foreground/40 shadow-subtle'
@@ -656,6 +723,80 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               ))}
             </div>
 
+            {/* In-Place Script Editor & Audio Regeneration Box */}
+            <div className="p-4 rounded-xl bg-surface-200/60 border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-3.5 h-3.5 text-muted" />
+                  <span className="text-xs font-bold text-foreground">
+                    Narration Script (Edit &amp; Re-synthesize Audio)
+                  </span>
+                  {isScriptModified && (
+                    <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Modified - Click Re-synthesize
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-muted">
+                    {wordCount} words (~{estimatedSeconds}s)
+                  </span>
+                  <button
+                    onClick={() => setIsStep3ScriptOpen(!isStep3ScriptOpen)}
+                    className="p-1 rounded hover:bg-surface-300 text-muted hover:text-foreground"
+                    title={isStep3ScriptOpen ? 'Collapse script' : 'Expand script'}
+                  >
+                    {isStep3ScriptOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {isStep3ScriptOpen && (
+                <div className="space-y-2.5">
+                  <textarea
+                    rows={6}
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    className="pro-input w-full rounded-lg p-3 text-xs text-foreground font-mono leading-relaxed resize-y focus:ring-1 focus:ring-foreground/30"
+                    placeholder="Edit narration script here..."
+                  />
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={handleCopyScript}
+                        className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] font-semibold text-foreground border border-border flex items-center gap-1"
+                      >
+                        {copiedScript ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                        {copiedScript ? 'Copied' : 'Copy Script'}
+                      </button>
+                      <button
+                        onClick={() => handleRefine('add_pauses')}
+                        className="px-2 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
+                      >
+                        + Add Pauses
+                      </button>
+                    </div>
+
+                    <button
+                      disabled={isSynthesizing || !script.trim()}
+                      onClick={() => handleSynthesizeVoice()}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-subtle ${
+                        isScriptModified
+                          ? 'bg-foreground text-background hover:opacity-90 ring-2 ring-foreground/40'
+                          : 'btn-outline'
+                      }`}
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                      {isSynthesizing ? 'Synthesizing...' : isScriptModified ? '⚡ Re-synthesize Audio with Changes' : 'Re-synthesize Voice'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Audio Synthesis Status / Player */}
             {isSynthesizing ? (
               <div className="p-6 rounded-xl bg-surface-200 border border-border text-center space-y-2.5">
                 <Volume2 className="w-6 h-6 text-foreground animate-pulse mx-auto" />
@@ -670,8 +811,16 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </div>
             ) : audioBlob ? (
               <div className="space-y-2">
-                <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Audio Ready
+                <div className="text-xs font-bold text-foreground flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Audio Ready
+                  </span>
+                  <button
+                    onClick={() => handleSynthesizeVoice()}
+                    className="text-[11px] text-muted hover:text-foreground underline font-mono flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Re-generate
+                  </button>
                 </div>
                 <AudioPlayer blob={audioBlob} topicTitle={topic} />
               </div>
@@ -712,14 +861,62 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 </p>
               </div>
 
-              {!isRecordingScreen && !videoFile && (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={handleStartScreenRecording}
-                  className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
+                  onClick={() => setIsTeleprompterOpen(true)}
+                  className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
                 >
-                  <Video className="w-3.5 h-3.5 text-red-500" />
-                  Record Screen &amp; Mic
+                  <Video className="w-3.5 h-3.5" />
+                  Teleprompter Pro
                 </button>
+
+                {!isRecordingScreen && !videoFile && (
+                  <button
+                    onClick={handleStartScreenRecording}
+                    className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
+                  >
+                    <Video className="w-3.5 h-3.5 text-red-500" />
+                    Record Screen &amp; Mic
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Optional Collapsible Script Reference Drawer for VA */}
+            <div className="p-3 rounded-lg bg-surface-200/50 border border-border">
+              <div
+                onClick={() => setIsStep4ScriptOpen(!isStep4ScriptOpen)}
+                className="flex items-center justify-between cursor-pointer text-xs font-bold text-foreground"
+              >
+                <div className="flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-muted" />
+                  <span>Narration Script Reference ({wordCount} words)</span>
+                </div>
+                <div className="text-muted text-[11px] flex items-center gap-1 font-mono">
+                  <span>{isStep4ScriptOpen ? 'Hide' : 'Show'}</span>
+                  {isStep4ScriptOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </div>
+              </div>
+
+              {isStep4ScriptOpen && (
+                <div className="mt-2.5 pt-2 border-t border-border space-y-2">
+                  <textarea
+                    rows={5}
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    className="pro-input w-full rounded-lg p-2.5 text-xs font-mono leading-relaxed resize-y"
+                    placeholder="Script text..."
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleCopyScript}
+                      className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[10px] font-mono text-foreground border border-border flex items-center gap-1"
+                    >
+                      {copiedScript ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                      {copiedScript ? 'Copied' : 'Copy Script'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -892,6 +1089,35 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                     onChange={(e) => setVideoTags(e.target.value)}
                     className="pro-input w-full rounded-lg px-3.5 py-2 text-xs text-foreground font-mono"
                   />
+                </div>
+
+                {/* Final Script Review Drawer */}
+                <div className="p-3 rounded-lg bg-surface-200/50 border border-border">
+                  <div
+                    onClick={() => setIsStep5ScriptOpen(!isStep5ScriptOpen)}
+                    className="flex items-center justify-between cursor-pointer text-xs font-bold text-foreground"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-muted" />
+                      <span>Script Manifest ({wordCount} words)</span>
+                    </div>
+                    <div className="text-muted text-[11px] flex items-center gap-1 font-mono">
+                      <span>{isStep5ScriptOpen ? 'Hide' : 'Show / Edit'}</span>
+                      {isStep5ScriptOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </div>
+                  </div>
+
+                  {isStep5ScriptOpen && (
+                    <div className="mt-2.5 pt-2 border-t border-border space-y-2">
+                      <textarea
+                        rows={5}
+                        value={script}
+                        onChange={(e) => setScript(e.target.value)}
+                        className="pro-input w-full rounded-lg p-2.5 text-xs font-mono leading-relaxed resize-y"
+                        placeholder="Final script narration..."
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 

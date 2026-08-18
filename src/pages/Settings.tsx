@@ -4,6 +4,7 @@ import { StorageService, DEFAULT_CHANNELS } from '../services/storageService';
 
 export const Settings: React.FC = () => {
   const [groqKey, setGroqKey] = useState<string>(() => StorageService.getApiKey('groq'));
+  const [deepseekKey, setDeepseekKey] = useState<string>(() => StorageService.getApiKey('deepseek'));
   const [elevenKey, setElevenKey] = useState<string>(() => StorageService.getApiKey('elevenlabs'));
   const [fishKey, setFishKey] = useState<string>(() => StorageService.getApiKey('fishaudio'));
   const [openAiKey, setOpenAiKey] = useState<string>(() => StorageService.getApiKey('openai'));
@@ -16,6 +17,7 @@ export const Settings: React.FC = () => {
 
   const handleSave = () => {
     StorageService.setApiKey('groq', groqKey);
+    StorageService.setApiKey('deepseek', deepseekKey);
     StorageService.setApiKey('elevenlabs', elevenKey);
     StorageService.setApiKey('fishaudio', fishKey);
     StorageService.setApiKey('openai', openAiKey);
@@ -50,6 +52,32 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const handleTestDeepSeek = async () => {
+    setTestingService('deepseek');
+    if (!deepseekKey.trim()) {
+      setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: 'No API Key Entered' } }));
+      setTestingService(null);
+      return;
+    }
+
+    try {
+      const start = Date.now();
+      const res = await fetch('https://api.deepseek.com/models', {
+        headers: { 'Authorization': `Bearer ${deepseekKey}` }
+      });
+      const latency = Date.now() - start;
+      if (res.ok) {
+        setTestResults(prev => ({ ...prev, deepseek: { ok: true, message: `Connected (${latency}ms)` } }));
+      } else {
+        setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: `Auth Failed (${res.status})` } }));
+      }
+    } catch (e: any) {
+      setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: e.message } }));
+    } finally {
+      setTestingService(null);
+    }
+  };
+
   const handleTestServer = async () => {
     setTestingService('server');
     try {
@@ -72,6 +100,7 @@ export const Settings: React.FC = () => {
   const handleExportConfig = () => {
     const config = {
       groqKey: groqKey ? '***' : '',
+      deepseekKey: deepseekKey ? '***' : '',
       channels: DEFAULT_CHANNELS,
       serverUrl,
       exportedAt: new Date().toISOString()
@@ -93,7 +122,7 @@ export const Settings: React.FC = () => {
         <div>
           <h1 className="text-sm font-bold font-display text-foreground">Settings &amp; Model Credentials</h1>
           <p className="text-[11px] text-muted mt-0.5">
-            Configure neural voice models, Groq LLaMA keys, and Konrad's owned channel bindings.
+            Configure neural voice models, Groq &amp; DeepSeek Flash LLM keys, and Konrad's owned channel bindings.
           </p>
         </div>
 
@@ -131,7 +160,7 @@ export const Settings: React.FC = () => {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-semibold text-foreground">
-                Groq API Key (LLaMA 3.3 70B Scriptwriter &amp; Translator)
+                Groq API Key (Primary: LLaMA 3.3 70B Scriptwriter &amp; Translator)
               </label>
               <div className="flex items-center gap-2">
                 {testResults.groq && (
@@ -154,6 +183,40 @@ export const Settings: React.FC = () => {
               value={groqKey}
               onChange={(e) => setGroqKey(e.target.value)}
               placeholder="gsk_..."
+              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+            />
+          </div>
+
+          {/* DeepSeek Flash Key */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <span>DeepSeek Flash API Key (Fallback: deepseek-chat / V3 High-Throughput)</span>
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-surface-300 text-foreground">
+                  Flash Engine
+                </span>
+              </label>
+              <div className="flex items-center gap-2">
+                {testResults.deepseek && (
+                  <span className={`text-[10px] font-mono font-bold ${testResults.deepseek.ok ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {testResults.deepseek.message}
+                  </span>
+                )}
+                <button
+                  onClick={handleTestDeepSeek}
+                  disabled={testingService === 'deepseek'}
+                  className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
+                >
+                  {testingService === 'deepseek' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                  Test Ping
+                </button>
+              </div>
+            </div>
+            <input
+              type="password"
+              value={deepseekKey}
+              onChange={(e) => setDeepseekKey(e.target.value)}
+              placeholder="sk-..."
               className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
             />
           </div>

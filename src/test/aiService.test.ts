@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AIService } from '../services/aiService';
+import { StorageService } from '../services/storageService';
 
 describe('AIService Unit Tests', () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.restoreAllMocks();
   });
 
   it('should generate offline fallback script when no API key is set', async () => {
@@ -38,5 +40,33 @@ describe('AIService Unit Tests', () => {
     const original = 'Click on settings. Then click save.';
     const refined = await AIService.refineScript(original, 'add_pauses');
     expect(refined).toContain('...');
+  });
+
+  it('should fall back to DeepSeek Flash (deepseek-chat) when Groq fails', async () => {
+    StorageService.setApiKey('groq', 'gsk_mock_invalid');
+    StorageService.setApiKey('deepseek', 'sk_deepseek_flash_mock');
+
+    let calledDeepSeekWithFlash = false;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init: any) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('api.groq.com')) {
+        return new Response(JSON.stringify({ error: { message: 'Rate limited' } }), { status: 429 });
+      }
+      if (urlStr.includes('api.deepseek.com')) {
+        const body = JSON.parse(init.body);
+        if (body.model === 'deepseek-chat') {
+          calledDeepSeekWithFlash = true;
+          return new Response(JSON.stringify({
+            choices: [{ message: { content: 'DeepSeek Flash generated narration script with precision...' } }]
+          }), { status: 200 });
+        }
+      }
+      return new Response('Not found', { status: 404 });
+    });
+
+    const result = await AIService.generateScript('Automate Invoices in Excel');
+    expect(calledDeepSeekWithFlash).toBe(true);
+    expect(result).toBe('DeepSeek Flash generated narration script with precision...');
   });
 });
