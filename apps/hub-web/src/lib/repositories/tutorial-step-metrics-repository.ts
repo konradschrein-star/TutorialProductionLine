@@ -45,12 +45,9 @@ export interface DowScriptPoint {
   samples: number;
 }
 
-export interface TimelineEvent {
-  jobId: string;
-  title: string | null;
+export interface IntradayPoint {
   va: string | null;
-  kind: "claimed" | "audio" | "recorded" | "completed";
-  at: string; // ISO
+  hour: number; // fractional hour-of-day (0..24) of completed_at
 }
 
 // minutes between two timestamp columns, guarded so a>=b and both present
@@ -135,40 +132,27 @@ export async function getScriptTimeByDow(
 }
 
 /**
- * Recent per-step events for the production timeline — one dot per keyword
- * claim, per audio-ready, per recording upload, per completion.
- * NOTE: true keyword-CLAIM time lives in the external Keyword Tool; here we use
- * the job's created_at as the in-studio proxy.
+ * Intraday production rhythm — every produced video mapped to its HOUR OF DAY
+ * (0..24) of completion, per VA. This is the "clock" view: it reveals the VA's
+ * ACTUAL working window regardless of what they claim — e.g. 120 videos all made
+ * between 09:00 and 14:00 (5h), not the 8h logged. Only original (non-translated)
+ * jobs count as hands-on VA production (`source_job_id IS NULL`).
  */
-export async function getProductionTimeline(
-  windowDays = 14,
-): Promise<TimelineEvent[]> {
+export async function getIntradayProduction(
+  windowDays = 28,
+): Promise<IntradayPoint[]> {
   const rows = await db
     .select({
-      jobId: tutorialJobs.id,
-      title: tutorialJobs.title,
       va: users.name,
-      created_at: tutorialJobs.created_at,
-      audio_done_at: tutorialJobs.audio_done_at,
-      recorded_at: tutorialJobs.recorded_at,
-      completed_at: tutorialJobs.completed_at,
+      hour: sql<string>`extract(hour from ${tutorialJobs.completed_at}) + extract(minute from ${tutorialJobs.completed_at}) / 60.0`,
     })
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
-    );
+      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.completed_at} >= now() - (${windowDays} || ' days')::interval`,
+    )
+    .orderBy(sql`${tutorialJobs.completed_at} asc`)
+    .limit(3000);
 
-  const events: TimelineEvent[] = [];
-  for (const r of rows) {
-    const push = (kind: TimelineEvent["kind"], at: Date | null) => {
-      if (at) events.push({ jobId: r.jobId, title: r.title, va: r.va, kind, at: new Date(at).toISOString() });
-    };
-    push("claimed", r.created_at as unknown as Date | null);
-    push("audio", r.audio_done_at as unknown as Date | null);
-    push("recorded", r.recorded_at as unknown as Date | null);
-    push("completed", r.completed_at as unknown as Date | null);
-  }
-  events.sort((a, b) => a.at.localeCompare(b.at));
-  return events;
+  return rows.map((r) => ({ va: r.va, hour: Number(r.hour) }));
 }

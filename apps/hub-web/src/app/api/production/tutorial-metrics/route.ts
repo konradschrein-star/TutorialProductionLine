@@ -4,7 +4,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import {
   getVAStepDurations,
   getScriptTimeByDow,
-  getProductionTimeline,
+  getIntradayProduction,
 } from "@/lib/repositories/tutorial-step-metrics-repository";
 
 export const dynamic = "force-dynamic";
@@ -30,11 +30,11 @@ export async function GET(request: Request) {
     Math.max(1, parseInt(url.searchParams.get("window") || "28", 10) || 28),
   );
 
-  const [steps, dow, timeline] = await Promise.all([
+  const [steps, dow, intraday] = await Promise.all([
     getVAStepDurations(windowDays),
     getScriptTimeByDow(90),
-    getProductionTimeline(14),
+    getIntradayProduction(windowDays),
   ]);
 
-  return NextResponse.json({ steps, dow, timeline, windowDays });
+  return NextResponse.json({ steps, dow, intraday, windowDays });
 }

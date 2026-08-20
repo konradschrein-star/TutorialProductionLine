@@ -26,17 +26,14 @@ interface DowPoint {
   avg_script_min: number | null;
   samples: number;
 }
-interface TimelineEvent {
-  jobId: string;
-  title: string | null;
+interface IntradayPoint {
   va: string | null;
-  kind: "claimed" | "audio" | "recorded" | "completed";
-  at: string;
+  hour: number; // fractional hour-of-day 0..24
 }
 interface Payload {
   steps: VAStep[];
   dow: DowPoint[];
-  timeline: TimelineEvent[];
+  intraday: IntradayPoint[];
   windowDays: number;
 }
 
@@ -53,18 +50,7 @@ const STEP_COLOR: Record<StepKey, string> = {
   record: "#f0a642",
   finish: "#7ecb6a",
 };
-const EVENT_COLOR: Record<TimelineEvent["kind"], string> = {
-  claimed: "var(--v2-accent)",
-  audio: "#4bd6c8",
-  recorded: "#f0a642",
-  completed: "#7ecb6a",
-};
-const EVENT_LABEL: Record<TimelineEvent["kind"], string> = {
-  claimed: "Keyword claimed",
-  audio: "Audio ready",
-  recorded: "Recording uploaded",
-  completed: "Completed",
-};
+const VA_COLORS = ["var(--v2-accent)", "#4bd6c8", "#f0a642", "#7ecb6a", "#c084fc", "#60a5fa", "#f472b6"];
 const DOW_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const WINDOWS = [7, 28, 90] as const;
@@ -295,44 +281,38 @@ export function StepMetricsPanel() {
             })}
           </div>
 
-          {/* Day-of-week scripting pattern + timeline, side by side */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div style={{ ...card }}>
-              <div style={{ ...sectionTitle, marginBottom: 14 }}>Scripting time by weekday</div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 130 }}>
-                {DOW_LABEL.map((lbl, i) => {
-                  const pt = data.dow.find((d) => d.dow === i);
-                  const val = pt?.avg_script_min ?? 0;
-                  const h = val > 0 ? Math.max(4, (val / dowMax) * 110) : 2;
-                  const isWorst = val > 0 && val === dowMax;
-                  return (
-                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 10, color: isWorst ? "#f0a642" : "var(--v2-text-3)", fontWeight: isWorst ? 700 : 400 }}>{val > 0 ? fmtMin(val) : ""}</span>
-                      <div
-                        title={`${lbl}: ${fmtMin(pt?.avg_script_min ?? null)} avg script (${pt?.samples ?? 0} videos)`}
-                        style={{ width: "100%", height: h, borderRadius: "4px 4px 0 0", background: isWorst ? "#f0a642" : "var(--v2-accent)", opacity: val > 0 ? 1 : 0.25 }}
-                      />
-                      <span style={{ fontSize: 10, color: "var(--v2-text-3)" }}>{lbl}</span>
-                    </div>
-                  );
-                })}
-              </div>
+          {/* Scripting time by weekday */}
+          <div style={{ ...card }}>
+            <div style={{ ...sectionTitle, marginBottom: 14 }}>Scripting time by weekday</div>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 130 }}>
+              {DOW_LABEL.map((lbl, i) => {
+                const pt = data.dow.find((d) => d.dow === i);
+                const val = pt?.avg_script_min ?? 0;
+                const h = val > 0 ? Math.max(4, (val / dowMax) * 110) : 2;
+                const isWorst = val > 0 && val === dowMax;
+                return (
+                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 10, color: isWorst ? "#f0a642" : "var(--v2-text-3)", fontWeight: isWorst ? 700 : 400 }}>{val > 0 ? fmtMin(val) : ""}</span>
+                    <div
+                      title={`${lbl}: ${fmtMin(pt?.avg_script_min ?? null)} avg script (${pt?.samples ?? 0} videos)`}
+                      style={{ width: "100%", height: h, borderRadius: "4px 4px 0 0", background: isWorst ? "#f0a642" : "var(--v2-accent)", opacity: val > 0 ? 1 : 0.25 }}
+                    />
+                    <span style={{ fontSize: 10, color: "var(--v2-text-3)" }}>{lbl}</span>
+                  </div>
+                );
+              })}
             </div>
+          </div>
 
-            <div style={{ ...card }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <span style={sectionTitle}>Production timeline · 14d</span>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {(Object.keys(EVENT_COLOR) as TimelineEvent["kind"][]).map((k) => (
-                    <span key={k} style={{ fontSize: 9, color: "var(--v2-text-3)", display: "flex", alignItems: "center", gap: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: EVENT_COLOR[k] }} />
-                      {EVENT_LABEL[k]}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <Timeline events={data.timeline} />
+          {/* Daily production rhythm — the 24h clock: WHEN videos are actually made */}
+          <div style={{ ...card }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+              <span style={sectionTitle}>Daily production rhythm · when videos are actually made</span>
+              <span style={{ fontSize: 11, color: "var(--v2-text-3)" }}>
+                each dot = one video by hour of day · line = hourly density · reveals real working hours
+              </span>
             </div>
+            <DailyRhythm points={data.intraday} />
           </div>
         </>
       )}
@@ -340,37 +320,89 @@ export function StepMetricsPanel() {
   );
 }
 
-function Timeline({ events }: { events: TimelineEvent[] }) {
-  const { min, max } = useMemo(() => {
-    if (events.length === 0) return { min: 0, max: 1 };
-    const ts = events.map((e) => new Date(e.at).getTime());
-    return { min: Math.min(...ts), max: Math.max(...ts) };
-  }, [events]);
-  const span = Math.max(1, max - min);
-  const kinds: TimelineEvent["kind"][] = ["claimed", "audio", "recorded", "completed"];
+function DailyRhythm({ points }: { points: IntradayPoint[] }) {
+  const byVa = useMemo(() => {
+    const m = new Map<string, number[]>();
+    for (const p of points) {
+      const k = p.va ?? "Unknown VA";
+      const a = m.get(k) ?? [];
+      a.push(p.hour);
+      m.set(k, a);
+    }
+    return Array.from(m.entries());
+  }, [points]);
 
-  if (events.length === 0) {
-    return <div style={{ fontSize: 12, color: "var(--v2-text-3)" }}>No events in the last 14 days.</div>;
+  if (points.length === 0) {
+    return <div style={{ fontSize: 12, color: "var(--v2-text-3)" }}>No completed videos in this window yet.</div>;
   }
+
+  const fmtH = (h: number) =>
+    `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {kinds.map((k) => (
-        <div key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 74, flexShrink: 0, fontSize: 9, color: "var(--v2-text-3)", textAlign: "right" }}>{EVENT_LABEL[k]}</span>
-          <div style={{ position: "relative", flex: 1, height: 16, borderBottom: "1px solid var(--v2-border-1)" }}>
-            {events.filter((e) => e.kind === k).map((e, idx) => {
-              const left = ((new Date(e.at).getTime() - min) / span) * 100;
-              return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* hour axis */}
+      <div style={{ position: "relative", height: 12 }}>
+        {[0, 3, 6, 9, 12, 15, 18, 21, 24].map((h) => (
+          <span
+            key={h}
+            style={{ position: "absolute", left: `${(h / 24) * 100}%`, transform: "translateX(-50%)", fontSize: 9, color: "var(--v2-text-3)" }}
+          >
+            {h}h
+          </span>
+        ))}
+      </div>
+      {byVa.map(([va, hours], i) => {
+        const color = VA_COLORS[i % VA_COLORS.length];
+        const sorted = [...hours].sort((a, b) => a - b);
+        const lo = sorted[Math.floor((sorted.length - 1) * 0.05)];
+        const hi = sorted[Math.ceil((sorted.length - 1) * 0.95)];
+        const span = Math.max(0, hi - lo);
+        const buckets = new Array(24).fill(0);
+        for (const h of hours) buckets[Math.min(23, Math.max(0, Math.floor(h)))]++;
+        const maxB = Math.max(...buckets, 1);
+        const line = buckets
+          .map((c, h) => `${((h + 0.5) / 24) * 100},${100 - (c / maxB) * 88}`)
+          .join(" ");
+        return (
+          <div key={va}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3, flexWrap: "wrap", gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--v2-text-1)", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: color }} />
+                {va}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--v2-text-3)" }}>
+                {hours.length} videos · active{" "}
+                <span style={{ color: "var(--v2-text-1)" }}>
+                  {fmtH(lo)}–{fmtH(hi)}
+                </span>{" "}
+                · <span style={{ color, fontWeight: 700 }}>{span.toFixed(1)}h</span> window
+              </span>
+            </div>
+            <div style={{ position: "relative", height: 54, background: "var(--v2-surface-3)", borderRadius: 8, overflow: "hidden" }}>
+              {/* active-window band */}
+              <div style={{ position: "absolute", left: `${(lo / 24) * 100}%`, width: `${(span / 24) * 100}%`, top: 0, bottom: 0, background: color, opacity: 0.1 }} />
+              {/* gridlines */}
+              {[6, 12, 18].map((h) => (
+                <div key={h} style={{ position: "absolute", left: `${(h / 24) * 100}%`, top: 0, bottom: 0, width: 1, background: "var(--v2-border-0)" }} />
+              ))}
+              {/* hourly density line */}
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+                <polyline points={line} fill="none" stroke={color} strokeWidth={1} vectorEffect="non-scaling-stroke" opacity={0.85} />
+              </svg>
+              {/* one dot per produced video, on the baseline */}
+              {hours.map((h, j) => (
                 <span
-                  key={e.jobId + k + idx}
-                  title={`${EVENT_LABEL[k]} · ${e.va ?? "VA"} · ${e.title ?? ""} · ${new Date(e.at).toLocaleString()}`}
-                  style={{ position: "absolute", left: `${left}%`, top: 3, width: 8, height: 8, marginLeft: -4, borderRadius: "50%", background: EVENT_COLOR[k], boxShadow: "0 0 6px rgba(0,0,0,0.4)" }}
+                  key={j}
+                  style={{ position: "absolute", left: `${(h / 24) * 100}%`, bottom: 6, width: 5, height: 5, marginLeft: -2.5, borderRadius: "50%", background: color, opacity: 0.55 }}
                 />
-              );
-            })}
+              ))}
+              {/* baseline */}
+              <div style={{ position: "absolute", left: 0, right: 0, bottom: 6, height: 1, background: "var(--v2-border-1)" }} />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
