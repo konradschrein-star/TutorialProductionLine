@@ -1,33 +1,174 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+
 # Logs
 logs
 *.log
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-.env
-.env.*
-!.env.example
-
-# SSH and Secrets
-*deploy_key*
-*.key
-*.pem
-*.id_ed25519
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Operating system
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# MCP config (local only)
+.mcp.json
+
+# Claude Code local config (machine-specific)
+.claude/settings.local.json
+.claude/skills/
+
+# Turborepo
+.turbo/
+
+# Testing
+.coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Git worktrees
+.worktrees/
+
+# Playwright MCP screenshots
+.playwright-mcp/
+
+# Autonomous development system
+.autonomous-logs/
+.autonomous-state.json
+.worker-sync.json
+.telegram-manager-state.json
+USER_INSTRUCTIONS.md
+ARCHITECT_RESPONSE.md
+
+# Test files and render artifacts
+Avatar_Video.mp4
+Avatar Video.srt
+final_video_v4.mp4
+final_video_v3.mp4
+final_video_v2.mp4
+final_video.mp4
+final_video_99s.mp4
+apps/worker-render/test-e2e-output.mp4
+apps/worker-render/test-v2-output.mp4
+apps/worker-render/test-e2e-images/
+apps/worker-render/remotion-bundle/
+apps/worker-orchestrator/test-ai33-output.jpg
+
+# Research docs (perplexity exports)
+docs/perplexity research/
+
+# Media files (stored on server filesystem, not in git)
+# CRITICAL: Never track media/ - prevents git pull from deleting uploaded videos
+# Anchored to repo root so we don't swallow code paths like apps/hub-web/.../api/media/
+/media/
+/media/**
+*.mp4
+*.pid
+
+# Deploy bundles (never commit these - use scp to deploy)
+*.tar.gz
+
+# Cookies + browser session dumps (NEVER commit — credential equivalent)
+# A browser cookie jar is a full account takeover (Google SID/__Secure-1PSID/
+# HSID/SSID/APISID/SAPISID). Cover EVERY serialisation, not just .txt —
+# .claude/gemini-cookies.json and .claude/perplexity-cookies.json were tracked
+# at HEAD because only *cookies.txt was ignored (untracked 2026-07-29).
+*-cookies.txt
+*cookies.txt
+*cookies*.json
+*cookies*.jsonl
+*-cookies.json
+storage-state*.json
+*storageState*.json
+.claude/*-cookies.json
+
+# Keys / certificates / credential material (NEVER commit)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+id_rsa*
+id_ed25519*
+*_rsa
+*_ed25519
+*.asc
+*.gpg
+service-account*.json
+*-service-account.json
+gcp-*.json
+credentials.json
+client_secret*.json
+token.json
+*.token
+
+# pm2 process/env dumps (dump.pm2 contains the resolved env for every process,
+# i.e. every API key in plaintext)
+dump.pm2
+.pm2/
+ecosystem.config.local.*
+
+# Backup / scratch sources (never commit these)
+*.bak
+*.backup
+tmp-*
+.tmp-*
+
+# One-off ops + recovery scripts (move to scripts/ops/ if you want to keep)
+check-*.mjs
+check-*.cjs
+run-cf-*.mjs
+inject-*.mjs
+inject-*.cjs
+
+# Diff scratch / review artifacts
+*.diff
+
+# NoVNC / RDP debug screenshots
+novnc-*.jpeg
+novnc-*.png
+gemini-state.*
+preview-white-bg.*
+subtitles-click-test.*
+
+# Test CSVs (Scenes/ exports live in media/, not in the repo)
+CE-*-Scenes.csv
+
+# Garbled path leak (Windows-path-was-treated-as-literal mistake)
+"C\357\200\272Users*"
+
+# Local credential drop (never commit)
+secrets/
+.env.bak*
+.env.*.bak
+*.env.backup

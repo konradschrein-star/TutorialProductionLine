@@ -1,0 +1,27 @@
+{
+  "name": "@repo/logger",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.4",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
+  },
+  "dependencies": {
+    "@repo/config": "workspace:*",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0"
+  }
+}

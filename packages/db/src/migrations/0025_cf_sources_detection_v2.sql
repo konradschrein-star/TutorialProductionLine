@@ -1,0 +1,12 @@
+-- V2 detection: full-frame YOLO + YuNet that returns ALL persons + faces.
+--
+-- Shape (kept aligned with HitboxV2Result in detect-all-hitboxes.ts):
+--   {
+--     frame_w, frame_h, samples, detected_at,
+--     persons: [
+--       { person_box: {x,y,w,h}, person_conf,
+--         face_box: {x,y,w,h} | null, face_conf,
+--         cluster_size }
+--     ]
+--   }
+ALTER TABLE "cf_sources" ADD COLUMN IF NOT EXISTS "detection" jsonb;

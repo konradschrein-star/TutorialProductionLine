@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "incremental": true,
+    "isolatedModules": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  // Test files are excluded from `tsc --noEmit`, matching EVERY other package
+  // in this monorepo (packages/*, worker-orchestrator, worker-render all carry
+  // the same `src/**/*.test.ts` + `src/**/__tests__/**` pair). hub-web was the
+  // only workspace missing it, which is why it alone emitted 91 test-file
+  // errors — 82 of them TS2304/TS2582 "Cannot find name describe/it/expect",
+  // because vitest's `globals: true` (vitest.config.ts) injects those at RUN
+  // time and tsc knows nothing about it.
+  //
+  // Why exclusion and not `"types": ["vitest/globals"]`: this tsconfig
+  // deliberately leaves `types` unset, so every @types package (node, react,
+  // react-dom, next's ambient types) is auto-included. Setting `types` at all
+  // switches that off and would have to enumerate the full list by hand or the
+  // whole app stops compiling. Following the established repo pattern is both
+  // the safer and the consistent choice.
+  //
+  // `.test.tsx` is listed in addition to the standard `.test.ts` because
+  // hub-web is the only workspace with React component tests.
+  "exclude": [
+    "node_modules",
+    "archive",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/__tests__/**"
+  ]
+}

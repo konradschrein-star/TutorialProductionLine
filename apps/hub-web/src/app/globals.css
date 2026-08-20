@@ -1,0 +1,223 @@
+@import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block');
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 224 71.4% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71.4% 4.1%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 210 20% 98%;
+    --primary-50: 262 83% 95%;
+    --primary-100: 262 83% 90%;
+    --primary-200: 262 83% 80%;
+    --primary-300: 262 83% 70%;
+    --primary-400: 262 83% 65%;
+    --primary-500: 262 83% 58%;
+    --primary-600: 262 83% 50%;
+    --primary-700: 262 83% 40%;
+    --primary-800: 262 83% 30%;
+    --primary-900: 262 83% 20%;
+    --primary-950: 262 83% 10%;
+
+    --secondary: 220 14.3% 95.9%;
+    --secondary-foreground: 220.9 39.3% 11%;
+
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+
+    --accent: 262 83% 95%;
+    --accent-foreground: 262 83% 58%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 262 83% 58%;
+
+    --success: 174 72% 51%; /* #23decb */
+    --error: 0 84.2% 60.2%; /* Readable red for light mode */
+    --warning: 38 92% 50%; /* #f59e0b */
+    --active: 161 84% 39%; /* #10b981 */
+
+    --radius: 0.5rem;
+    --font-inter: 'Inter', sans-serif;
+  }
+
+  .dark {
+    --background: 0 0% 0%; /* Pitch Black */
+    --foreground: 0 0% 98%; /* High contrast off-white */
+
+    --card: 0 0% 0%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 4%; /* Very deep gray for popovers */
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 262 97% 65%;
+    --primary-foreground: 0 0% 98%;
+    --primary-50: 262 97% 95%;
+    --primary-100: 262 97% 90%;
+    --primary-200: 262 97% 80%;
+    --primary-300: 262 97% 70%;
+    --primary-400: 262 97% 65%;
+    --primary-500: 262 97% 65%;
+    --primary-600: 262 97% 55%;
+    --primary-700: 262 97% 45%;
+    --primary-800: 262 97% 35%;
+    --primary-900: 262 97% 25%;
+    --primary-950: 262 97% 15%;
+
+    --secondary: 0 0% 8%; /* Dark gray for secondary elements */
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 65%;
+
+    --accent: 262 97% 65%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 100% 84%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 12%;
+    --input: 0 0% 12%;
+    --ring: 262 97% 65%;
+
+    --success: 174 72% 51%;
+    --error: 6 100% 84%;
+    --warning: 38 92% 50%;
+    --active: 161 84% 39%;
+  }
+}
+
+@layer base {
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    font-family: var(--font-inter);
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Glassmorphism utility classes */
+@layer utilities {
+  .glass {
+    background-color: hsl(var(--popover) / 0.4);
+    backdrop-filter: blur(20px);
+  }
+
+  .glass-card {
+    background-color: hsl(var(--popover) / 0.4);
+    backdrop-filter: blur(20px);
+    border: 1px solid hsl(var(--primary) / 0.1);
+  }
+
+  .glass-panel {
+    background-color: hsl(var(--popover) / 0.7);
+    backdrop-filter: blur(30px);
+    border: 1px solid hsl(var(--border) / 0.2);
+  }
+
+  /* Light mode: increase glass opacity so containers are visible against near-white background */
+  :root .glass {
+    background-color: hsl(var(--popover) / 0.85);
+  }
+  :root .glass-card {
+    background-color: hsl(var(--popover) / 0.85);
+  }
+  :root .glass-panel {
+    background-color: hsl(var(--popover) / 0.9);
+  }
+  .dark .glass {
+    background-color: hsl(var(--popover) / 0.4);
+  }
+  .dark .glass-card {
+    background-color: hsl(var(--popover) / 0.4);
+  }
+  .dark .glass-panel {
+    background-color: hsl(var(--popover) / 0.7);
+  }
+
+  .pulse-dot {
+    animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.4);
+  }
+
+  .glow-primary-strong {
+    box-shadow: 0 0 25px hsl(var(--primary) / 0.6);
+  }
+
+  .text-wide-caps {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+}
+
+/* Scrollbar styling */
+@layer utilities {
+  .scrollbar-custom::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-custom::-webkit-scrollbar-track {
+    background-color: hsl(var(--background));
+  }
+
+  .scrollbar-custom::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted));
+    border-radius: 9999px;
+  }
+
+  .scrollbar-custom::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground));
+  }
+}
+
+/* Animation overrides */
+@layer utilities {
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { 
+      opacity: 1; 
+      transform: scale(1); 
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.7); 
+    }
+    50% { 
+      opacity: 0.7; 
+      transform: scale(1.2); 
+      box-shadow: 0 0 10px 4px hsl(var(--primary) / 0); 
+    }
+  }
+}
+
+/* Focus states */
+@layer base {
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+  }
+
+  /* V2 UI uses lime green accent for focus */
+  .dark *:focus-visible,
+  [data-theme="v2"] *:focus-visible {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.8), 0 0 0 4px rgba(170, 255, 0, 0.4);
+  }
+}

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Stitcher Upload Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 800px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+    }
+
+    .upload-section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #f9fafb;
+      border-radius: 8px;
+      border: 2px dashed #d1d5db;
+    }
+
+    .upload-section.active {
+      border-color: #667eea;
+      background: #f0f4ff;
+    }
+
+    .file-input-wrapper {
+      position: relative;
+      display: inline-block;
+      margin-bottom: 15px;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+    }
+
+    .file-input-label {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #667eea;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .file-input-label:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .file-list {
+      margin-top: 15px;
+    }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      background: white;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .file-info {
+      flex: 1;
+    }
+
+    .file-name {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .file-size {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .progress-bar {
+      width: 200px;
+      height: 20px;
+      background: #e5e7eb;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-left: 15px;
+      position: relative;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      transition: width 0.3s ease;
+      border-radius: 10px;
+    }
+
+    .progress-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .status {
+      margin-left: 15px;
+      font-size: 20px;
+    }
+
+    button {
+      padding: 14px 32px;
+      background: #10b981;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+    button:hover:not(:disabled) {
+      background: #059669;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .results {
+      margin-top: 30px;
+      padding: 20px;
+      background: #f9fafb;
+      border-radius: 8px;
+    }
+
+    .results h2 {
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .result-item {
+      padding: 10px;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .result-item.success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .result-item.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .summary {
+      margin-top: 20px;
+      padding: 15px;
+      background: white;
+      border-radius: 6px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .summary.success {
+      color: #065f46;
+      border: 2px solid #10b981;
+    }
+
+    .summary.failure {
+      color: #991b1b;
+      border: 2px solid #ef4444;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 Video Stitcher Upload Test</h1>
+    <p class="subtitle">Test multiple file uploads with progress tracking</p>
+
+    <div class="upload-section" id="uploadSection">
+      <div class="file-input-wrapper">
+        <label class="file-input-label">
+          📁 Select Test Files
+          <input type="file" id="fileInput" multiple accept="video/*,audio/*">
+        </label>
+      </div>
+      <div class="file-list" id="fileList"></div>
+    </div>
+
+    <button id="uploadBtn" disabled>Start Upload Test</button>
+
+    <div class="results" id="results" style="display: none;">
+      <h2>📊 Test Results</h2>
+      <div id="resultsList"></div>
+      <div class="summary" id="summary"></div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadSection = document.getElementById('uploadSection');
+    const results = document.getElementById('results');
+    const resultsList = document.getElementById('resultsList');
+    const summary = document.getElementById('summary');
+
+    let selectedFiles = [];
+
+    fileInput.addEventListener('change', (e) => {
+      selectedFiles = Array.from(e.target.files);
+      renderFileList();
+      uploadBtn.disabled = selectedFiles.length === 0;
+      uploadSection.classList.add('active');
+    });
+
+    function renderFileList() {
+      fileList.innerHTML = selectedFiles.map((file, index) => `
+        <div class="file-item" id="file-${index}">
+          <div class="file-info">
+            <div class="file-name">${file.name}</div>
+            <div class="file-size">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-${index}" style="width: 0%"></div>
+            <div class="progress-text" id="progress-text-${index}">0%</div>
+          </div>
+          <div class="status" id="status-${index}">⏳</div>
+        </div>
+      `).join('');
+    }
+
+    async function uploadFile(file, index) {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            document.getElementById(`progress-${index}`).style.width = percent + '%';
+            document.getElementById(`progress-text-${index}`).textContent = percent + '%';
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const result = JSON.parse(xhr.responseText);
+            document.getElementById(`status-${index}`).textContent = '✅';
+            resolve({ success: true, file: file.name, result });
+          } else {
+            let errorMsg = xhr.responseText;
+            try {
+              errorMsg = JSON.parse(xhr.responseText).error || errorMsg;
+            } catch {}
+            document.getElementById(`status-${index}`).textContent = '❌';
+            resolve({ success: false, file: file.name, error: errorMsg });
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          document.getElementById(`status-${index}`).textContent = '❌';
+          resolve({ success: false, file: file.name, error: 'Network error' });
+        });
+
+        xhr.open('POST', '/api/video-stitch/upload');
+        xhr.send(formData);
+      });
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      uploadBtn.disabled = true;
+      results.style.display = 'none';
+      resultsList.innerHTML = '';
+
+      // Upload all files in parallel
+      const startTime = Date.now();
+      const uploadPromises = selectedFiles.map((file, index) => uploadFile(file, index));
+      const uploadResults = await Promise.all(uploadPromises);
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      // Show results
+      results.style.display = 'block';
+
+      uploadResults.forEach(result => {
+        const resultItem = document.createElement('div');
+        resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
+
+        if (result.success) {
+          resultItem.innerHTML = `
+            ✅ <strong>${result.file}</strong><br>
+            Upload ID: ${result.result.upload_id}<br>
+            Duration: ${result.result.duration_seconds}s
+            ${result.result.width > 0 ? `<br>Resolution: ${result.result.width}x${result.result.height}` : ''}
+          `;
+        } else {
+          resultItem.innerHTML = `
+            ❌ <strong>${result.file}</strong><br>
+            Error: ${result.error}
+          `;
+        }
+
+        resultsList.appendChild(resultItem);
+      });
+
+      // Summary
+      const successCount = uploadResults.filter(r => r.success).length;
+      const totalCount = uploadResults.length;
+      const allSuccess = successCount === totalCount;
+
+      summary.className = `summary ${allSuccess ? 'success' : 'failure'}`;
+      summary.innerHTML = `
+        ${allSuccess ? '✅' : '❌'}
+        ${successCount}/${totalCount} uploads successful
+        (${duration}s total)
+      `;
+
+      uploadBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

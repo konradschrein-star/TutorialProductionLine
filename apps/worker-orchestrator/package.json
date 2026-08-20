@@ -1,0 +1,50 @@
+{
+  "name": "@repo/worker-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight orchestration worker - BullMQ consumers for coordination and external API calls",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --build --force",
+    "start": "node dist/index.js",
+    "start:tsx": "tsx src/index.ts",
+    "stock-library:bootstrap": "tsx src/cli/bootstrap-stock-library.ts",
+    "character:import": "tsx src/cli/import-character.ts",
+    "lint": "eslint \"src/**/*.ts\"",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@google/genai": "^1.48.0",
+    "@repo/config": "workspace:*",
+    "@repo/contracts": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/domain": "workspace:*",
+    "@repo/finance-kit": "workspace:*",
+    "@repo/logger": "workspace:*",
+    "@repo/media-core": "workspace:*",
+    "@repo/provider-registry": "workspace:*",
+    "@repo/queue": "workspace:*",
+    "@repo/storage": "workspace:*",
+    "bullmq": "^5.35.4",
+    "dotenv": "^17.0.0",
+    "drizzle-orm": "^0.36.4",
+    "ioredis": "^5.4.2",
+    "postgres": "^3.4.5",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@typescript-eslint/parser": "^8",
+    "@vitest/coverage-v8": "^4.1.4",
+    "eslint": "^9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
+  }
+}

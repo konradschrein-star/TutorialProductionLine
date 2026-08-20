@@ -1,0 +1,27 @@
+-- 0073 — add BUSINESS_PLAN_HUB to the content_format enum.
+--
+-- WHAT: registers the Business Plan Hub marketing format so
+-- content_jobs.format / content_templates.format can hold it. Companion to
+-- packages/contracts/src/enums/content-format.ts (ContentFormat +
+-- FORMAT_LIFECYCLE = ACTIVE) and packages/db/src/schema/enums.ts
+-- (contentFormatEnum). Those three must stay byte-identical — see
+-- docs/FORMAT_REGISTRIES.md §"Divergence that IS a bug".
+--
+-- IDEMPOTENT AND STANDALONE, DELIBERATELY. Production has no migration
+-- tracking: migrations are applied BY HAND with psql out-of-band
+-- (docs/sessions/2026-07-29-DEPLOY-RUNBOOK.md §2; scripts/deploy.sh prints
+-- "Skipping migrations"). So this file must be safe to run any number of
+-- times, in any order, on its own. `ADD VALUE IF NOT EXISTS` gives exactly
+-- that: it is a no-op if the label already exists.
+--
+-- NOTE: ALTER TYPE ... ADD VALUE cannot share a transaction with statements
+-- that then use the new label. This file contains one statement, so run it on
+-- its own and commit before anything inserts a BUSINESS_PLAN_HUB row
+-- (e.g. the seed template).
+--
+-- ROLLBACK: none. Postgres cannot drop a value from an enum without recreating
+-- the type and rewriting every dependent column. Enum members are additive on
+-- purpose — retiring a format is a FORMAT_LIFECYCLE change in contracts, never
+-- a DB deletion, so historical rows keep parsing.
+
+ALTER TYPE "content_format" ADD VALUE IF NOT EXISTS 'BUSINESS_PLAN_HUB';

@@ -1,0 +1,1 @@
+ALTER TABLE "content_jobs" ADD COLUMN "image_generation_mode" "image_generation_mode" DEFAULT 'auto' NOT NULL;

@@ -1,0 +1,48 @@
+-- 0057: tutorial script structure + reference-transcript provenance
+--
+-- HAND-WRITTEN (drizzle-kit generate is broken in this repo — see
+-- project-global-thumbnail-system memory). Non-destructive. Idempotent.
+--
+-- Two changes, both additive:
+--
+-- 1) script_structure (jsonb)
+--    tutorial_jobs.script_text is ONE FLAT TEXT COLUMN and the LONG_FORM
+--    outline — the only structured intermediate the pipeline ever built — was
+--    destroyed immediately by `parts.join("\n\n")` in
+--    processors/tutorial/generate.ts. Subtopic banners, YouTube chapters,
+--    "highlight the important parts", per-section QA and AI-avatar segments are
+--    all the same missing feature: script structure carried through to the
+--    timeline. This column carries it ALONGSIDE the prose so script_text stays
+--    the exact, marker-free TTS input.
+--
+--    Shape (see apps/worker-orchestrator/src/utils/tutorial/script-structure.ts):
+--      {
+--        "version": 1,
+--        "source": "markers" | "outline" | "none",
+--        "total_words": 1234,
+--        "sections": [
+--          { "kind": "intro" | "subtopic" | "outro" | "body",
+--            "title": "Open the export settings" | null,
+--            "char_start": 0, "char_end": 412,
+--            "word_start": 0, "word_end": 71, "word_count": 71 }
+--        ]
+--      }
+--    Offsets index script_text exactly. "source" is recorded honestly so a
+--    consumer can tell a real structure from a degenerate single section.
+--
+-- 2) reference_transcript_source / reference_transcript_fetched_at
+--    TRANSCRIPT_REWRITE jobs used to depend on a human pasting the source
+--    video's transcript. The worker now fetches captions itself from
+--    reference_url via yt-dlp. Which kind we got matters downstream: automatic
+--    captions have no punctuation and mis-hear UI labels, human captions do not.
+--      'provided'                 — pasted by an operator or pushed by the Keyword Tool
+--      'youtube_manual_captions'  — human-authored captions
+--      'youtube_auto_captions'    — machine-generated captions
+--    NULL on every pre-existing row, which is correct: their provenance is
+--    genuinely unknown and must not be back-filled with a guess.
+--> statement-breakpoint
+ALTER TABLE "tutorial_jobs" ADD COLUMN IF NOT EXISTS "script_structure" jsonb;
+--> statement-breakpoint
+ALTER TABLE "tutorial_jobs" ADD COLUMN IF NOT EXISTS "reference_transcript_source" text;
+--> statement-breakpoint
+ALTER TABLE "tutorial_jobs" ADD COLUMN IF NOT EXISTS "reference_transcript_fetched_at" timestamp with time zone;

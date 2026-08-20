@@ -1,0 +1,21 @@
+-- 0019: portrait_crops on cf_sources
+--
+-- Face-detected portrait crops per speaker region. Drives the Clip Forge
+-- 9:16 renderer so heads + torsos are roughly centered in each box
+-- regardless of how the source layout positions speakers.
+--
+-- Detected once per source after facecam_layout. The renderer prefers
+-- portrait_crops.* when present, falling back to facecam_layout-derived
+-- heuristics if a region was missed.
+--
+-- Shape (JSONB):
+--   {
+--     "fullscreen_portrait":  { "x":  420, "y":   0, "w": 1080, "h": 1920 } | null,
+--     "facecam_portrait":     { "x":   60, "y":  20, "w":  500, "h":  800 } | null,
+--     "main_portrait":        { "x": 1020, "y":  40, "w":  600, "h": 1000 } | null,
+--     "detected_at": "2026-06-18T...",
+--     "samples": 20,
+--     "confidence": 0.81
+--   }
+ALTER TABLE cf_sources
+ADD COLUMN portrait_crops jsonb;

@@ -1,0 +1,22 @@
+-- 0058: record which TTS provider ACTUALLY produced a job's audio.
+--
+-- HAND-WRITTEN (drizzle-kit generate is broken in this repo). Additive,
+-- idempotent, non-destructive.
+--
+-- `tts_provider` is the provider the operator REQUESTED. When the fallback
+-- chain in processors/tutorial/generate.ts moves past that provider, the
+-- winner was only ever written to a console log line ("Tutorial TTS used
+-- fallback provider") and thrown away. Nothing in the database or the UI
+-- recorded it, so there was no way to answer "was this video's audio made by
+-- AI33 or by Fish?" after the fact — a silent fallback, which is exactly the
+-- anti-pattern this codebase otherwise refuses.
+--
+-- This column closes that hole: it holds the provider id that actually
+-- generated the audio (e.g. 'fish_audio', 'ai33_minimax').
+--
+-- NULL means "not recorded", which is the honest value for every row written
+-- before this migration — their real provider is genuinely unknown and must
+-- NOT be back-filled from tts_provider, because tts_provider is precisely the
+-- value that could be wrong whenever a fallback fired.
+--> statement-breakpoint
+ALTER TABLE "tutorial_jobs" ADD COLUMN IF NOT EXISTS "tts_provider_used" text;

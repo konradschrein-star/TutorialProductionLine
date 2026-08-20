@@ -1,0 +1,30 @@
+-- 0050 — storage_artifacts owner generalisation (Clip Forge Drive seam)
+--
+-- SUPERSEDED / NO-OP. Kept as a numbered placeholder so the migration sequence
+-- stays contiguous and the reason is explicit in history.
+--
+-- This migration was authored by the Clip Forge workstream to let a
+-- storage_artifacts row belong to a cf_finishing_variants.id rather than only a
+-- content_jobs.id. In parallel, the Google Drive workstream shipped migration
+-- 0053 (storage_artifacts v2) AND the actual uploader code (packages/storage),
+-- which implement the SAME goal with a DIFFERENT, canonical model:
+--
+--   * job_id stays NOT NULL and IS the owner id (its content_jobs FK is dropped
+--     by 0053); owner_kind in ('content_job','tutorial_job','clip_variant')
+--     labels which table job_id points at.
+--   * the idempotency backbone remains the UNIQUE index on (job_id, kind) from
+--     migration 0041 — this is what packages/storage/src/repository.ts targets
+--     in its onConflictDoUpdate.
+--
+-- The original 0050 instead added an owner_id NOT NULL column and REPLACED the
+-- (job_id, kind) unique index with (owner_kind, owner_id, kind). That is
+-- incompatible with the shipped code: the uploader never populates owner_id
+-- (inserts would violate NOT NULL) and its onConflict targets (job_id, kind)
+-- (which 0050 would have dropped). Running it would break every Drive upload.
+--
+-- Clip Forge needs nothing beyond what 0041 + 0053 already provide: it inserts
+-- with job_id = <cf variant id>, owner_kind = 'clip_variant'. 0053's owner_kind
+-- CHECK already permits 'clip_variant' and its kind CHECK already includes
+-- 'transcript'. So this migration is intentionally empty.
+
+SELECT 1;

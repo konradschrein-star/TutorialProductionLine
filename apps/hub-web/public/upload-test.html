@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Test - Video Stitcher</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        h1 { color: #333; }
+        .upload-box { border: 2px dashed #ccc; padding: 40px; text-align: center; margin: 20px 0; }
+        .progress { background: #f0f0f0; height: 30px; margin: 10px 0; border-radius: 4px; overflow: hidden; }
+        .progress-bar { background: #4CAF50; height: 100%; transition: width 0.3s; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        .file-info { margin: 10px 0; padding: 10px; background: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Video Stitcher Upload Test</h1>
+    <p>This is a standalone page to test uploads bypassing cached JavaScript.</p>
+
+    <div class="upload-box">
+        <input type="file" id="fileInput" accept="video/*,audio/*">
+        <br><br>
+        <button onclick="uploadFile()">Upload File</button>
+    </div>
+
+    <div id="fileInfo" class="file-info" style="display:none;"></div>
+
+    <div class="progress" style="display:none;" id="progressContainer">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div id="progressText" style="text-align:center;"></div>
+
+    <div id="status"></div>
+
+    <script>
+        function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                showStatus('Please select a file first', 'error');
+                return;
+            }
+
+            // Show file info
+            const fileInfo = document.getElementById('fileInfo');
+            fileInfo.style.display = 'block';
+            fileInfo.innerHTML = `
+                <strong>File:</strong> ${file.name}<br>
+                <strong>Size:</strong> ${Math.round(file.size / 1024 / 1024 * 100) / 100} MB<br>
+                <strong>Type:</strong> ${file.type}
+            `;
+
+            // Reset UI
+            document.getElementById('status').innerHTML = '';
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = 'Uploading... 0%';
+
+            // Create FormData
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // Upload with progress tracking
+            const xhr = new XMLHttpRequest();
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    document.getElementById('progressBar').style.width = percent + '%';
+                    document.getElementById('progressText').textContent = `Uploading... ${percent}%`;
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        showStatus(`✅ Upload successful!<br><br><strong>Upload ID:</strong> ${response.upload_id}<br><strong>Duration:</strong> ${response.duration_seconds}s<br><strong>Resolution:</strong> ${response.width}x${response.height}`, 'success');
+                        document.getElementById('progressText').textContent = 'Upload complete!';
+                    } catch (err) {
+                        showStatus(`❌ Upload succeeded but response parsing failed: ${err.message}`, 'error');
+                    }
+                } else {
+                    try {
+                        const errorData = JSON.parse(xhr.responseText);
+                        showStatus(`❌ Upload failed (${xhr.status}): ${errorData.error || 'Unknown error'}`, 'error');
+                    } catch {
+                        showStatus(`❌ Upload failed with status ${xhr.status}: ${xhr.responseText}`, 'error');
+                    }
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                showStatus('❌ Network error during upload', 'error');
+                document.getElementById('progressContainer').style.display = 'none';
+            });
+
+            xhr.addEventListener('abort', () => {
+                showStatus('❌ Upload cancelled', 'error');
+                document.getElementById('progressContainer').style.display = 'none';
+            });
+
+            xhr.open('POST', '/api/video-stitch/upload');
+            xhr.send(formData);
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = message;
+            statusDiv.className = 'status ' + type;
+        }
+    </script>
+</body>
+</html>

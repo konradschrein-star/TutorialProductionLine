@@ -1,0 +1,33 @@
+{
+  "name": "@repo/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Environment configuration - Zod-validated env parsing, shared config, boot-time validation",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch",
+    "lint": "echo 'config lint not yet implemented'",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist",
+    "validate:env": "node ./scripts/validate-env.mjs"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
+  }
+}

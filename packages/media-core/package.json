@@ -1,0 +1,83 @@
+{
+  "name": "@repo/media-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Media processing primitives - FFmpeg wrappers, probes, composition helpers, Remotion templates",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./video-analysis": {
+      "types": "./dist/video-analysis.d.ts",
+      "default": "./dist/video-analysis.js"
+    },
+    "./audio-analysis": {
+      "types": "./dist/audio-analysis.d.ts",
+      "default": "./dist/audio-analysis.js"
+    },
+    "./color-verification": {
+      "types": "./dist/color-verification.d.ts",
+      "default": "./dist/color-verification.js"
+    },
+    "./speaker-detection": {
+      "types": "./dist/speaker-detection.d.ts",
+      "default": "./dist/speaker-detection.js"
+    },
+    "./images": {
+      "types": "./dist/images/index.d.ts",
+      "default": "./dist/images/index.js"
+    },
+    "./subtitles/remotion": {
+      "types": "./dist/subtitles/remotion/index.d.ts",
+      "default": "./dist/subtitles/remotion/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch",
+    "lint": "echo 'media-core lint not yet implemented'",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@remotion/renderer": "4.0.443",
+    "@repo/config": "workspace:*",
+    "@repo/contracts": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/domain": "workspace:*",
+    "compromise": "^14.14.4",
+    "execa": "^9.6.1",
+    "exiftool-vendored": "^29.3.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "tesseract.js": "^5.0.0",
+    "tmp-promise": "^3.0.3"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0 <20.0.0",
+    "remotion": "4.0.443"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "remotion": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/fluent-ffmpeg": "^2.1.27",
+    "@types/react": "18.3.28",
+    "@vitest/coverage-v8": "^4.1.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.443",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
+  }
+}

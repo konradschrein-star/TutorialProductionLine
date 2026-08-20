@@ -1,0 +1,3 @@
+ALTER TABLE "video_stitch_jobs" ADD COLUMN "remotion_enabled" boolean DEFAULT false;--> statement-breakpoint
+ALTER TABLE "video_stitch_jobs" ADD COLUMN "remotion_preset_id" uuid;--> statement-breakpoint
+ALTER TABLE "video_stitch_jobs" ADD CONSTRAINT "video_stitch_jobs_remotion_preset_id_remotion_caption_presets_id_fk" FOREIGN KEY ("remotion_preset_id") REFERENCES "public"."remotion_caption_presets"("id") ON DELETE set null ON UPDATE no action;

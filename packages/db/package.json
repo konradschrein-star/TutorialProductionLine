@@ -1,0 +1,90 @@
+{
+  "name": "@repo/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Database layer - Drizzle schema, migrations, repositories, persistence adapters",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    },
+    "./subtitles": {
+      "types": "./dist/subtitles/config-schema.d.ts",
+      "default": "./dist/subtitles/config-schema.js"
+    },
+    "./seed-subtitle-presets": {
+      "types": "./dist/seed-subtitle-presets.d.ts",
+      "default": "./dist/seed-subtitle-presets.js"
+    },
+    "./repositories": {
+      "types": "./dist/repositories/index.d.ts",
+      "default": "./dist/repositories/index.js"
+    },
+    "./singleton": {
+      "types": "./dist/singleton.d.ts",
+      "default": "./dist/singleton.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsc --build --watch",
+    "db:generate": "tsc --build && drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "tsc --build && drizzle-kit push",
+    "db:studio": "tsc --build && drizzle-kit studio",
+    "seed": "tsx src/seed.ts",
+    "provision:fonts": "tsx scripts/provision-fonts.ts",
+    "seed:casually-explained": "tsx src/seed-casually-explained-template.ts",
+    "seed:subtitle-presets": "tsx src/seed-subtitle-presets.ts",
+    "seed:ranking": "tsx src/seed-ranking-template.ts",
+    "seed:business-hub": "tsx src/seed-business-hub-template.ts",
+    "seed:comparison-software": "tsx src/seed-comparison-x-vs-y-software.ts",
+    "seed:archetypes": "tsx src/seed-archetypes.ts",
+    "seed:thumbnail-archetypes": "tsx src/seed-thumbnail-archetypes.ts",
+    "seed:thumbnail-archetypes-v2": "tsx src/seed-thumbnail-archetypes-v2.ts",
+    "seed:thumbnail-format-rules": "tsx src/seed-thumbnail-format-rules.ts",
+    "seed:explainer-v1": "tsx src/seed-explainer-v1.ts",
+    "seed:explainer-v2": "tsx src/seed-explainer-v2.ts",
+    "seed:explainer-v1-script-provided": "tsx src/seed-explainer-v1-script-provided.ts",
+    "seed:explainer-v2-script-provided": "tsx src/seed-explainer-v2-script-provided.ts",
+    "seed:casually-explained-automated": "tsx src/seed-casually-explained-automated.ts",
+    "seed:casually-explained-editorial": "tsx src/seed-casually-explained-editorial.ts",
+    "seed:casually-explained-automated-script-provided": "tsx src/seed-casually-explained-automated-script-provided.ts",
+    "seed:casually-explained-editorial-script-provided": "tsx src/seed-casually-explained-editorial-script-provided.ts",
+    "seed:casually-explained-clip": "tsx src/seed-casually-explained-clip.ts",
+    "seed:video-essay-clip": "tsx src/seed-video-essay-clip.ts",
+    "seed:drama-characters": "tsx src/seed-drama-characters.ts",
+    "seed:long-form-drama": "tsx src/seed-long-form-drama-template.ts",
+    "seed:harry-potter-library": "tsx src/seed-harry-potter-library.ts",
+    "lint": "echo 'db lint not yet implemented'",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@repo/config": "workspace:*",
+    "@repo/contracts": "workspace:*",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.0.0",
+    "drizzle-orm": "^0.36.4",
+    "pg": "^8.20.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "drizzle-kit": "^0.30.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
+  }
+}

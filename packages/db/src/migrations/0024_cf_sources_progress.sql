@@ -1,0 +1,22 @@
+-- Adds a JSONB `progress` column to cf_sources so the worker can stream
+-- phase/percent/ETA-shaped state to the source-detail UI without coupling
+-- ingest state to BullMQ events.
+--
+-- Shape (worker-side contract — keep aligned with source-detail.tsx):
+--   {
+--     phase: 'downloading' | 'transcribing' | 'detecting_clips' | 'extracting',
+--     started_at: ISO timestamp,
+--     updated_at: ISO timestamp,
+--     -- downloading
+--     bytes_done?: number,
+--     bytes_total?: number,
+--     -- transcribing
+--     chunks_done?: number,
+--     chunks_total?: number,
+--     current_chunk_started_at?: ISO timestamp,
+--     -- detecting_clips
+--     deepseek_pass?: 1 | 2,
+--     clips_inserted?: number,
+--     -- terminal phases clear `progress` back to NULL
+--   }
+ALTER TABLE "cf_sources" ADD COLUMN IF NOT EXISTS "progress" jsonb;
