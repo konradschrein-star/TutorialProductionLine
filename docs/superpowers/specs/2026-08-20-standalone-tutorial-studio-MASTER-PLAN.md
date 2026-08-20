@@ -146,7 +146,7 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 | Wrong icons | ✅ N/A (real tool uses Material Symbols correctly) |
 | **Industry-4.0 metrics** | ✅ **BUILT this session** (per-VA step durations, bottlenecks, timeline dots, weekday pattern) |
 | **Light mode** | ✅ **BUILT this session** — light token palette + `data-theme` cookie + header toggle. Core screens (login-shell, sidebar rail dark, Create, **metrics Dashboard**) render clean in light; validated via Playwright. Deep screens (studio.tsx) inherit tokens; minor hardcoded-white polish possible but not "terrible". |
-| Translation (EN → DE/FR/ES/JA/KO subchannels) | 🚧 **BUILDING this session** — `source_job_id` link added + pushed; **Localize tab live** (per-source language chips + "Translate all", validated); shared language list; list API done. Worker pipeline (translate queue + `translate.ts` processor: LLM translate → TTS re-voice → reuse existing splice+delivery + enqueue API) in progress. |
+| Translation (EN → DE/FR/ES/JA/KO subchannels) | ✅ **BUILT + validated this session** — `source_job_id` link; **Localize tab** (per-source language chips + "Translate all"); `TUTORIAL_TRANSLATE` queue + `translate.ts` processor (LLM-translate → TTS re-voice → reuse existing splice + Drive delivery) + enqueue API. E2E: enqueue → worker picks up all 5 langs → real `deepseek` call, honest "no API key" failure + retry, **no placeholder / no orphan child**. Produces real localized videos once the friend's key is set. Language list is extensible (`lib/tutorial/languages.ts`). |
 | Keyword Tool clone on his VPS | ⛔ Follow-on (separate app) |
 | Salvage facade thumbnail as API-fail fallback | ⛔ Follow-up (minor) |
 
@@ -157,6 +157,7 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 4. `getServerSnapshot should be cached` React warning (upload-queue `useSyncExternalStore`); `/api/health/tts` 503 with placeholder key (both non-fatal).
 5. Deploy to the associate's VPS (Postgres+Redis+Node+ffmpeg) per `deploy/standalone/README.md`; purge `vps_deploy_key` from git history + rotate.
 6. Relax remaining ContentForge-isms if any surface at runtime with keyless boot.
+7. **Translation polish:** per-language TTS **voice map** (v1 reuses the source voice — for native narration, map a Fish `reference_id`/Google `de-DE-…` voice per language, stored on the child's `tts_voice`); per-**language Drive subfolder** (`folder-scheme.ts` `planTutorialFolder` gains `languageCode`/`sourceJobId` like `planJobFolder`, so variants nest under the original — currently they deliver to the channel folder with language in metadata); optionally show child "in progress" earlier in the Localize UI (processor creates the child after translation succeeds).
 
 ### Local validation environment (this machine)
 - Postgres :5433 + Redis (docker `deploy/standalone/docker-compose.infra.yml`), dev `.env` (gitignored), seeded admin `admin@content-forge.com / admin123`, **44 dev demo jobs** seeded to populate metrics (LOCAL ONLY — fresh VPS DB has none; clear with `delete from tutorial_jobs;`).
