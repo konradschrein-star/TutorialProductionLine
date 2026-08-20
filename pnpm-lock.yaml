@@ -26,6 +26,9 @@ importers:
       lint-staged:
         specifier: ^17.0.4
         version: 17.3.0
+      playwright:
+        specifier: ^1.48.0
+        version: 1.62.1
       prettier:
         specifier: ^3.8.3
         version: 3.9.6

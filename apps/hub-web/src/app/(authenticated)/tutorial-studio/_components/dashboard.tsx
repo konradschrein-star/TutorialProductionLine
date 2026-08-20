@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { GlassCard } from "../../_components";
+import { StepMetricsPanel } from "./step-metrics-panel";
 import type { TutorialJob } from "@repo/db";
 
 interface LeaderboardEntry {
@@ -842,6 +843,9 @@ export function ProductionDashboard({
           sub="In progress right now"
         />
       </div>
+
+      {/* Industry-4.0 step metrics */}
+      <StepMetricsPanel />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* All-time leaderboard */}
