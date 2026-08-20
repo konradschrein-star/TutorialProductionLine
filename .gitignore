@@ -172,3 +172,11 @@ secrets/
 .env.bak*
 .env.*.bak
 *.env.backup
+
+# --- Private keys / deploy secrets (never commit) ---
+*.key
+*_deploy_key
+id_ed25519*
+id_rsa*
+*.pem
+deploy/vps_deploy_key
