@@ -55,9 +55,22 @@ docker compose -f deploy/standalone/docker-compose.infra.yml up -d   # Postgres 
 ```bash
 pnpm install
 pnpm --filter @repo/db build
-pnpm --filter @repo/db db:migrate     # applies all Drizzle migrations to a fresh DB
-pnpm --filter @repo/db seed           # seed baseline (creates first ADMIN user)
+# Fresh DB: use db:push (schema-authoritative). The migration JOURNAL drifts from the
+# hand-written .sql files in the inherited ContentForge history, so db:migrate alone
+# leaves some columns missing (e.g. users.default_tutorial_channel_id). db:push makes
+# the DB exactly match the Drizzle schema:
+export DATABASE_URL=postgresql://tutorial:...@127.0.0.1:5432/tutorial_studio   # note: postgresql:// scheme
+pnpm --filter @repo/db db:push
+pnpm --filter @repo/db seed            # baseline users (see note)
 ```
+> **Seed note:** the inherited seed creates ContentForge-branded test users
+> (`admin@content-forge.com / admin123`). For the associate's product, replace with a
+> single real ADMIN before go-live.
+>
+> **Config note (TODO adaptation):** `@repo/config` currently *requires* `ELEVENLABS_API_KEY`,
+> `AI33_API_KEY`, `DEFAULT_VOICE_EN`, `DEFAULT_VOICE_DE` at boot. For single-tenant these
+> should be **optional** (keys are entered in the UI → `encrypted_secrets`). Relax
+> `packages/config/src/env-schema.ts` after the app prune settles, then re-typecheck.
 
 ## 4. Build
 
