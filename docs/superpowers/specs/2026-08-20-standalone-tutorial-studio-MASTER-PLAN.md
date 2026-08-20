@@ -131,8 +131,32 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 - 2026-08-20 — **RUNTIME VALIDATED:** hub-web dev server boots, loads env, **pg-listen connects to Postgres**, ready on :3000; `/login` → **HTTP 200**; unauth `/` and `/tutorial-studio` → **307 → /login** (single-tenant auth gate works). Seeded admin (`admin@content-forge.com/admin123`) ready.
 - 2026-08-20 — **Single-tenant config fix (committed):** `@repo/config` no longer hard-requires provider keys / default voices at boot (`.default("")`) — the associate boots keyless and configures in the UI. Production `next build` validation running.
 
-### Status vs plan
-- **P1 (extract + prune + build green): ✅ DONE + runtime-validated.**
-- **P2 (real English pipeline): wiring intact** (real ContentForge generate→splice→stitch + Fish TTS + Drive). Blocked only on the associate's real API keys (entered in UI). Job create/enqueue path present.
-- **P3–P9 (thumbnails polish, settings, light mode + channel page, Industry-4.0 metrics, translation, deploy): NOT STARTED** — next phases. Foundation is clean/green so they build on solid ground.
-- **Known follow-ups:** Video Stitcher button still present but its `/api/video-stitch` backend was pruned (remove button or re-add stitcher); relax note done; purge `vps_deploy_key` from git history + rotate.
+- 2026-08-20 — **Runtime fully validated via Playwright** (logged in as seeded admin): login works, tutorial-studio + dashboard render clean (professional dark "Pulse Console" theme, tutorial-only sidebar). Worker boots and registers exactly the tutorial+thumbnail queues. Removed a stray top-level `clip-forge` route; hub-web `tsc --noEmit` + production `next build` both green.
+- 2026-08-20 — **⭐ FEATURE: Industry-4.0 metrics (committed `6677a0a`)** in the Tutorial Studio Dashboard: per-VA step-duration bars with per-VA + floor **bottleneck** detection, "where time goes" averages, **scripting-time-by-weekday** (Mondays pattern), and a **production timeline with a dot per keyword-claim / audio-ready / recording-upload / completion** — exactly the spec. Built on the existing per-step timestamps; validated visually against 44 seeded demo jobs (VA 3 slow-script + VA 5 slow-record correctly surfaced).
+
+### FEATURE STATUS MAP (review item → status)
+| Requested | Status |
+|---|---|
+| Color scheme kept + adjustable accent | ✅ Exists (6 CSS-var accent themes + theme-selector) |
+| No hallucinated data | ✅ Real tool has none (fakes were the facade only) |
+| Drop conveyor/Studio-Pipeline doubling | ✅ Gone (facade discarded) |
+| Channel config (voice / persona / thumbnail presets) | ✅ Largely exists — `/channels/[id]/voice`, `/characters`, `/narrators`, presets |
+| Thumbnail studio (+ improve) | ✅ Real thumbnail studio present (AI33 gen + archetypes) |
+| Settings "missing a bunch" | ✅ Comprehensive settings present (credentials, voices, prompts) |
+| Wrong icons | ✅ N/A (real tool uses Material Symbols correctly) |
+| **Industry-4.0 metrics** | ✅ **BUILT this session** (per-VA step durations, bottlenecks, timeline dots, weekday pattern) |
+| **Light mode** | ⛔ Not done — 92 hardcoded whites + black layout bg = a real refactor (see follow-up). Won't ship half-baked. |
+| Translation (EN → DE/FR/ES/JA/KO subchannels) | ⛔ Deferred by owner until English produces cleanly; net-new schema+UI |
+| Keyword Tool clone on his VPS | ⛔ Follow-on (separate app) |
+| Salvage facade thumbnail as API-fail fallback | ⛔ Follow-up (minor) |
+
+### Top follow-ups (precise)
+1. **Light mode** — add a light token palette under `:root[data-theme="light"]` in `v2.css` (bg→light, surfaces→grays, text→dark, borders→black-alpha), fix `layout.tsx` hardcoded `#000`, add a light/dark toggle (cookie like the accent theme), and convert the ~92 `rgba(255,255,255,α)` + 11 `#000` in tutorial-studio components to tokens. Validate each core screen with Playwright.
+2. **Rebrand** shell "Content Forge / Pulse Console" → the associate's name (or neutral "Tutorial Studio").
+3. **Video Stitcher** button present but `/api/video-stitch` backend pruned — remove the button (owner said stitcher is skippable) or re-add the backend.
+4. `getServerSnapshot should be cached` React warning (upload-queue `useSyncExternalStore`); `/api/health/tts` 503 with placeholder key (both non-fatal).
+5. Deploy to the associate's VPS (Postgres+Redis+Node+ffmpeg) per `deploy/standalone/README.md`; purge `vps_deploy_key` from git history + rotate.
+6. Relax remaining ContentForge-isms if any surface at runtime with keyless boot.
+
+### Local validation environment (this machine)
+- Postgres :5433 + Redis (docker `deploy/standalone/docker-compose.infra.yml`), dev `.env` (gitignored), seeded admin `admin@content-forge.com / admin123`, **44 dev demo jobs** seeded to populate metrics (LOCAL ONLY — fresh VPS DB has none; clear with `delete from tutorial_jobs;`).
