@@ -145,13 +145,13 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 | Settings "missing a bunch" | ✅ Comprehensive settings present (credentials, voices, prompts) |
 | Wrong icons | ✅ N/A (real tool uses Material Symbols correctly) |
 | **Industry-4.0 metrics** | ✅ **BUILT this session** (per-VA step durations, bottlenecks, timeline dots, weekday pattern) |
-| **Light mode** | ⛔ Not done — 92 hardcoded whites + black layout bg = a real refactor (see follow-up). Won't ship half-baked. |
+| **Light mode** | ✅ **BUILT this session** — light token palette + `data-theme` cookie + header toggle. Core screens (login-shell, sidebar rail dark, Create, **metrics Dashboard**) render clean in light; validated via Playwright. Deep screens (studio.tsx) inherit tokens; minor hardcoded-white polish possible but not "terrible". |
 | Translation (EN → DE/FR/ES/JA/KO subchannels) | ⛔ Deferred by owner until English produces cleanly; net-new schema+UI |
 | Keyword Tool clone on his VPS | ⛔ Follow-on (separate app) |
 | Salvage facade thumbnail as API-fail fallback | ⛔ Follow-up (minor) |
 
 ### Top follow-ups (precise)
-1. **Light mode** — add a light token palette under `:root[data-theme="light"]` in `v2.css` (bg→light, surfaces→grays, text→dark, borders→black-alpha), fix `layout.tsx` hardcoded `#000`, add a light/dark toggle (cookie like the accent theme), and convert the ~92 `rgba(255,255,255,α)` + 11 `#000` in tutorial-studio components to tokens. Validate each core screen with Playwright.
+1. **Light mode polish (optional)** — core screens done. Sweep the deep screens (`studio.tsx` recording cockpit, thumbnails, settings) in light mode for any hardcoded `rgba(255,255,255,α)` that reads oddly on the light canvas; convert those spots to tokens. Also nudge inactive tab-button text contrast on light.
 2. **Rebrand** shell "Content Forge / Pulse Console" → the associate's name (or neutral "Tutorial Studio").
 3. **Video Stitcher** button present but `/api/video-stitch` backend pruned — remove the button (owner said stitcher is skippable) or re-add the backend.
 4. `getServerSnapshot should be cached` React warning (upload-queue `useSyncExternalStore`); `/api/health/tts` 503 with placeholder key (both non-fatal).
