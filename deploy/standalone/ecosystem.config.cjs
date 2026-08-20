@@ -10,13 +10,23 @@
 const path = require('path');
 const root = path.resolve(__dirname, '..', '..');
 
+// Load the root .env so EVERY process gets DATABASE_URL/REDIS_URL/secrets — the
+// drive-uploader (storage/standalone.js) does not dotenv-load itself.
+let fileEnv = {};
+try {
+  fileEnv = require('dotenv').parse(require('fs').readFileSync(path.join(root, '.env')));
+} catch {
+  /* .env may be absent in some environments */
+}
+
 const common = {
   instances: 1,
+  exec_mode: 'fork', // custom Next server (tsx) + the workers must run forked, not clustered
   autorestart: true,
   max_restarts: 10,
   restart_delay: 5000,
   exp_backoff_restart_delay: 2000,
-  env: { NODE_ENV: 'production' },
+  env: { NODE_ENV: 'production', ...fileEnv },
 };
 
 module.exports = {
@@ -26,8 +36,9 @@ module.exports = {
       ...common,
       name: 'tutorial-web',
       cwd: path.join(root, 'apps', 'hub-web'),
-      script: path.join(root, 'node_modules', '.bin', 'tsx'),
-      args: 'src/server/index.ts',
+      script: 'src/server/index.ts',
+      interpreter: 'node',
+      interpreter_args: '--import tsx',
       max_memory_restart: '1500M',
     },
     {
