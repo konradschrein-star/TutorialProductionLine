@@ -146,7 +146,7 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 | Wrong icons | ✅ N/A (real tool uses Material Symbols correctly) |
 | **Industry-4.0 metrics** | ✅ **BUILT this session** (per-VA step durations, bottlenecks, timeline dots, weekday pattern) |
 | **Light mode** | ✅ **BUILT this session** — light token palette + `data-theme` cookie + header toggle. Core screens (login-shell, sidebar rail dark, Create, **metrics Dashboard**) render clean in light; validated via Playwright. Deep screens (studio.tsx) inherit tokens; minor hardcoded-white polish possible but not "terrible". |
-| Translation (EN → DE/FR/ES/JA/KO subchannels) | ⛔ Deferred by owner until English produces cleanly; net-new schema+UI |
+| Translation (EN → DE/FR/ES/JA/KO subchannels) | 🚧 **BUILDING this session** — `source_job_id` link added + pushed; **Localize tab live** (per-source language chips + "Translate all", validated); shared language list; list API done. Worker pipeline (translate queue + `translate.ts` processor: LLM translate → TTS re-voice → reuse existing splice+delivery + enqueue API) in progress. |
 | Keyword Tool clone on his VPS | ⛔ Follow-on (separate app) |
 | Salvage facade thumbnail as API-fail fallback | ⛔ Follow-up (minor) |
 

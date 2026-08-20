@@ -42,6 +42,13 @@ export const tutorialJobs = pgTable(
     ),
     segment_index: integer("segment_index"),
 
+    // Localization: a translated variant points at its source English job. Set on
+    // de/fr/es/ja/ko children created by the translate pipeline; null for originals.
+    source_job_id: uuid("source_job_id").references(
+      (): AnyPgColumn => tutorialJobs.id,
+      { onDelete: "cascade" },
+    ),
+
     title: text("title").notNull(),
     mode: tutorialModeEnum("mode").notNull(),
     status: tutorialJobStatusEnum("status").notNull().default("QUEUED"),

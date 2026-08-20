@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { V2Button } from "../_components";
 import { ProductionDashboard } from "./_components/dashboard";
+import { LocalizePanel } from "./_components/localize-panel";
 import { Review } from "./_components/review";
 import { ProductionCreate } from "./_components/create";
 import { ProductionStudio } from "./_components/studio";
@@ -32,6 +33,7 @@ const TABS = [
   // thing a VA does, and it is a look back at what they finished rather than
   // another queue to work through.
   { id: "review", label: "Review" },
+  { id: "localize", label: "Localize" },
   { id: "thumbnails", label: "Thumbnails" },
   { id: "keywords", label: "Keywords" },
   { id: "settings", label: "Settings" },
@@ -387,6 +389,7 @@ export function ProductionClient({
       )}
       {tab === "ranking" && <ProductionRanking channels={rankingChannels} />}
       {tab === "review" && <Review />}
+      {tab === "localize" && <LocalizePanel />}
       {tab === "thumbnails" && canFixThumbnails && <ProductionThumbnails />}
       {tab === "keywords" && <ProductionKeywords />}
       <RecordingUploadQueue />
