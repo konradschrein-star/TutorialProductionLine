@@ -5,11 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useRegisterKeybind } from "../_lib/keybinds";
 import { logoutAction } from "@/app/actions/auth";
 import type { JWTPayload } from "@/lib/auth/jwt";
-import {
-  canAccessRoute,
-  isTutorialScopedRole,
-  isVisitorRole,
-} from "@/lib/auth/rbac";
+import { canAccessRoute } from "@/lib/auth/rbac";
 
 interface NavItem {
   href: string;
@@ -27,20 +23,14 @@ interface NavSection {
 /**
  * Sidebar navigation, grouped.
  *
- * OVERVIEW  — where you look to know what the system is doing.
- * PRODUCTION — the tools that make videos.
- * LIBRARIES — the reusable assets those tools pull from.
- * SYSTEM    — configuration, health, people.
+ * OVERVIEW   — where you look to know what the system is doing.
+ * PRODUCTION — the tutorial tools + the channels they publish to.
+ * SYSTEM     — configuration, health, people.
  */
 const NAV_SECTIONS: NavSection[] = [
   {
     title: null,
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-      { href: "/jobs", label: "Jobs", icon: "work" },
-      { href: "/factory", label: "Production Board", icon: "factory" },
-      { href: "/analytics", label: "Analytics", icon: "bar_chart" },
-    ],
+    items: [{ href: "/dashboard", label: "Dashboard", icon: "dashboard" }],
   },
   {
     title: "Production",
@@ -50,31 +40,8 @@ const NAV_SECTIONS: NavSection[] = [
         label: "Tutorial Studio",
         icon: "smart_display",
       },
-      { href: "/clip-forge", label: "Clip Forge", icon: "auto_awesome_motion" },
-      { href: "/formats", label: "Formats", icon: "category" },
-      { href: "/channels", label: "Channels", icon: "subscriptions" },
-    ],
-  },
-  {
-    title: "Libraries",
-    items: [
       { href: "/thumbnails", label: "Thumbnails", icon: "image" },
-      { href: "/subtitles", label: "Subtitles", icon: "subtitles" },
-      {
-        // BUSINESS_PLAN_HUB pose hitbox authoring. Same gate as the other
-        // config studios (rbac.ts: create:job OR view:settings).
-        href: "/business-hub-studio",
-        label: "Presenter Studio",
-        icon: "accessibility_new",
-      },
-      { href: "/style-library", label: "Style Library", icon: "palette" },
-      { href: "/clip-library", label: "Clip Library", icon: "local_movies" },
-      {
-        href: "/settings/music",
-        label: "Music Library",
-        icon: "library_music",
-      },
-      { href: "/knowledge", label: "Knowledge", icon: "school" },
+      { href: "/channels", label: "Channels", icon: "subscriptions" },
     ],
   },
   {
@@ -87,15 +54,9 @@ const NAV_SECTIONS: NavSection[] = [
       },
       { href: "/team", label: "Team", icon: "group" },
       { href: "/settings", label: "Settings", icon: "settings" },
-      // "Project Tasks" (→ Plane, plane.schreinercontentsystems.com) removed per
-      // decision B3 — it was Hermes-era bleed-through. The Plane stack itself is
-      // left untouched; only the Content Forge sidebar link is gone.
     ],
   },
 ];
-
-/** Routes a tutorial-scoped VA is allowed to see in the nav. */
-const TUTORIAL_SCOPED_HREFS = new Set(["/tutorial-studio", "/knowledge"]);
 
 interface Props {
   session: JWTPayload;
@@ -111,23 +72,8 @@ export function AppSidebar({ session }: Props) {
     [],
   );
   useRegisterKeybind(
-    { key: "g+j", description: "Go to Jobs", category: "Navigation" },
-    () => router.push("/jobs"),
-    [],
-  );
-  useRegisterKeybind(
-    { key: "g+f", description: "Go to Formats", category: "Navigation" },
-    () => router.push("/formats"),
-    [],
-  );
-  useRegisterKeybind(
     { key: "g+c", description: "Go to Channels", category: "Navigation" },
     () => router.push("/channels"),
-    [],
-  );
-  useRegisterKeybind(
-    { key: "g+a", description: "Go to Analytics", category: "Navigation" },
-    () => router.push("/analytics"),
     [],
   );
   useRegisterKeybind(
@@ -140,11 +86,6 @@ export function AppSidebar({ session }: Props) {
     [],
   );
   useRegisterKeybind(
-    { key: "g+k", description: "Go to Knowledge", category: "Navigation" },
-    () => router.push("/knowledge"),
-    [],
-  );
-  useRegisterKeybind(
     { key: "g+h", description: "Go to System Health", category: "Navigation" },
     () => router.push("/system-health"),
     [],
@@ -154,45 +95,17 @@ export function AppSidebar({ session }: Props) {
     () => router.push("/team"),
     [],
   );
-  useRegisterKeybind(
-    { key: "n", description: "New Job", category: "Jobs" },
-    () => router.push("/jobs/create"),
-    [],
-  );
 
   const userInitial = session.email[0].toUpperCase();
-  // Tutorial VAs see only the tool itself + the knowledge base. The KB list
-  // page further filters to only courses they're allowed to view via
-  // `allowed_roles` per-course.
-  const tutorialScoped = isTutorialScopedRole(session.role);
-  // The demo role is tutorial-scoped too, but canAccessRoute bounces it off
-  // /knowledge — the internal SOPs. Leaving the link in the sidebar just gave
-  // a prospect a nav item that silently threw them back to the Studio.
-  const scopedHrefs = isVisitorRole(session.role)
-    ? new Set(["/tutorial-studio"])
-    : TUTORIAL_SCOPED_HREFS;
-  const visibleSections: NavSection[] = tutorialScoped
-    ? [
-        {
-          title: null,
-          items: NAV_SECTIONS.flatMap((s) =>
-            s.items.filter((i) => scopedHrefs.has(i.href)),
-          ),
-        },
-      ]
-    : // Everyone else gets exactly the links they can actually open. The nav
-      // used to be the same 16 entries for every role, and middleware answers
-      // an unreachable one with a 404 — so a read-only stakeholder saw eleven
-      // links that broke when clicked. Filtering on canAccessRoute (the same
-      // function the middleware gates with) means the sidebar cannot drift out
-      // of step with what is reachable: a new page is listed the moment its
-      // route rule admits the role, and never before.
-      NAV_SECTIONS.map((section) => ({
-        ...section,
-        items: section.items.filter(
-          (i) => i.external || canAccessRoute(session, i.href),
-        ),
-      })).filter((section) => section.items.length > 0);
+  // Each role gets exactly the links it can actually open. Filtering on
+  // canAccessRoute (the same function the middleware gates with) means the
+  // sidebar cannot drift out of step with what is reachable.
+  const visibleSections: NavSection[] = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter(
+      (i) => i.external || canAccessRoute(session, i.href),
+    ),
+  })).filter((section) => section.items.length > 0);
 
   // Exactly one item is active: the longest internal href that prefixes the
   // current path. Without the longest-match rule /settings would light up on
@@ -345,29 +258,8 @@ export function AppSidebar({ session }: Props) {
         ))}
       </nav>
 
-      {/* Bottom: New Job CTA + user info */}
+      {/* Bottom: user info */}
       <div className="px-6 mt-auto space-y-4">
-        {!tutorialScoped && (
-          <Link
-            href="/jobs/create"
-            className="v2-glow-primary w-full py-3 rounded-lg flex items-center justify-center gap-2 text-white text-xs font-bold uppercase tracking-widest"
-            style={{
-              background:
-                "linear-gradient(to right, var(--v2-accent), var(--v2-accent-dim))",
-              boxShadow: "0 4px 15px rgba(var(--v2-accent-rgb), 0.3)",
-              display: "flex",
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              add
-            </span>
-            New Job
-          </Link>
-        )}
-
         <div
           className="pt-4"
           style={{ borderTop: "1px solid rgba(var(--v2-accent-rgb), 0.10)" }}

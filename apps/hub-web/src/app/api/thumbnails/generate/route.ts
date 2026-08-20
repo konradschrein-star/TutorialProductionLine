@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { createRedisConnection, createThumbnailQueue } from "@repo/queue";
-import { getV1Runtime } from "../../v1/_lib/runtime";
+import { getV1Runtime } from "@/app/api/_lib/runtime";
 
 /**
  * POST /api/thumbnails/generate

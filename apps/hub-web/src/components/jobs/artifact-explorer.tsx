@@ -20,7 +20,7 @@ import type {
   ArtifactPresence,
   JobArtifact,
   JobArtifactsView,
-} from "@/app/(authenticated)/jobs/[id]/_lib/job-artifacts";
+} from "./_lib/job-artifacts";
 
 // ── Small shared bits ──────────────────────────────────────────────────────
 

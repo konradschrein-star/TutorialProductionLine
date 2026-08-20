@@ -11,7 +11,7 @@
  * copyright. Clips are limited to 5–15 seconds (transformative review use).
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   mkdir,
   access,
@@ -133,6 +133,19 @@ function isOfficialChannel(channel: string, channelId: string): boolean {
   );
 }
 
+/**
+ * Precise structural view of the two ChildProcess process-level events used
+ * below. See the usage site for why the merged @types/node event overloads are
+ * not directly reachable in this toolchain.
+ */
+interface ChildProcessEvents {
+  on(
+    event: "close",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): this;
+  on(event: "error", listener: (err: Error) => void): this;
+}
+
 function runYtDlp(args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -144,21 +157,28 @@ function runYtDlp(args: string[], timeoutMs: number): Promise<string> {
       );
     }, timeoutMs);
 
-    const child = spawn(YT_DLP_BIN, args, {
+    const child: ChildProcess = spawn(YT_DLP_BIN, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
 
-    child.on("close", (code) => {
+    // @types/node 25 merges ChildProcess with an `@internal`
+    // InternalEventEmitter<ChildProcessEventMap>, and in this toolchain that
+    // merge fails to expose the process-level `.on` overloads (the piped
+    // Readable streams above are unaffected). Bind the two events we need
+    // through a precise structural view so the listener types stay exact.
+    const processEvents = child as unknown as ChildProcessEvents;
+
+    processEvents.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(`yt-dlp exited ${code}: ${stderr.slice(0, 400)}`));
@@ -167,7 +187,7 @@ function runYtDlp(args: string[], timeoutMs: number): Promise<string> {
       }
     });
 
-    child.on("error", (err) => {
+    processEvents.on("error", (err) => {
       clearTimeout(timer);
       reject(err);
     });

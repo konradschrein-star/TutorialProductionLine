@@ -24,7 +24,7 @@ import {
   shortDuration,
   stageFor,
   type StageGroup,
-} from "@/app/(authenticated)/jobs/_lib/job-stage";
+} from "@/app/(authenticated)/dashboard/_lib/job-stage";
 
 export interface FactoryCard {
   id: string;

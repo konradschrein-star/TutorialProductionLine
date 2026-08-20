@@ -16,123 +16,19 @@ import { startProviderProber } from "./services/provider-prober.js";
 import {
   createRedisConnection,
   closeRedisConnection,
-  createIngestWorker,
-  createAIGenerationWorker,
-  createQMSValidationWorker,
-  createGarbageCollectionWorker,
-  createSceneAnalysisWorker,
-  createAutoLabelWorker,
-  createAIGenerationQueue,
-  createQMSValidationQueue,
-  createRenderHeavyQueue,
-  createAssetCollectionQueue,
-  createSceneAnalysisQueue,
-  createAutoLabelQueue,
-  createAssetCollectionWorker,
-  createDeadLetterWorker,
-  createBundestagClipAnalysisWorker,
-  createBundestagPlaybookGenerationWorker,
-  createBundestagClipAnalysisQueue,
-  createBundestagPlaybookGenerationQueue,
-  createBundestagRenderQueue,
-  createClipIngestQueue,
-  createClipLabelQueue,
-  createClipLabelBatchQueue,
-  createClipEmbedQueue,
-  createImageIngestQueue,
-  createImageLabelQueue,
-  createImageEmbedQueue,
-  createClipSelectionQueue,
-  createClipRetagQueue,
-  createClipExtractQueue,
-  createClipIngestWorker,
-  createClipLabelWorker,
-  createClipLabelBatchWorker,
-  createClipEmbedWorker,
-  createImageIngestWorker,
-  createImageLabelWorker,
-  createImageEmbedWorker,
-  createClipSelectionWorker,
-  createClipRetagWorker,
-  createClipExtractWorker,
   attachStandardEventListeners,
-  createDramaTTSQueue,
-  createDramaTranscribeQueue,
-  createDramaPromptGenQueue,
-  createDramaImageGenQueue,
-  createDramaVideoGenQueue,
-  createDramaAssembleQueue,
-  createDramaQCQueue,
-  createDramaThumbnailQueue,
-  createDramaTTSWorker,
-  createDramaTranscribeWorker,
-  createDramaPromptGenWorker,
-  createDramaImageGenWorker,
-  createDramaVideoGenWorker,
-  createDramaAssembleWorker,
-  createDramaQCWorker,
-  createDramaThumbnailWorker,
+  createDeadLetterWorker,
   createThumbnailWorker,
   createThumbnailQueue,
-  createStockLibraryGenWorker,
   createTutorialGenerateQueue,
   createTutorialSpliceQueue,
   createTutorialStitchQueue,
   createTutorialGenerateWorker,
   createTutorialSpliceWorker,
   createTutorialStitchWorker,
-  createReactorDownloadQueue,
-  createReactorTranscribeQueue,
-  createReactorScriptQueue,
-  createReactorTTSQueue,
-  createReactorAssembleQueue,
-  createReactorDownloadWorker,
-  createReactorTranscribeWorker,
-  createReactorScriptWorker,
-  createReactorTTSWorker,
-  createReactorAssembleWorker,
-  createCfIngestQueue,
-  createCfClipDetectionQueue,
-  createCfRawRenderQueue,
-  createCfFinishingRenderQueue,
-  createCfIngestWorker,
-  createCfClipDetectionWorker,
-  createCfRawRenderWorker,
-  createCfFinishingRenderWorker,
-  createTechFootageCollectionQueue,
-  createTechFootageCollectionWorker,
 } from "@repo/queue";
-import { createDramaTTSProcessor } from "./processors/long-form-drama/tts.js";
-import { createDramaTranscribeProcessor } from "./processors/long-form-drama/transcribe.js";
-import { createDramaPromptGenProcessor } from "./processors/long-form-drama/prompt-gen.js";
-import { createDramaImageGenProcessor } from "./processors/long-form-drama/image-gen.js";
-import { createDramaVideoGenProcessor } from "./processors/long-form-drama/video-gen.js";
-import { createDramaAssembleProcessor } from "./processors/long-form-drama/assemble.js";
-import { createDramaQCProcessor } from "./processors/long-form-drama/qc.js";
-import { createDramaThumbnailProcessor } from "./processors/long-form-drama/thumbnail.js";
 import { createThumbnailProcessor } from "./processors/thumbnail.js";
-import { createStockLibraryGenProcessor } from "./processors/stock-library/gen.js";
-import { createIngestProcessor } from "./processors/ingest.js";
-import { createAIGenerationProcessor } from "./processors/ai-generation.js";
-import { createQMSValidationProcessor } from "./processors/qms-validation.js";
-import { createGarbageCollectionProcessor } from "./processors/garbage-collection.js";
-import { createAssetCollectionProcessor } from "./processors/asset-collection.js";
-import { createSceneAnalysisProcessor } from "./processors/scene-analysis.js";
-import { createAutoLabelProcessor } from "./processors/auto-label.js";
-import { createBundestagClipAnalysisProcessor } from "./processors/bundestag-clip-analysis.js";
-import { createBundestagPlaybookGenerationProcessor } from "./processors/bundestag-playbook-generation.js";
-import { createClipIngestProcessor } from "./processors/clip-ingest.js";
-import { createClipLabelBatchProcessor } from "./processors/clip-label-batch.js";
-import { createImageIngestProcessor } from "./processors/image-ingest.js";
-import { createImageLabelProcessor } from "./processors/image-label.js";
-import { createImageEmbedProcessor } from "./processors/image-embed.js";
-import { createClipLabelProcessor } from "./processors/clip-label.js";
-import { createClipEmbedProcessor } from "./processors/clip-embed.js";
-import { createClipSelectionProcessor } from "./processors/clip-selection.js";
-import { createClipRetagProcessor } from "./processors/clip-retag.js";
-import { createClipExtractProcessor } from "./processors/clip-extract.js";
 import { startStaleJobWatchdog } from "./watchdog/stale-job-watchdog.js";
-import { startDramaCleanupInterval } from "./watchdog/drama-cleanup.js";
 import { startTutorialCleanupInterval } from "./watchdog/tutorial-cleanup.js";
 import { startJobAutoDeleteInterval } from "./watchdog/job-auto-delete.js";
 import { startTutorialRetentionInterval } from "./watchdog/tutorial-retention.js";
@@ -141,16 +37,6 @@ import { reconcileSplicingJobs } from "./watchdog/splice-reconciler.js";
 import { createTutorialGenerateProcessor } from "./processors/tutorial/generate.js";
 import { createTutorialSpliceProcessor } from "./processors/tutorial/splice.js";
 import { createTutorialStitchProcessor } from "./processors/tutorial/stitch.js";
-import { createReactorDownloadProcessor } from "./processors/reactor/download.js";
-import { createReactorTranscribeProcessor } from "./processors/reactor/transcribe.js";
-import { createReactorScriptProcessor } from "./processors/reactor/script.js";
-import { createReactorTTSProcessor } from "./processors/reactor/tts.js";
-import { createReactorAssembleProcessor } from "./processors/reactor/assemble.js";
-import { createCfIngestProcessor } from "./processors/clip-forge/ingest.js";
-import { createCfClipDetectionProcessor } from "./processors/clip-forge/clip-detection.js";
-import { createCfRawRenderProcessor } from "./processors/clip-forge/raw-render.js";
-import { createCfFinishingRenderProcessor } from "./processors/clip-forge/finishing-render.js";
-import { createTechFootageCollectionProcessor } from "./processors/tech-footage-collection.js";
 import { updateJobStatus } from "./utils/update-job-status.js";
 import { buildErrorDetail } from "@repo/contracts";
 import { ai33CircuitBreaker } from "./utils/ai33-circuit-breaker.js";
@@ -158,10 +44,11 @@ import type { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 
 /**
- * Worker Orchestrator Application
+ * Worker Orchestrator Application (Tutorial Studio — single-tenant)
  *
- * Lightweight orchestration worker for BullMQ consumers.
- * Handles: ingest, ai-generation, asset-collection, qms-validation, garbage-collection queues.
+ * Lightweight orchestration worker for BullMQ consumers. This build is pruned
+ * to the tutorial production pipeline plus the shared thumbnail processor:
+ * tutorial-generate → tutorial-splice → tutorial-stitch, with thumbnails.
  *
  * Architecture:
  * - Event-driven chaining: workers update DB, write events, dispatch next jobs
@@ -238,159 +125,7 @@ async function bootstrap() {
   }
 
   // 3. Create Redis connections (one per worker - BullMQ requirement)
-  const ingestConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const aiGenerationConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const qmsValidationConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const garbageCollectionConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const assetCollectionConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const sceneAnalysisConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const renderHeavyConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
   const deadLetterConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const autoLabelConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const autoLabelQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const bundestagClipAnalysisConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const bundestagPlaybookGenerationConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const bundestagClipAnalysisQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const bundestagPlaybookGenerationQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const bundestagRenderQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const clipIngestConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipLabelConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipLabelBatchConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipLabelBatchQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const imageIngestConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const imageIngestQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const imageLabelConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const imageLabelQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const imageEmbedConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const imageEmbedQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const clipEmbedConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipSelectionConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipRetagConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipRetagQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const clipExtractConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const clipExtractQueueConnection = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaTTSWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaTranscribeWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaPromptGenWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaImageGenWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaVideoGenWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaAssembleWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaQCWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaThumbnailWorkerConn = createRedisConnection({
     url: config.REDIS_URL,
     mode: "worker",
   });
@@ -399,38 +134,6 @@ async function bootstrap() {
     mode: "worker",
   });
   const thumbnailQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const stockLibraryGenWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const dramaTTSQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaTranscribeQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaPromptGenQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaImageGenQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaAssembleQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaQCQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const dramaVideoGenQueueConn = createRedisConnection({
     url: config.REDIS_URL,
     mode: "queue",
   });
@@ -458,177 +161,29 @@ async function bootstrap() {
     url: config.REDIS_URL,
     mode: "queue",
   });
-  const reactorDownloadWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const reactorDownloadQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const reactorTranscribeWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const reactorTranscribeQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const reactorScriptWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const reactorScriptQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const reactorTTSWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const reactorTTSQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const reactorAssembleWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const reactorAssembleQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  // ── Clip Forge connections ─────────────────────────────────────────────
-  const cfIngestWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const cfIngestQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const cfClipDetectionWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const cfClipDetectionQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const cfRawRenderWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const cfRawRenderQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  const cfFinishingRenderWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const cfFinishingRenderQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
-  // ── Tech footage collection connections ───────────────────────────────────
-  const techFootageCollectionWorkerConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "worker",
-  });
-  const techFootageCollectionQueueConn = createRedisConnection({
-    url: config.REDIS_URL,
-    mode: "queue",
-  });
 
-  console.log(
-    JSON.stringify({
-      level: "info",
-      message: "Redis connections created",
-      connection_count: 56,
-    }),
-  );
-
-  // 3.5. Wait for all Redis connections to be ready
-  // CRITICAL: BullMQ workers silently fail to process jobs if connections aren't ready
   const allConnections = [
-    ingestConnection,
-    aiGenerationConnection,
-    qmsValidationConnection,
-    garbageCollectionConnection,
-    assetCollectionConnection,
-    sceneAnalysisConnection,
-    renderHeavyConnection,
     deadLetterConnection,
-    autoLabelConnection,
-    autoLabelQueueConnection,
-    bundestagClipAnalysisConnection,
-    bundestagPlaybookGenerationConnection,
-    bundestagClipAnalysisQueueConnection,
-    bundestagPlaybookGenerationQueueConnection,
-    bundestagRenderQueueConnection,
-    clipIngestConnection,
-    clipLabelConnection,
-    clipLabelBatchConnection,
-    clipLabelBatchQueueConnection,
-    imageIngestConnection,
-    imageIngestQueueConnection,
-    imageLabelConnection,
-    imageLabelQueueConnection,
-    imageEmbedConnection,
-    imageEmbedQueueConnection,
-    clipEmbedConnection,
-    clipSelectionConnection,
-    clipRetagConnection,
-    clipRetagQueueConnection,
-    clipExtractConnection,
-    clipExtractQueueConnection,
-    dramaTTSWorkerConn,
-    dramaTranscribeWorkerConn,
-    dramaPromptGenWorkerConn,
-    dramaImageGenWorkerConn,
-    dramaVideoGenWorkerConn,
-    dramaAssembleWorkerConn,
-    dramaQCWorkerConn,
-    dramaThumbnailWorkerConn,
     thumbnailWorkerConn,
     thumbnailQueueConn,
-    stockLibraryGenWorkerConn,
-    dramaTTSQueueConn,
-    dramaTranscribeQueueConn,
-    dramaPromptGenQueueConn,
-    dramaImageGenQueueConn,
-    dramaVideoGenQueueConn,
-    dramaAssembleQueueConn,
-    dramaQCQueueConn,
     tutorialGenerateWorkerConn,
     tutorialGenerateQueueConn,
     tutorialSpliceWorkerConn,
     tutorialSpliceQueueConn,
     tutorialStitchWorkerConn,
     tutorialStitchQueueConn,
-    reactorDownloadWorkerConn,
-    reactorDownloadQueueConn,
-    reactorTranscribeWorkerConn,
-    reactorTranscribeQueueConn,
-    reactorScriptWorkerConn,
-    reactorScriptQueueConn,
-    reactorTTSWorkerConn,
-    reactorTTSQueueConn,
-    reactorAssembleWorkerConn,
-    reactorAssembleQueueConn,
-    cfIngestWorkerConn,
-    cfIngestQueueConn,
-    cfClipDetectionWorkerConn,
-    cfClipDetectionQueueConn,
-    cfRawRenderWorkerConn,
-    cfRawRenderQueueConn,
-    cfFinishingRenderWorkerConn,
-    cfFinishingRenderQueueConn,
-    techFootageCollectionWorkerConn,
-    techFootageCollectionQueueConn,
   ];
 
+  console.log(
+    JSON.stringify({
+      level: "info",
+      message: "Redis connections created",
+      connection_count: allConnections.length,
+    }),
+  );
+
+  // 3.5. Wait for all Redis connections to be ready
+  // CRITICAL: BullMQ workers silently fail to process jobs if connections aren't ready
   await Promise.all(
     allConnections.map((conn) => {
       if (conn.status === "ready") {
@@ -669,7 +224,9 @@ async function bootstrap() {
   // 3.7. Flush Redis Lua script cache — prevents stall-recovery failures when a
   // prior crash left corrupt script entries. BullMQ reloads scripts lazily.
   try {
-    await (ingestConnection as any).script("FLUSH");
+    await (tutorialGenerateWorkerConn as unknown as {
+      script: (cmd: string) => Promise<unknown>;
+    }).script("FLUSH");
     console.log(
       JSON.stringify({
         level: "info",
@@ -687,48 +244,6 @@ async function bootstrap() {
   }
 
   // 4. Create queues (needed for dispatch-next)
-  const aiGenerationQueue = createAIGenerationQueue(aiGenerationConnection);
-  const qmsValidationQueue = createQMSValidationQueue(qmsValidationConnection);
-  const renderHeavyQueue = createRenderHeavyQueue(renderHeavyConnection);
-  const assetCollectionQueue = createAssetCollectionQueue(
-    assetCollectionConnection,
-  );
-  const sceneAnalysisQueue = createSceneAnalysisQueue(sceneAnalysisConnection);
-  const autoLabelQueue = createAutoLabelQueue(autoLabelQueueConnection);
-  const bundestagClipAnalysisQueue = createBundestagClipAnalysisQueue(
-    bundestagClipAnalysisQueueConnection,
-  );
-  const bundestagPlaybookGenerationQueue =
-    createBundestagPlaybookGenerationQueue(
-      bundestagPlaybookGenerationQueueConnection,
-    );
-  const bundestagRenderQueue = createBundestagRenderQueue(
-    bundestagRenderQueueConnection,
-  );
-  const clipIngestQueue = createClipIngestQueue(clipIngestConnection);
-  const clipLabelQueue = createClipLabelQueue(clipLabelConnection);
-  const clipLabelBatchQueue = createClipLabelBatchQueue(
-    clipLabelBatchQueueConnection,
-  );
-  const clipEmbedQueue = createClipEmbedQueue(clipEmbedConnection);
-  const imageIngestQueue = createImageIngestQueue(imageIngestQueueConnection);
-  const imageLabelQueue = createImageLabelQueue(imageLabelQueueConnection);
-  const imageEmbedQueue = createImageEmbedQueue(imageEmbedQueueConnection);
-  const clipSelectionQueue = createClipSelectionQueue(clipSelectionConnection);
-  const clipRetagQueue = createClipRetagQueue(clipRetagQueueConnection);
-  const clipExtractQueue = createClipExtractQueue(clipExtractQueueConnection);
-  const dramaTTSQueue = createDramaTTSQueue(dramaTTSQueueConn);
-  const dramaTranscribeQueue = createDramaTranscribeQueue(
-    dramaTranscribeQueueConn,
-  );
-  const dramaPromptGenQueue = createDramaPromptGenQueue(
-    dramaPromptGenQueueConn,
-  );
-  const dramaImageGenQueue = createDramaImageGenQueue(dramaImageGenQueueConn);
-  const dramaVideoGenQueue = createDramaVideoGenQueue(dramaVideoGenQueueConn);
-  const dramaAssembleQueue = createDramaAssembleQueue(dramaAssembleQueueConn);
-  const dramaQCQueue = createDramaQCQueue(dramaQCQueueConn);
-  // dramaThumbnailQueue is consumed by dramaThumbnailWorker; no dispatch-next routing needed
   const tutorialGenerateQueue = createTutorialGenerateQueue(
     tutorialGenerateQueueConn,
   );
@@ -739,121 +254,9 @@ async function bootstrap() {
     tutorialStitchQueueConn,
   );
   const thumbnailQueue = createThumbnailQueue(thumbnailQueueConn);
-  const reactorDownloadQueue = createReactorDownloadQueue(
-    reactorDownloadQueueConn,
-  );
-  const reactorTranscribeQueue = createReactorTranscribeQueue(
-    reactorTranscribeQueueConn,
-  );
-  const reactorScriptQueue = createReactorScriptQueue(reactorScriptQueueConn);
-  const reactorTTSQueue = createReactorTTSQueue(reactorTTSQueueConn);
-  const reactorAssembleQueue = createReactorAssembleQueue(
-    reactorAssembleQueueConn,
-  );
-  // ── Clip Forge queues ──────────────────────────────────────────────────
-  const cfIngestQueue = createCfIngestQueue(cfIngestQueueConn);
-  const cfClipDetectionQueue = createCfClipDetectionQueue(
-    cfClipDetectionQueueConn,
-  );
-  const cfRawRenderQueue = createCfRawRenderQueue(cfRawRenderQueueConn);
-  const cfFinishingRenderQueue = createCfFinishingRenderQueue(
-    cfFinishingRenderQueueConn,
-  );
-  // ── Tech footage collection queue ──────────────────────────────────────
-  const techFootageCollectionQueue = createTechFootageCollectionQueue(
-    techFootageCollectionQueueConn,
-  );
 
   // 5. Create processors (pass queues for dispatch-next)
-  const ingestProcessor = createIngestProcessor(db, {
-    aiGeneration: aiGenerationQueue,
-    assetCollection: assetCollectionQueue,
-    bundestagClipAnalysis: bundestagClipAnalysisQueue,
-    reactorDownload: reactorDownloadQueue,
-  });
-  const aiGenerationProcessor = createAIGenerationProcessor(db, {
-    aiGeneration: aiGenerationQueue,
-    assetCollection: assetCollectionQueue,
-    sceneAnalysis: sceneAnalysisQueue,
-    techFootageCollection: techFootageCollectionQueue,
-  });
-  const qmsValidationProcessor = createQMSValidationProcessor(db, {
-    renderHeavy: renderHeavyQueue,
-  });
-  const garbageCollectionProcessor = createGarbageCollectionProcessor(db);
-  const assetCollectionProcessor = createAssetCollectionProcessor(db, {
-    aiGeneration: aiGenerationQueue,
-    assetCollection: assetCollectionQueue,
-    sceneAnalysis: sceneAnalysisQueue,
-    qmsValidation: qmsValidationQueue,
-    clipSelection: clipSelectionQueue,
-  });
-  const sceneAnalysisProcessor = createSceneAnalysisProcessor(db, {
-    assetCollection: assetCollectionQueue,
-  });
-  const autoLabelProcessor = createAutoLabelProcessor(db);
-  const bundestagClipAnalysisProcessor = createBundestagClipAnalysisProcessor(
-    db,
-    {
-      bundestagPlaybookGeneration: bundestagPlaybookGenerationQueue,
-    },
-  );
-  const bundestagPlaybookGenerationProcessor =
-    createBundestagPlaybookGenerationProcessor(db, {
-      bundestagRender: bundestagRenderQueue,
-    });
-  const clipIngestProcessor = createClipIngestProcessor(db, {
-    clipLabel: clipLabelQueue,
-    clipLabelBatch: clipLabelBatchQueue,
-    clipExtract: clipExtractQueue,
-  });
-  const clipLabelProcessor = createClipLabelProcessor(db, {
-    clipEmbed: clipEmbedQueue,
-  });
-  const clipLabelBatchProcessor = createClipLabelBatchProcessor(db, {
-    clipEmbed: clipEmbedQueue,
-  });
-  const clipEmbedProcessor = createClipEmbedProcessor(db);
-  const imageIngestProcessor = createImageIngestProcessor(db, {
-    imageLabel: imageLabelQueue,
-  });
-  const imageLabelProcessor = createImageLabelProcessor(db, {
-    imageEmbed: imageEmbedQueue,
-  });
-  const imageEmbedProcessor = createImageEmbedProcessor(db);
-  const clipSelectionProcessor = createClipSelectionProcessor(db, {
-    qmsValidation: qmsValidationQueue,
-  });
-  const clipRetagProcessor = createClipRetagProcessor(db, {
-    clipEmbed: clipEmbedQueue,
-  });
-  const clipExtractProcessor = createClipExtractProcessor(db);
-  const dramaTTSProcessor = createDramaTTSProcessor(
-    db,
-    { dramaTranscribe: dramaTranscribeQueue },
-    config.ELEVENLABS_API_KEY,
-  );
-  const dramaTranscribeProcessor = createDramaTranscribeProcessor(db, {
-    dramaPromptGen: dramaPromptGenQueue,
-  });
-  const dramaPromptGenProcessor = createDramaPromptGenProcessor(db, {
-    dramaImageGen: dramaImageGenQueue,
-  });
-  const dramaImageGenProcessor = createDramaImageGenProcessor(db, {
-    dramaVideoGen: dramaVideoGenQueue,
-    dramaAssemble: dramaAssembleQueue,
-  });
-  const dramaVideoGenProcessor = createDramaVideoGenProcessor(db, {
-    dramaVideoGen: dramaVideoGenQueue,
-    dramaAssemble: dramaAssembleQueue,
-  });
-  const dramaAssembleProcessor = createDramaAssembleProcessor(db, {
-    dramaQC: dramaQCQueue,
-  });
-  const dramaQCProcessor = createDramaQCProcessor(db);
-  const dramaThumbnailProcessor = createDramaThumbnailProcessor(db);
   const thumbnailProcessor = createThumbnailProcessor(db);
-  const stockLibraryGenProcessor = createStockLibraryGenProcessor(db);
   const tutorialGenerateProcessor = createTutorialGenerateProcessor(db, {
     tutorialGenerate: tutorialGenerateQueue,
   });
@@ -864,166 +267,11 @@ async function bootstrap() {
   const tutorialStitchProcessor = createTutorialStitchProcessor(db, {
     thumbnail: thumbnailQueue,
   });
-  const reactorDownloadProcessor = createReactorDownloadProcessor(db, {
-    reactorTranscribe: reactorTranscribeQueue,
-  });
-  const reactorTranscribeProcessor = createReactorTranscribeProcessor(db, {
-    reactorScript: reactorScriptQueue,
-  });
-  const reactorScriptProcessor = createReactorScriptProcessor(db, {
-    reactorTTS: reactorTTSQueue,
-  });
-  const reactorTTSProcessor = createReactorTTSProcessor(db, {
-    reactorAssemble: reactorAssembleQueue,
-  });
-  const reactorAssembleProcessor = createReactorAssembleProcessor(db, {
-    renderHeavy: renderHeavyQueue,
-  });
-  // ── Clip Forge processors ─────────────────────────────────────────────
-  const cfIngestProcessor = createCfIngestProcessor(db, {
-    cfClipDetection: cfClipDetectionQueue,
-  });
-  const cfClipDetectionProcessor = createCfClipDetectionProcessor(db, {
-    cfRawRender: cfRawRenderQueue,
-  });
-  const cfRawRenderProcessor = createCfRawRenderProcessor(db, {
-    cfFinishingRender: cfFinishingRenderQueue,
-  });
-  // DO NOT DELETE apps/worker-render/scripts/cf-render-variant.mjs.
-  // It is spawned by absolute path (below), so no static import points at it
-  // and dead-code analysis reports it as unreferenced. The 2026-07-29
-  // stabilization purge (a205ce5d) deleted it on exactly that reasoning and
-  // silently broke every Clip Forge finishing render in production — the
-  // whole subsystem stops at "raw clip" with no error until a render is
-  // attempted. Restored 2026-07-30. This comment is the only thing tying the
-  // file to the graph; keep it.
-  const cfFinishingRenderProcessor = createCfFinishingRenderProcessor(db, {
-    variantRunnerScript:
-      process.env["CF_VARIANT_RUNNER"] ??
-      "/opt/content-forge/apps/worker-render/scripts/cf-render-variant.mjs",
-  });
-  // ── Tech footage collection processor ────────────────────────────────
-  const techFootageCollectionProcessor = createTechFootageCollectionProcessor(
-    db,
-    {
-      assetCollection: assetCollectionQueue,
-    },
-  );
 
   // 6. Initialize workers
-  const ingestWorker = createIngestWorker(ingestConnection, ingestProcessor);
-  const aiGenerationWorker = createAIGenerationWorker(
-    aiGenerationConnection,
-    aiGenerationProcessor,
-  );
-  const qmsValidationWorker = createQMSValidationWorker(
-    qmsValidationConnection,
-    qmsValidationProcessor,
-  );
-  const garbageCollectionWorker = createGarbageCollectionWorker(
-    garbageCollectionConnection,
-    garbageCollectionProcessor,
-  );
-  const assetCollectionWorker = createAssetCollectionWorker(
-    assetCollectionConnection,
-    assetCollectionProcessor,
-  );
-  const sceneAnalysisWorker = createSceneAnalysisWorker(
-    sceneAnalysisConnection,
-    sceneAnalysisProcessor,
-  );
-  const autoLabelWorker = createAutoLabelWorker(
-    autoLabelConnection,
-    autoLabelProcessor,
-  );
-  const bundestagClipAnalysisWorker = createBundestagClipAnalysisWorker(
-    bundestagClipAnalysisConnection,
-    bundestagClipAnalysisProcessor,
-  );
-  const bundestagPlaybookGenerationWorker =
-    createBundestagPlaybookGenerationWorker(
-      bundestagPlaybookGenerationConnection,
-      bundestagPlaybookGenerationProcessor,
-    );
-  const clipIngestWorker = createClipIngestWorker(
-    clipIngestConnection,
-    clipIngestProcessor,
-  );
-  const clipLabelWorker = createClipLabelWorker(
-    clipLabelConnection,
-    clipLabelProcessor,
-  );
-  const clipLabelBatchWorker = createClipLabelBatchWorker(
-    clipLabelBatchConnection,
-    clipLabelBatchProcessor,
-  );
-  const imageIngestWorker = createImageIngestWorker(
-    imageIngestConnection,
-    imageIngestProcessor,
-  );
-  const imageLabelWorker = createImageLabelWorker(
-    imageLabelConnection,
-    imageLabelProcessor,
-  );
-  const imageEmbedWorker = createImageEmbedWorker(
-    imageEmbedConnection,
-    imageEmbedProcessor,
-  );
-  const clipEmbedWorker = createClipEmbedWorker(
-    clipEmbedConnection,
-    clipEmbedProcessor,
-  );
-  const clipSelectionWorker = createClipSelectionWorker(
-    clipSelectionConnection,
-    clipSelectionProcessor,
-  );
-  const clipRetagWorker = createClipRetagWorker(
-    clipRetagConnection,
-    clipRetagProcessor,
-  );
-  const clipExtractWorker = createClipExtractWorker(
-    clipExtractConnection,
-    clipExtractProcessor,
-  );
-  const dramaTTSWorker = createDramaTTSWorker(
-    dramaTTSWorkerConn,
-    dramaTTSProcessor,
-  );
-  const dramaTranscribeWorker = createDramaTranscribeWorker(
-    dramaTranscribeWorkerConn,
-    dramaTranscribeProcessor,
-  );
-  const dramaPromptGenWorker = createDramaPromptGenWorker(
-    dramaPromptGenWorkerConn,
-    dramaPromptGenProcessor,
-  );
-  const dramaImageGenWorker = createDramaImageGenWorker(
-    dramaImageGenWorkerConn,
-    dramaImageGenProcessor,
-  );
-  const dramaVideoGenWorker = createDramaVideoGenWorker(
-    dramaVideoGenWorkerConn,
-    dramaVideoGenProcessor,
-  );
-  const dramaAssembleWorker = createDramaAssembleWorker(
-    dramaAssembleWorkerConn,
-    dramaAssembleProcessor,
-  );
-  const dramaQCWorker = createDramaQCWorker(
-    dramaQCWorkerConn,
-    dramaQCProcessor,
-  );
-  const dramaThumbnailWorker = createDramaThumbnailWorker(
-    dramaThumbnailWorkerConn,
-    dramaThumbnailProcessor,
-  );
   const thumbnailWorker = createThumbnailWorker(
     thumbnailWorkerConn,
     thumbnailProcessor,
-  );
-  const stockLibraryGenWorker = createStockLibraryGenWorker(
-    stockLibraryGenWorkerConn,
-    stockLibraryGenProcessor,
   );
   const tutorialGenerateWorker = createTutorialGenerateWorker(
     tutorialGenerateWorkerConn,
@@ -1036,48 +284,6 @@ async function bootstrap() {
   const tutorialStitchWorker = createTutorialStitchWorker(
     tutorialStitchWorkerConn,
     tutorialStitchProcessor,
-  );
-  const reactorDownloadWorker = createReactorDownloadWorker(
-    reactorDownloadWorkerConn,
-    reactorDownloadProcessor,
-  );
-  const reactorTranscribeWorker = createReactorTranscribeWorker(
-    reactorTranscribeWorkerConn,
-    reactorTranscribeProcessor,
-  );
-  const reactorScriptWorker = createReactorScriptWorker(
-    reactorScriptWorkerConn,
-    reactorScriptProcessor,
-  );
-  const reactorTTSWorker = createReactorTTSWorker(
-    reactorTTSWorkerConn,
-    reactorTTSProcessor,
-  );
-  const reactorAssembleWorker = createReactorAssembleWorker(
-    reactorAssembleWorkerConn,
-    reactorAssembleProcessor,
-  );
-  // ── Clip Forge workers ─────────────────────────────────────────────────
-  const cfIngestWorker = createCfIngestWorker(
-    cfIngestWorkerConn,
-    cfIngestProcessor,
-  );
-  const cfClipDetectionWorker = createCfClipDetectionWorker(
-    cfClipDetectionWorkerConn,
-    cfClipDetectionProcessor,
-  );
-  const cfRawRenderWorker = createCfRawRenderWorker(
-    cfRawRenderWorkerConn,
-    cfRawRenderProcessor,
-  );
-  const cfFinishingRenderWorker = createCfFinishingRenderWorker(
-    cfFinishingRenderWorkerConn,
-    cfFinishingRenderProcessor,
-  );
-  // ── Tech footage collection worker ────────────────────────────────────
-  const techFootageCollectionWorker = createTechFootageCollectionWorker(
-    techFootageCollectionWorkerConn,
-    techFootageCollectionProcessor,
   );
   const deadLetterWorker = createDeadLetterWorker(
     deadLetterConnection,
@@ -1159,175 +365,21 @@ async function bootstrap() {
 
   // Track workers for graceful shutdown
   workers.push(
-    ingestWorker,
-    aiGenerationWorker,
-    qmsValidationWorker,
-    garbageCollectionWorker,
-    assetCollectionWorker,
-    sceneAnalysisWorker,
-    autoLabelWorker,
-    bundestagClipAnalysisWorker,
-    bundestagPlaybookGenerationWorker,
-    clipIngestWorker,
-    clipLabelWorker,
-    clipLabelBatchWorker,
-    clipEmbedWorker,
-    imageIngestWorker,
-    imageLabelWorker,
-    imageEmbedWorker,
-    clipSelectionWorker,
-    clipRetagWorker,
-    clipExtractWorker,
-    dramaTTSWorker,
-    dramaTranscribeWorker,
-    dramaPromptGenWorker,
-    dramaImageGenWorker,
-    dramaVideoGenWorker,
-    dramaAssembleWorker,
-    dramaQCWorker,
-    dramaThumbnailWorker,
     thumbnailWorker,
-    stockLibraryGenWorker,
     tutorialGenerateWorker,
     tutorialSpliceWorker,
     tutorialStitchWorker,
-    reactorDownloadWorker,
-    reactorTranscribeWorker,
-    reactorScriptWorker,
-    reactorTTSWorker,
-    reactorAssembleWorker,
-    cfIngestWorker,
-    cfClipDetectionWorker,
-    cfRawRenderWorker,
-    cfFinishingRenderWorker,
-    techFootageCollectionWorker,
     deadLetterWorker,
   );
 
   // 7. Attach event listeners for observability
-  attachStandardEventListeners(ingestWorker, "ingest-worker");
-  attachStandardEventListeners(aiGenerationWorker, "ai-generation-worker");
-  attachStandardEventListeners(qmsValidationWorker, "qms-validation-worker");
-  attachStandardEventListeners(
-    garbageCollectionWorker,
-    "garbage-collection-worker",
-  );
-  // Asset collection gets a failure hook because it is the stage most likely to
-  // be killed BY BULLMQ rather than by its own catch block: for RANKING it runs
-  // 15-25 minutes of yt-dlp downloads, TTS and Whisper inline, so a worker
-  // restart or a lock timeout abandons it mid-flight and the processor's catch
-  // never executes.
-  //
-  // Without this, the content_jobs row keeps its in-progress status forever.
-  // Verified on production 2026-08-03: three RANKING jobs sat in
-  // ASSET_COLLECTION with error_message NULL for hours after BullMQ had already
-  // given up on them — the same silent-stranding class that hid 28 finished
-  // tutorial videos for up to 28 days.
-  attachStandardEventListeners(
-    assetCollectionWorker,
-    "asset-collection-worker",
-    {
-      onFailed: async (error, ctx) => {
-        // The BullMQ job id is NOT the content_jobs id — the payload carries
-        // the real one. Guessing a row id here would write a failure onto an
-        // unrelated job.
-        const contentJobId = ctx.data?.job_id;
-        if (!contentJobId) {
-          console.error(
-            JSON.stringify({
-              level: "error",
-              message:
-                "[asset-collection] job failed but no content job id on the payload — row cannot be reconciled",
-              bull_job_id: ctx.bullJobId,
-              error: error.message,
-            }),
-          );
-          return;
-        }
-        await updateJobStatus(
-          db,
-          contentJobId,
-          "FAILED_GENERAL",
-          `[asset-collection] ${error.message} (attempts: ${ctx.attemptsMade ?? "?"})`,
-        );
-        console.error(
-          JSON.stringify({
-            level: "error",
-            message:
-              "[asset-collection] wrote FAILED_GENERAL after BullMQ abandoned the job",
-            job_id: contentJobId,
-            error: error.message,
-          }),
-        );
-      },
-    },
-  );
-  attachStandardEventListeners(sceneAnalysisWorker, "scene-analysis-worker");
-  attachStandardEventListeners(autoLabelWorker, "auto-label-worker");
-  attachStandardEventListeners(
-    bundestagClipAnalysisWorker,
-    "bundestag-clip-analysis-worker",
-  );
-  attachStandardEventListeners(
-    bundestagPlaybookGenerationWorker,
-    "bundestag-playbook-generation-worker",
-  );
-  attachStandardEventListeners(clipIngestWorker, "clip-ingest-worker");
-  attachStandardEventListeners(clipLabelWorker, "clip-label-worker");
-  attachStandardEventListeners(clipLabelBatchWorker, "clip-label-batch-worker");
-  attachStandardEventListeners(clipEmbedWorker, "clip-embed-worker");
-  attachStandardEventListeners(clipSelectionWorker, "clip-selection-worker");
-  attachStandardEventListeners(clipRetagWorker, "clip-retag-worker");
-  attachStandardEventListeners(clipExtractWorker, "clip-extract-worker");
-  attachStandardEventListeners(imageIngestWorker, "image-ingest-worker");
-  attachStandardEventListeners(imageLabelWorker, "image-label-worker");
-  attachStandardEventListeners(imageEmbedWorker, "image-embed-worker");
-  attachStandardEventListeners(dramaTTSWorker, "drama-tts-worker");
-  attachStandardEventListeners(
-    dramaTranscribeWorker,
-    "drama-transcribe-worker",
-  );
-  attachStandardEventListeners(dramaPromptGenWorker, "drama-prompt-gen-worker");
-  attachStandardEventListeners(dramaImageGenWorker, "drama-image-gen-worker");
-  attachStandardEventListeners(dramaVideoGenWorker, "drama-video-gen-worker");
-  attachStandardEventListeners(dramaAssembleWorker, "drama-assemble-worker");
-  attachStandardEventListeners(dramaQCWorker, "drama-qc-worker");
-  attachStandardEventListeners(dramaThumbnailWorker, "drama-thumbnail-worker");
   attachStandardEventListeners(thumbnailWorker, "thumbnail-worker");
-  attachStandardEventListeners(
-    stockLibraryGenWorker,
-    "stock-library-gen-worker",
-  );
   attachStandardEventListeners(
     tutorialGenerateWorker,
     "tutorial-generate-worker",
   );
   attachStandardEventListeners(tutorialSpliceWorker, "tutorial-splice-worker");
   attachStandardEventListeners(tutorialStitchWorker, "tutorial-stitch-worker");
-  attachStandardEventListeners(
-    reactorDownloadWorker,
-    "reactor-download-worker",
-  );
-  attachStandardEventListeners(
-    reactorTranscribeWorker,
-    "reactor-transcribe-worker",
-  );
-  attachStandardEventListeners(reactorScriptWorker, "reactor-script-worker");
-  attachStandardEventListeners(reactorTTSWorker, "reactor-tts-worker");
-  attachStandardEventListeners(
-    reactorAssembleWorker,
-    "reactor-assemble-worker",
-  );
-  attachStandardEventListeners(cfIngestWorker, "cf-ingest-worker");
-  attachStandardEventListeners(
-    cfClipDetectionWorker,
-    "cf-clip-detection-worker",
-  );
-  attachStandardEventListeners(cfRawRenderWorker, "cf-raw-render-worker");
-  attachStandardEventListeners(
-    cfFinishingRenderWorker,
-    "cf-finishing-render-worker",
-  );
   attachStandardEventListeners(deadLetterWorker, "dead-letter-worker");
 
   console.log(
@@ -1335,45 +387,10 @@ async function bootstrap() {
       level: "info",
       message: "Workers initialized",
       workers: [
-        "ingest-worker",
-        "ai-generation-worker",
-        "qms-validation-worker",
-        "garbage-collection-worker",
-        "asset-collection-worker",
-        "scene-analysis-worker",
-        "auto-label-worker",
-        "bundestag-clip-analysis-worker",
-        "bundestag-playbook-generation-worker",
-        "clip-ingest-worker",
-        "clip-label-worker",
-        "clip-label-batch-worker",
-        "clip-embed-worker",
-        "clip-selection-worker",
-        "clip-retag-worker",
-        "clip-extract-worker",
-        "image-ingest-worker",
-        "image-label-worker",
-        "image-embed-worker",
-        "drama-tts-worker",
-        "drama-transcribe-worker",
-        "drama-prompt-gen-worker",
-        "drama-image-gen-worker",
-        "drama-video-gen-worker",
-        "drama-assemble-worker",
-        "drama-qc-worker",
-        "drama-thumbnail-worker",
+        "thumbnail-worker",
         "tutorial-generate-worker",
         "tutorial-splice-worker",
         "tutorial-stitch-worker",
-        "reactor-download-worker",
-        "reactor-transcribe-worker",
-        "reactor-script-worker",
-        "reactor-tts-worker",
-        "reactor-assemble-worker",
-        "cf-ingest-worker",
-        "cf-clip-detection-worker",
-        "cf-raw-render-worker",
-        "cf-finishing-render-worker",
         "dead-letter-worker",
       ],
     }),
@@ -1385,17 +402,6 @@ async function bootstrap() {
     JSON.stringify({
       level: "info",
       message: "Stale job watchdog started",
-    }),
-  );
-
-  // 8b. Drama cleanup — kills orphan ffmpeg from PM2 restarts and
-  // reclaims >24h-old intermediate files (.raw, .looped, group-*, etc).
-  // Runs once at startup + hourly thereafter.
-  startDramaCleanupInterval();
-  console.log(
-    JSON.stringify({
-      level: "info",
-      message: "Drama cleanup watchdog started",
     }),
   );
 
@@ -1434,14 +440,13 @@ async function bootstrap() {
     }),
   );
 
-  // 8e. Stitch reconciler — promotes LONG_FORM parents whose stitch job
+  // 8f. Stitch reconciler — promotes LONG_FORM parents whose stitch job
   // finished but whose write-back never landed, and surfaces anything that must
   // not be auto-fixed. Runs at startup + every 10 minutes.
   //
   // This is the backstop for the failure that hid 28 finished videos for up to
   // 28 days: the write-back existed in src but was never compiled into the
   // deployed bundle, and nothing ever re-checked.
-  // See docs/sessions/2026-08-03-TUTORIAL-PIPELINE-HANDOFF.md.
   startStitchReconcilerInterval(db);
   console.log(
     JSON.stringify({
@@ -1450,14 +455,8 @@ async function bootstrap() {
     }),
   );
 
-  // 8f. Splice reconciler — recovers tutorial jobs left in SPLICING /
-  // AWAITING_UPLOAD by a worker killed mid-splice.
-  //
-  // NOTE: this function was written 2026-06-12 and had ZERO callers until
-  // 2026-08-03 — it had never executed once. Anything it was meant to recover
-  // has been unrecovered for that entire period. It was also written as
-  // startup-only; running it on an interval is deliberate, because startup-only
-  // is the same shape of mistake that let the stitch bug hide.
+  // 8g. Splice reconciler — recovers tutorial jobs left in SPLICING /
+  // AWAITING_UPLOAD by a worker killed mid-splice. Runs at startup + every 10m.
   const runSpliceReconciler = () => {
     reconcileSplicingJobs(db, tutorialSpliceQueue).catch((err: unknown) => {
       console.error(
@@ -1474,7 +473,7 @@ async function bootstrap() {
   console.log(
     JSON.stringify({
       level: "info",
-      message: "Splice reconciler started (every 10m) — first run ever",
+      message: "Splice reconciler started (every 10m)",
     }),
   );
 

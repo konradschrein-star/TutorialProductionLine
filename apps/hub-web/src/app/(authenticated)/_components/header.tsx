@@ -5,7 +5,6 @@ import { useState } from "react";
 import { CommandPalette } from "./command-palette";
 import { useSSE } from "@/hooks/use-sse";
 import type { JWTPayload } from "@/lib/auth/jwt";
-import { isVisitorRole } from "@/lib/auth/rbac";
 
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: "Dashboard",
@@ -126,20 +125,8 @@ export function AppHeader({ session }: Props) {
 
         {/* Right: SSE status + user avatar */}
         <div className="flex items-center gap-4">
-          {/* The event stream carries live pipeline activity for REAL jobs, so
-              the demo role is refused /api/events in middleware — correctly.
-              Rendering the indicator anyway meant EventSource retried on a
-              loop, spraying "[SSE] Connection error" into the console and
-              parking a red OFFLINE badge in the corner of a page shown to
-              prospective buyers. Nothing to connect to, so nothing to show. */}
-          {!isVisitorRole(session.role) && (
-            <>
-              <SseIndicator />
-              <div
-                style={{ width: 1, height: 20, backgroundColor: "#4b4455" }}
-              />
-            </>
-          )}
+          <SseIndicator />
+          <div style={{ width: 1, height: 20, backgroundColor: "#4b4455" }} />
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
             style={{

@@ -9,7 +9,7 @@ import { deriveLogoSubject } from "@repo/domain";
 import { createRedisConnection, createThumbnailQueue } from "@repo/queue";
 import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-repository";
 import type { Thumbnail } from "@repo/db";
-import { getV1Runtime } from "../../../../v1/_lib/runtime";
+import { getV1Runtime } from "@/app/api/_lib/runtime";
 
 export const dynamic = "force-dynamic";
 

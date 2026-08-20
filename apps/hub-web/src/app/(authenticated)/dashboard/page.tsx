@@ -14,7 +14,7 @@ import {
   getStuckJobs,
   type DashboardJobRow,
 } from "./_lib/dashboard-queries";
-import { STATUS_GROUPS, shortDuration, stageFor } from "../jobs/_lib/job-stage";
+import { STATUS_GROUPS, shortDuration, stageFor } from "./_lib/job-stage";
 
 /**
  * Dashboard — operational intel for an operator opening the tab at 7am.

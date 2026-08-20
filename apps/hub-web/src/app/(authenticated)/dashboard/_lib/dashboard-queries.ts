@@ -11,7 +11,7 @@
  */
 import { and, desc, eq, gte, inArray, lt, not, sql } from "drizzle-orm";
 import { db, contentJobs, channels } from "@/lib/db";
-import { STATUS_GROUPS } from "@/app/(authenticated)/jobs/_lib/job-stage";
+import { STATUS_GROUPS } from "./job-stage";
 
 /** Statuses that mean the job is finished, one way or another. */
 const TERMINAL = [

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { resolvePrincipal, ApiAuthError } from "@/app/api/v1/_lib/auth";
+import { resolvePrincipal, ApiAuthError } from "@/app/api/_lib/auth";
 import { db } from "@/lib/db";
 import { getTutorialJobById } from "@repo/db";
 import { createReadStream } from "fs";

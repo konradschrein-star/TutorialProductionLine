@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { createRedisConnection, createThumbnailQueue } from "@repo/queue";
-import { getV1Runtime } from "../../v1/_lib/runtime";
+import { getV1Runtime } from "@/app/api/_lib/runtime";
 import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-repository";
 
 /**

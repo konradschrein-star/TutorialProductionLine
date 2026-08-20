@@ -117,8 +117,6 @@ interface ProductionClientProps {
   canProduce: boolean;
   /** manage:thumbnails — the uploader VA sees the Thumbnails tab only. */
   canFixThumbnails: boolean;
-  /** Read-only sales demo. Trims the tabs and hides the stitcher entry. */
-  isDemo?: boolean;
 }
 
 export function ProductionClient({
@@ -139,7 +137,6 @@ export function ProductionClient({
   rankingChannels,
   canProduce,
   canFixThumbnails,
-  isDemo = false,
 }: ProductionClientProps) {
   const router = useRouter();
   // Two independent grants: production tabs need view:production, the
@@ -159,12 +156,11 @@ export function ProductionClient({
    * Dashboard shows throughput, Studio shows the queue and a finished video.
    * That is the demo.
    */
-  const visibleTabs = TABS.filter((t) => {
-    if (isDemo) return t.id === "dashboard" || t.id === "studio";
-    return THUMBNAIL_ONLY_TABS.has(t.id) ? canFixThumbnails : canProduce;
-  });
+  const visibleTabs = TABS.filter((t) =>
+    THUMBNAIL_ONLY_TABS.has(t.id) ? canFixThumbnails : canProduce,
+  );
   const [tab, setTab] = useState<TabId>(
-    isDemo ? "studio" : canProduce ? "create" : "thumbnails",
+    canProduce ? "create" : "thumbnails",
   );
   const [jobs, setJobs] = useState<TutorialJob[]>(initialJobs);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -327,7 +323,7 @@ export function ProductionClient({
         {/* Video Stitcher lives in its own route (it has its own server-loaded
             jobs/presets), but belongs to the Tutorial Studio — so it sits in
             the same card row as the tabs. */}
-        {canProduce && !isDemo && (
+        {canProduce && (
           <V2Button
             variant="outline"
             onClick={() => router.push("/tutorial-studio/video-stitcher")}
@@ -387,7 +383,6 @@ export function ProductionClient({
           jobs={jobs}
           settings={settings}
           onChange={refresh}
-          isDemo={isDemo}
         />
       )}
       {tab === "ranking" && <ProductionRanking channels={rankingChannels} />}
