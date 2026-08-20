@@ -71,7 +71,9 @@ export const EnvSchema = z.object({
   // === External AI Services ===
   // HeyGen ABOLISHED (§2.1) — provider surface removed entirely; the avatar
   // asset-upload slot (unfortunately named after it) survives elsewhere.
-  ELEVENLABS_API_KEY: z.string().min(1).describe("ElevenLabs API key (TTS)"),
+  // Single-tenant: provider keys are entered in the UI (encrypted_secrets), so
+  // they must NOT block boot. Default to "" (keeps `string` type) instead of min(1).
+  ELEVENLABS_API_KEY: z.string().default("").describe("ElevenLabs API key (TTS)"),
   // Anthropic: KEEP the key but wire it in NOWHERE (§2.1, "expensive as fuck").
   // Optional so a provider we deliberately never route to cannot block boot.
   ANTHROPIC_API_KEY: z
@@ -92,7 +94,7 @@ export const EnvSchema = z.object({
     ),
   AI33_API_KEY: z
     .string()
-    .min(1)
+    .default("")
     .describe("AI33 API key (unified AI gateway for TTS and images)"),
   AI33_API_KEY_2: z
     .string()
@@ -101,13 +103,13 @@ export const EnvSchema = z.object({
     .describe("AI33 secondary API key (backup account for quota failover)"),
   DEFAULT_VOICE_EN: z
     .string()
-    .min(1)
+    .default("")
     .describe("Default TTS voice UUID (tts_voices row ID) for English content"),
   DEFAULT_VOICE_DE: z
     .string()
-    .min(1)
+    .default("")
     .describe(
-      "Default TTS voice UUID (tts_voices row ID) for German content. Required if German content formats are enabled.",
+      "Default TTS voice UUID (tts_voices row ID) for German content. Set once German channels are configured.",
     ),
   GOOGLE_IMAGEN_API_KEY: z
     .string()
