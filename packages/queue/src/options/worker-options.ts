@@ -476,6 +476,18 @@ export const tutorialSpliceWorkerOptions: Omit<WorkerOptions, "connection"> = {
 };
 
 /**
+ * Tutorial Translate Worker Options
+ * - LLM translate + TTS re-synthesis. Concurrency 2 — network I/O bound.
+ * - Extended lock (30 min) to cover full TTS generation pipeline.
+ */
+export const tutorialTranslateWorkerOptions: Omit<WorkerOptions, "connection"> =
+  {
+    ...baseWorkerOptions,
+    concurrency: 2,
+    lockDuration: 30 * 60 * 1000,
+  };
+
+/**
  * Tutorial Stitch Worker Options
  * - FFmpeg concat demuxer: joins N segment MP4s into one file.
  * - Concurrency 1 (CPU-bound), lock 20 min.
@@ -601,6 +613,8 @@ export function getWorkerOptions(
       return tutorialGenerateWorkerOptions;
     case QUEUE_NAMES.TUTORIAL_SPLICE:
       return tutorialSpliceWorkerOptions;
+    case QUEUE_NAMES.TUTORIAL_TRANSLATE:
+      return tutorialTranslateWorkerOptions;
     case QUEUE_NAMES.TUTORIAL_STITCH:
       return tutorialStitchWorkerOptions;
     case QUEUE_NAMES.REACTOR_DOWNLOAD:

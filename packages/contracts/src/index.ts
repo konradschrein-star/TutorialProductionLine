@@ -510,9 +510,11 @@ export {
   TutorialGeneratePayloadSchema,
   TutorialSplicePayloadSchema,
   TutorialStitchPayloadSchema,
+  TutorialTranslatePayloadSchema,
 } from "./queue-payloads/tutorial-payloads.js";
 export type {
   TutorialGeneratePayload,
   TutorialSplicePayload,
   TutorialStitchPayload,
+  TutorialTranslatePayload,
 } from "./queue-payloads/tutorial-payloads.js";

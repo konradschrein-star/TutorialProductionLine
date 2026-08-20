@@ -409,6 +409,15 @@ export const tutorialSpliceQueueOptions = {
 } as Omit<QueueOptions, "connection">;
 
 /**
+ * Tutorial Translate Queue Options
+ * - LLM translate + TTS re-synthesis of a source tutorial. Concurrency 2.
+ * - Network I/O bound (LLM + TTS APIs). Extended lock (30 min).
+ */
+export const tutorialTranslateQueueOptions = {
+  ...baseQueueOptions,
+} as Omit<QueueOptions, "connection">;
+
+/**
  * Tutorial Stitch Queue Options
  * - FFmpeg concat demuxer to join segment MP4s into the parent final.mp4.
  * - Concurrency 1 (CPU-bound), short lock (jobs complete quickly via stream copy).
@@ -508,6 +517,8 @@ export function getQueueOptions(
       return tutorialGenerateQueueOptions;
     case QUEUE_NAMES.TUTORIAL_SPLICE:
       return tutorialSpliceQueueOptions;
+    case QUEUE_NAMES.TUTORIAL_TRANSLATE:
+      return tutorialTranslateQueueOptions;
     case QUEUE_NAMES.TUTORIAL_STITCH:
       return tutorialStitchQueueOptions;
     case QUEUE_NAMES.REACTOR_DOWNLOAD:

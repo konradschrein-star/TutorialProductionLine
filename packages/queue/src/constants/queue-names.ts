@@ -234,6 +234,13 @@ export const QUEUE_NAMES = {
   TUTORIAL_SPLICE: "queue-tutorial-splice",
 
   /**
+   * Tutorial Translate Queue — per-language LLM translate + TTS re-synthesis of a
+   * COMPLETED source tutorial, then hand off to TUTORIAL_SPLICE for the child.
+   * Concurrency 2, lock 30min (LLM + TTS network I/O).
+   */
+  TUTORIAL_TRANSLATE: "queue-tutorial-translate",
+
+  /**
    * Tutorial Stitch Queue — FFmpeg concat all segment MP4s into final parent MP4.
    * Concurrency 1, lock 20min (CPU-bound concat).
    * Triggered automatically when all child segments of a SIX_MIN_STITCH parent are COMPLETED.

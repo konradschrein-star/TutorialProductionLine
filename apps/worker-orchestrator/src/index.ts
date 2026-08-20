@@ -23,9 +23,11 @@ import {
   createTutorialGenerateQueue,
   createTutorialSpliceQueue,
   createTutorialStitchQueue,
+  createTutorialTranslateQueue,
   createTutorialGenerateWorker,
   createTutorialSpliceWorker,
   createTutorialStitchWorker,
+  createTutorialTranslateWorker,
 } from "@repo/queue";
 import { createThumbnailProcessor } from "./processors/thumbnail.js";
 import { startStaleJobWatchdog } from "./watchdog/stale-job-watchdog.js";
@@ -37,6 +39,7 @@ import { reconcileSplicingJobs } from "./watchdog/splice-reconciler.js";
 import { createTutorialGenerateProcessor } from "./processors/tutorial/generate.js";
 import { createTutorialSpliceProcessor } from "./processors/tutorial/splice.js";
 import { createTutorialStitchProcessor } from "./processors/tutorial/stitch.js";
+import { createTutorialTranslateProcessor } from "./processors/tutorial/translate.js";
 import { updateJobStatus } from "./utils/update-job-status.js";
 import { buildErrorDetail } from "@repo/contracts";
 import { ai33CircuitBreaker } from "./utils/ai33-circuit-breaker.js";
@@ -161,6 +164,14 @@ async function bootstrap() {
     url: config.REDIS_URL,
     mode: "queue",
   });
+  const tutorialTranslateWorkerConn = createRedisConnection({
+    url: config.REDIS_URL,
+    mode: "worker",
+  });
+  const tutorialTranslateQueueConn = createRedisConnection({
+    url: config.REDIS_URL,
+    mode: "queue",
+  });
 
   const allConnections = [
     deadLetterConnection,
@@ -172,6 +183,8 @@ async function bootstrap() {
     tutorialSpliceQueueConn,
     tutorialStitchWorkerConn,
     tutorialStitchQueueConn,
+    tutorialTranslateWorkerConn,
+    tutorialTranslateQueueConn,
   ];
 
   console.log(
@@ -253,6 +266,9 @@ async function bootstrap() {
   const tutorialStitchQueue = createTutorialStitchQueue(
     tutorialStitchQueueConn,
   );
+  const tutorialTranslateQueue = createTutorialTranslateQueue(
+    tutorialTranslateQueueConn,
+  );
   const thumbnailQueue = createThumbnailQueue(thumbnailQueueConn);
 
   // 5. Create processors (pass queues for dispatch-next)
@@ -266,6 +282,12 @@ async function bootstrap() {
   });
   const tutorialStitchProcessor = createTutorialStitchProcessor(db, {
     thumbnail: thumbnailQueue,
+  });
+  // Translate lane reuses the EXISTING splice lane: after translate + TTS it
+  // enqueues tutorial-splice for the child, so splice + the Drive scanner
+  // finish it (reuse, don't reinvent).
+  const tutorialTranslateProcessor = createTutorialTranslateProcessor(db, {
+    tutorialSplice: tutorialSpliceQueue,
   });
 
   // 6. Initialize workers
@@ -284,6 +306,10 @@ async function bootstrap() {
   const tutorialStitchWorker = createTutorialStitchWorker(
     tutorialStitchWorkerConn,
     tutorialStitchProcessor,
+  );
+  const tutorialTranslateWorker = createTutorialTranslateWorker(
+    tutorialTranslateWorkerConn,
+    tutorialTranslateProcessor,
   );
   const deadLetterWorker = createDeadLetterWorker(
     deadLetterConnection,
@@ -369,6 +395,7 @@ async function bootstrap() {
     tutorialGenerateWorker,
     tutorialSpliceWorker,
     tutorialStitchWorker,
+    tutorialTranslateWorker,
     deadLetterWorker,
   );
 
@@ -380,6 +407,10 @@ async function bootstrap() {
   );
   attachStandardEventListeners(tutorialSpliceWorker, "tutorial-splice-worker");
   attachStandardEventListeners(tutorialStitchWorker, "tutorial-stitch-worker");
+  attachStandardEventListeners(
+    tutorialTranslateWorker,
+    "tutorial-translate-worker",
+  );
   attachStandardEventListeners(deadLetterWorker, "dead-letter-worker");
 
   console.log(
@@ -391,6 +422,7 @@ async function bootstrap() {
         "tutorial-generate-worker",
         "tutorial-splice-worker",
         "tutorial-stitch-worker",
+        "tutorial-translate-worker",
         "dead-letter-worker",
       ],
     }),

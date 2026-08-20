@@ -36,6 +36,7 @@ import type {
   TutorialGeneratePayload,
   TutorialSplicePayload,
   TutorialStitchPayload,
+  TutorialTranslatePayload,
   ReactorDownloadPayload,
   ReactorTranscribePayload,
   ReactorScriptPayload,
@@ -544,6 +545,15 @@ export function createTutorialSpliceQueue(
   return new Queue<TutorialSplicePayload>(QUEUE_NAMES.TUTORIAL_SPLICE, {
     connection,
     ...getQueueOptions(QUEUE_NAMES.TUTORIAL_SPLICE),
+  });
+}
+
+export function createTutorialTranslateQueue(
+  connection: Redis,
+): Queue<TutorialTranslatePayload> {
+  return new Queue<TutorialTranslatePayload>(QUEUE_NAMES.TUTORIAL_TRANSLATE, {
+    connection,
+    ...getQueueOptions(QUEUE_NAMES.TUTORIAL_TRANSLATE),
   });
 }
 

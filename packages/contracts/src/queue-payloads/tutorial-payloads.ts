@@ -14,6 +14,23 @@ export const TutorialSplicePayloadSchema = z.object({
 export type TutorialSplicePayload = z.infer<typeof TutorialSplicePayloadSchema>;
 
 /**
+ * Payload for the TUTORIAL_TRANSLATE queue lane.
+ *
+ * One job is fanned out per target language from a COMPLETED English source
+ * tutorial. The translate processor LLM-translates the narration + metadata,
+ * re-synthesises TTS in the target language, creates a CHILD tutorial_job that
+ * reuses the source's screen recording, then enqueues the existing
+ * TUTORIAL_SPLICE lane for the child.
+ */
+export const TutorialTranslatePayloadSchema = z.object({
+  sourceJobId: z.string().uuid(),
+  targetLanguage: z.enum(["de", "fr", "es", "ja", "ko"]),
+});
+export type TutorialTranslatePayload = z.infer<
+  typeof TutorialTranslatePayloadSchema
+>;
+
+/**
  * Payload for the TUTORIAL_STITCH queue lane.
  * Triggered after all child segments of a SIX_MIN_STITCH parent are COMPLETED.
  */

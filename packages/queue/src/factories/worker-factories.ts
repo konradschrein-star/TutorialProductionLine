@@ -35,6 +35,7 @@ import type {
   TutorialGeneratePayload,
   TutorialSplicePayload,
   TutorialStitchPayload,
+  TutorialTranslatePayload,
   ReactorDownloadPayload,
   ReactorTranscribePayload,
   ReactorScriptPayload,
@@ -629,6 +630,17 @@ export function createTutorialSpliceWorker(
     QUEUE_NAMES.TUTORIAL_SPLICE,
     processor,
     { connection, ...getWorkerOptions(QUEUE_NAMES.TUTORIAL_SPLICE) },
+  );
+}
+
+export function createTutorialTranslateWorker(
+  connection: Redis,
+  processor: Processor<TutorialTranslatePayload>,
+): Worker<TutorialTranslatePayload> {
+  return new Worker<TutorialTranslatePayload>(
+    QUEUE_NAMES.TUTORIAL_TRANSLATE,
+    processor,
+    { connection, ...getWorkerOptions(QUEUE_NAMES.TUTORIAL_TRANSLATE) },
   );
 }
 
