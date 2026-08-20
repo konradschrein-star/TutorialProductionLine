@@ -123,3 +123,7 @@ Every item Konrad stated across the conversation, mapped to a phase (§3). Each 
 ## 6. Working log
 
 - 2026-08-20 — Branch `rebuild/tutorial-studio-standalone` created off `main` (facade preserved on `main`; associate's live tool untouched). Extraction-manifest analysis of ContentForge dispatched. This master plan written.
+- 2026-08-20 — **Morning standby cron:** laptop task armed (daily 09:02); render-node installer + doc (`docs/ops/morning-standby.md`) — node is RDP-only so needs one manual step.
+- 2026-08-20 — **P1 extraction committed** (`644e08f`): copied tutorial closure (apps/hub-web, apps/worker-orchestrator, packages/*) as a pnpm monorepo. Purged 8003 node_modules + 4488 dist/.next files the facade had committed; removed leaked `apps/hub-web/.env.local`. `pnpm install` clean; **all 13 shared packages build green.**
+- 2026-08-20 — **DB layer validated:** local Postgres 16 (:5433) + Redis 7 via `deploy/standalone/docker-compose.infra.yml`; **full Drizzle migration chain applies cleanly** (95 tables) — tutorial_jobs, tutorial_settings/prompt_presets, channels, tts_voices, thumbnails+archetypes+profiles, encrypted_secrets, storage_artifacts, users all present. Dev `.env` written (gitignored, fresh JWT/secret keys).
+- 2026-08-20 — **Prune in progress (parallel agents):** worker-orchestrator → tutorial+thumbnail only (build green); hub-web → tutorial-only routes + single-tenant RBAC + demo-redaction removed + middleware trimmed (tsc --noEmit green). Deploy runbook + single-tenant `.env.standalone.example` written.

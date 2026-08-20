@@ -1,0 +1,38 @@
+# Local/dev infrastructure for the standalone Tutorial Studio.
+# Postgres + Redis only (run the app + workers on the host during dev).
+#   docker compose -f deploy/standalone/docker-compose.infra.yml up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: tutorial-pg
+    environment:
+      POSTGRES_USER: tutorial
+      POSTGRES_PASSWORD: tutorial_local
+      POSTGRES_DB: tutorial_studio
+    ports:
+      - "5433:5432"
+    volumes:
+      - tutorial_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tutorial -d tutorial_studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    container_name: tutorial-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - tutorial_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  tutorial_pgdata:
+  tutorial_redisdata:
