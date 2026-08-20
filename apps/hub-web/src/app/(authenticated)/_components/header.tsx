@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { CommandPalette } from "./command-palette";
 import { useSSE } from "@/hooks/use-sse";
+import { ThemeModeToggle } from "./theme-mode-toggle";
 import type { JWTPayload } from "@/lib/auth/jwt";
 
 const SEGMENT_LABELS: Record<string, string> = {
@@ -125,6 +126,7 @@ export function AppHeader({ session }: Props) {
 
         {/* Right: SSE status + user avatar */}
         <div className="flex items-center gap-4">
+          <ThemeModeToggle />
           <SseIndicator />
           <div style={{ width: 1, height: 20, backgroundColor: "#4b4455" }} />
           <div

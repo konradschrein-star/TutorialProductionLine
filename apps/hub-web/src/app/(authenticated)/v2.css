@@ -50,6 +50,25 @@
 .theme-blue   { --v2-accent-rgb: 96, 165, 250;   --v2-accent: #60a5fa; --v2-accent-dim: #3b82f6; --v2-accent-secondary: #bfdbfe; }
 .theme-green  { --v2-accent-rgb: 52, 211, 153;   --v2-accent: #34d399; --v2-accent-dim: #059669; --v2-accent-secondary: #a7f3d0; }
 
+/* ── Light mode: redefine surface/text/border tokens (accent unchanged).
+   Applied on the authenticated shell wrapper via data-theme="light"; CSS custom
+   properties cascade to the whole subtree. ─────────────────────────────────── */
+[data-theme="light"] {
+  --v2-bg:        #f7f7f8;
+  --v2-surface-1: #ffffff;
+  --v2-surface-2: #f2f2f4;
+  --v2-surface-3: #e9e9ec;
+  --v2-surface-4: #dcdce1;
+  --v2-border-0: rgba(20,20,30,0.06);
+  --v2-border-1: rgba(20,20,30,0.11);
+  --v2-border-2: rgba(20,20,30,0.17);
+  --v2-border-3: rgba(20,20,30,0.26);
+  --v2-text-1: #1b1b20;
+  --v2-text-2: #55515f;
+  --v2-text-3: #8b8794;
+  --v2-muted:  #9a95a4;
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    SECTION 2: BUTTON SYSTEM

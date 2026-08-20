@@ -17,6 +17,7 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
   const rawTheme = cookieStore.get('hub_ui_theme')?.value ?? 'lime';
   const theme = VALID_THEMES.has(rawTheme) ? rawTheme : 'lime';
   const themeClass = theme !== 'lime' ? `theme-${theme}` : '';
+  const mode = cookieStore.get('hub_ui_mode')?.value === 'light' ? 'light' : 'dark';
 
   return (
     <>
@@ -28,8 +29,9 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
       />
       <KeybindProvider>
         <div
+          data-theme={mode}
           className={`flex h-screen overflow-hidden${themeClass ? ` ${themeClass}` : ''}`}
-          style={{ backgroundColor: '#000', color: '#eceae6', fontFamily: 'Inter, sans-serif' }}
+          style={{ backgroundColor: 'var(--v2-bg)', color: 'var(--v2-text-1)', fontFamily: 'Inter, sans-serif' }}
         >
           {/* Ambient background glow blobs */}
           <div
