@@ -63,15 +63,13 @@ export const TUTORIAL_PROVIDERS: {
       secretProvider: "deepseek",
       envFallback: true,
       isDefault: true,
+      // Owner directive: ONLY DeepSeek V4 Flash — Pro (a costly reasoning model)
+      // is deliberately not offered so it can never be selected.
       models: [
         {
           value: "deepseek-v4-flash",
           label: "DeepSeek V4 Flash (faster, cheaper)",
           isDefault: true,
-        },
-        {
-          value: "deepseek-v4-pro",
-          label: "DeepSeek V4 Pro (best quality)",
         },
       ],
     },
