@@ -1,5 +1,8 @@
 import type { Job, Queue } from "bullmq";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { rename } from "node:fs/promises";
 import type {
   TutorialSplicePayload,
   TutorialStitchPayload,
@@ -14,6 +17,7 @@ import {
 } from "@repo/db";
 import {
   probeMedia,
+  probeMediaDimensions,
   muxTtsOntoRecording,
   detectLeadingSilence,
   detectTtsOffsetByAudioMatch,
@@ -21,6 +25,13 @@ import {
 import { deriveLogoSubject } from "@repo/domain";
 import { firstNSentences } from "../../utils/thumbnail/prompt-builder.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
+import {
+  buildNewVideoTreatmentArgs,
+  ctaForLanguage,
+} from "../../utils/tutorial/new-video-treatment.js";
+import { buildLikeSubscribeOutroArgs } from "../../utils/tutorial/like-subscribe-outro.js";
+
+const execFileAsync = promisify(execFile);
 
 const LOCAL_MEDIA_ROOT =
   process.env["LOCAL_MEDIA_ROOT"] ?? "/opt/content-forge/media";
@@ -28,11 +39,14 @@ const LOCAL_MEDIA_ROOT =
 /**
  * Tutorial Splice Processor
  *
- * Muxes the TTS audio onto the screen recording:
- *   1. Probe recording duration
- *   2. Probe TTS audio duration
- *   3. Compute time-scale factor = audioDurationSeconds / recordingDurationSeconds
- *   4. FFmpeg mux — time-scales video to match 1x TTS audio, drops original mic audio
+ * Muxes the TTS audio onto the screen recording. The audio is always the
+ * master clock (output length = TTS length); the video is fit to it two ways:
+ *   1. Probe recording duration + TTS duration; detect the lead-in offset
+ *   2. English original → fitMode "trim": natural 1× speed, cut the overhang
+ *      (freeze last frame if the recording is shorter than the narration)
+ *   3. Translation → fitMode "stretch": time-scale the reused footage to the
+ *      localized audio (factor = audioDuration / effectiveRecording)
+ *   4. FFmpeg mux — drops original mic audio, maps the clean 1× TTS track
  *   5. Save final_path and mark COMPLETED
  */
 export function createTutorialSpliceProcessor(
@@ -131,19 +145,42 @@ export function createTutorialSpliceProcessor(
         throw new Error(`TTS duration is zero or negative for job ${jobId}`);
       }
 
-      // factor > 1 slows the video; factor < 1 speeds it up
-      const factor = ttsDurationS / effectiveRecordingS;
+      // The audio is always the master clock — the output is exactly the TTS
+      // length either way — but HOW the video is fit to it differs by kind
+      // (owner model, 2026-08-24):
+      //
+      //   • English original (no source_job_id): natural 1× speed. Sync the
+      //     start off the audio (lead-in already trimmed above) and CUT the
+      //     overhanging tail. The recorded cursor moves at real speed and are
+      //     never sped up/slowed to force a fit. If the recording ends before
+      //     the narration, freeze the last frame so the audio isn't truncated.
+      //
+      //   • Translation (source_job_id set): the reused English footage is a
+      //     fixed length while the localized audio is not, so there's no
+      //     natural tail to trust — time-scale (stretch) the video to the
+      //     localized audio so it always runs exactly that long.
+      const isTranslation = Boolean(tutorialJob.source_job_id);
+      // factor > 1 slows the video; factor < 1 speeds it up. Only used in the
+      // translation (stretch) path; English runs at 1× (fitMode "trim").
+      const factor = isTranslation ? ttsDurationS / effectiveRecordingS : 1;
+      const fitMode: "stretch" | "trim" = isTranslation ? "stretch" : "trim";
+      const padTailSeconds = isTranslation
+        ? 0
+        : Math.max(0, ttsDurationS - effectiveRecordingS);
 
       console.log(
         JSON.stringify({
           level: "info",
-          message: "Tutorial splice: computed time-scale factor",
+          message: "Tutorial splice: computed fit plan",
           job_id: jobId,
+          kind: isTranslation ? "translation" : "english_original",
+          fit_mode: fitMode,
           recording_duration_s: recordingDurationS,
           lead_in_silence_s: leadInSeconds,
           effective_recording_s: effectiveRecordingS,
           tts_duration_s: ttsDurationS,
           factor,
+          pad_tail_s: padTailSeconds,
         }),
       );
 
@@ -155,6 +192,8 @@ export function createTutorialSpliceProcessor(
         ttsAudioPath,
         outputPath,
         factor,
+        fitMode,
+        padTailSeconds,
         inputOffsetSeconds: leadInSeconds,
         // Splice is the final 90% → 100% of overall job progress. Map the
         // ffmpeg-reported mux progress (0-100% of the mux itself) onto
@@ -168,6 +207,79 @@ export function createTutorialSpliceProcessor(
           );
         },
       });
+
+      // "New video" treatment — TRANSLATED children only (source_job_id set),
+      // never the English original. Composites the tutorial onto an animated
+      // color-coded background with a rounded framed border, +2% stretch,
+      // saturation, pixel-shift and a language CTA at ~70% so each language
+      // version is a distinct video (avoids cross-channel duplicate detection).
+      if (tutorialJob.source_job_id) {
+        const treatedPath = join(outputDir, "final.treated.mp4");
+        const argv = buildNewVideoTreatmentArgs(outputPath, treatedPath, {
+          seed: jobId,
+          ctaText: ctaForLanguage(tutorialJob.language ?? "en"),
+          durationSec: ttsDurationS,
+        });
+        console.log(
+          JSON.stringify({
+            level: "info",
+            message: "Tutorial splice: applying new-video treatment",
+            job_id: jobId,
+            language: tutorialJob.language,
+          }),
+        );
+        // execFileAsync (not raw spawn().on) to match the ffmpeg calls in
+        // generate.ts and stay clear of the @types/node ChildProcess.on typing
+        // issue. Rejects on non-zero exit; the large maxBuffer covers ffmpeg's
+        // verbose stderr on a full-video pass.
+        await execFileAsync(argv[0]!, argv.slice(1), {
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        await rename(treatedPath, outputPath); // overwrite final.mp4 in place
+      }
+
+      // ── Like & Subscribe outro ──────────────────────────────────────────
+      // Append a short animated end card to EVERY finished video (owner
+      // directive). Best-effort: a finished tutorial is worth far more than a
+      // missing end card, so a font/ffmpeg edge case logs a warning and leaves
+      // the video as-is rather than failing the job. Skipped for SIX_MIN_STITCH
+      // CHILD segments (parent_job_id set) — those are intermediate and get the
+      // outro once, on the stitched parent, in the stitch processor.
+      if (!tutorialJob.parent_job_id) {
+        try {
+          const dims = await probeMediaDimensions(outputPath);
+          const outroPath = join(outputDir, "final.outro.mp4");
+          const argv = buildLikeSubscribeOutroArgs(outputPath, outroPath, {
+            width: dims.width,
+            height: dims.height,
+            seed: jobId,
+            lang: tutorialJob.language ?? "en",
+          });
+          await execFileAsync(argv[0]!, argv.slice(1), {
+            maxBuffer: 64 * 1024 * 1024,
+          });
+          await rename(outroPath, outputPath); // overwrite final.mp4 in place
+          console.log(
+            JSON.stringify({
+              level: "info",
+              message: "Tutorial splice: appended like/subscribe outro",
+              job_id: jobId,
+              language: tutorialJob.language ?? "en",
+            }),
+          );
+        } catch (outroErr) {
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              message: "Like/subscribe outro failed (non-fatal) — shipping video without it",
+              job_id: jobId,
+              error:
+                outroErr instanceof Error ? outroErr.message : String(outroErr),
+            }),
+          );
+        }
+      }
+      // ── End like & subscribe outro ──────────────────────────────────────
 
       await updateTutorialJob(db, jobId, {
         final_path: outputPath,
@@ -198,7 +310,10 @@ export function createTutorialSpliceProcessor(
       // top-level jobs have no channel) with no log, no row, no trace. This
       // mirrors the same fix already made for content jobs in
       // worker-render/src/utils/enqueue-thumbnail.ts (plan A2.6).
-      if (!tutorialJob.parent_job_id) {
+      // Skip translated children (source_job_id set): no thumbnails for the
+      // localized versions for now — thumbnails are produced on the English
+      // original only (owner directive 2026-08-23).
+      if (!tutorialJob.parent_job_id && !tutorialJob.source_job_id) {
         try {
           const excerpt = firstNSentences(tutorialJob.script_text ?? "", 5);
           // The SOFTWARE this tutorial is about. Without it the brief compiler

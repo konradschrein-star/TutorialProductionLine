@@ -15,6 +15,23 @@ export interface MuxArgsParams {
    * starts. Detected by `detectLeadingSilence`. Defaults to 0.
    */
   inputOffsetSeconds?: number;
+  /**
+   * How the video is fit to the TTS audio:
+   *   - "stretch" (default): time-scale the whole video by `factor` so it runs
+   *     exactly as long as the audio. Used for translations, where the reused
+   *     English footage must be re-fit to a different-length localized track.
+   *   - "trim": leave the video at natural 1× speed and let `-shortest` cut the
+   *     tail to the audio length (the overhanging recording is dropped). Used
+   *     for the English original — the owner's model: "sync off the audio, cut
+   *     away the overhanging parts, don't speed it up." `factor` is ignored.
+   */
+  fitMode?: "stretch" | "trim";
+  /**
+   * Trim mode only. When the recording is SHORTER than the narration, freeze
+   * the last frame for this many seconds so the audio is never truncated.
+   * Computed by the caller as max(0, ttsDuration - effectiveRecording).
+   */
+  padTailSeconds?: number;
 }
 
 export function buildMuxArgs(p: MuxArgsParams): string[] {
@@ -29,10 +46,28 @@ export function buildMuxArgs(p: MuxArgsParams): string[] {
   //   - setpts=(PTS-STARTPTS) resets timestamps after the trim, then *F
   //     rescales them so output duration matches the TTS audio length.
   const offset = p.inputOffsetSeconds ?? 0;
-  const videoFilter =
-    offset > 0
-      ? `trim=start=${offset.toFixed(3)},setpts=(PTS-STARTPTS)*${p.factor}`
-      : `setpts=${p.factor}*PTS`;
+  const fitMode = p.fitMode ?? "stretch";
+
+  let videoFilter: string;
+  if (fitMode === "trim") {
+    // Natural speed. Reset timestamps after any lead-in trim, then (only when
+    // the recording is short) hold the last frame so the narration finishes.
+    // `-shortest` cuts the tail when the recording is longer than the audio.
+    const base =
+      offset > 0
+        ? `trim=start=${offset.toFixed(3)},setpts=PTS-STARTPTS`
+        : `setpts=PTS-STARTPTS`;
+    const pad = p.padTailSeconds ?? 0;
+    videoFilter =
+      pad > 0.05
+        ? `${base},tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)}`
+        : base;
+  } else {
+    videoFilter =
+      offset > 0
+        ? `trim=start=${offset.toFixed(3)},setpts=(PTS-STARTPTS)*${p.factor}`
+        : `setpts=${p.factor}*PTS`;
+  }
   return [
     "-i",
     p.recordingPath,
@@ -109,6 +144,10 @@ export interface MuxTtsParams {
   factor: number;
   /** Seconds of leading dead air in the recording to skip. Defaults to 0. */
   inputOffsetSeconds?: number;
+  /** See MuxArgsParams.fitMode. "stretch" (default) or "trim". */
+  fitMode?: "stretch" | "trim";
+  /** Trim mode only: hold last frame this long when recording < narration. */
+  padTailSeconds?: number;
   /**
    * Total output duration in seconds — required for progress tracking.
    * (= the TTS audio duration, since `-shortest` and the time-scale make
@@ -123,7 +162,15 @@ export interface MuxTtsParams {
   onProgress?: (percentOfMux: number) => Promise<void> | void;
 }
 
-/** Tries NVENC, falls back to libx264 — same strategy as ffmpegAudioMux. */
+/**
+ * Once NVENC has failed in this process it will keep failing (no GPU appears
+ * mid-run), so we remember it and stop paying the doomed spawn on every splice.
+ * Reset only by restarting the worker — which is also the only way a GPU would
+ * become available. Starts false so a genuine GPU host still gets NVENC.
+ */
+let nvencKnownBad = false;
+
+/** Tries NVENC once per process, then falls back to libx264 for good. */
 export async function muxTtsOntoRecording(p: MuxTtsParams): Promise<void> {
   const buildTracker = () => {
     if (!p.outputDurationSeconds || !p.onProgress) return undefined;
@@ -139,18 +186,19 @@ export async function muxTtsOntoRecording(p: MuxTtsParams): Promise<void> {
     });
   };
 
-  try {
-    await runFfmpeg(
-      buildMuxArgs({ ...p, videoCodec: "h264_nvenc" }),
-      buildTracker(),
-    );
-  } catch (err) {
-    console.warn(
-      `[mux-tts] NVENC failed, falling back to libx264: ${(err as Error).message}`,
-    );
-    await runFfmpeg(
-      buildMuxArgs({ ...p, videoCodec: "libx264" }),
-      buildTracker(),
-    );
+  if (!nvencKnownBad) {
+    try {
+      await runFfmpeg(
+        buildMuxArgs({ ...p, videoCodec: "h264_nvenc" }),
+        buildTracker(),
+      );
+      return;
+    } catch (err) {
+      nvencKnownBad = true;
+      console.warn(
+        `[mux-tts] NVENC unavailable — using libx264 for this and all subsequent muxes: ${(err as Error).message}`,
+      );
+    }
   }
+  await runFfmpeg(buildMuxArgs({ ...p, videoCodec: "libx264" }), buildTracker());
 }
