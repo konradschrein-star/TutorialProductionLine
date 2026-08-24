@@ -21,7 +21,14 @@ type ActionResult = { success: boolean; error?: string };
 // ── Prompt presets ───────────────────────────────────────────────────────────
 
 const CreatePromptSchema = z.object({
-  category: z.enum(["THREE_MIN", "SIX_MIN", "SIX_MIN_STITCH"]),
+  category: z.enum([
+    "THREE_MIN",
+    "SIX_MIN",
+    "SIX_MIN_STITCH",
+    "LONG_FORM",
+    "SHORT_MATCH",
+    "SHORT_PLUS",
+  ]),
   name: z.string().min(1).max(120),
   system_prompt: z.string().min(10),
 });
@@ -30,7 +37,16 @@ export async function createTutorialPrompt(
   input: unknown,
 ): Promise<ActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "manage:tutorial-settings")) {
+  // A producer VA may tune these workflow settings (edit:tutorial-workflow);
+  // manage:tutorial-settings (admin) also qualifies. Credentials/storage/alerts
+  // are elsewhere and stay admin-only.
+  if (
+    !session ||
+    !(
+      hasPermission(session, "manage:tutorial-settings") ||
+      hasPermission(session, "edit:tutorial-workflow")
+    )
+  ) {
     return { success: false, error: "Unauthorized" };
   }
   const parsed = CreatePromptSchema.safeParse(input);
@@ -67,7 +83,16 @@ export async function updateTutorialPrompt(
   input: unknown,
 ): Promise<ActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "manage:tutorial-settings")) {
+  // A producer VA may tune these workflow settings (edit:tutorial-workflow);
+  // manage:tutorial-settings (admin) also qualifies. Credentials/storage/alerts
+  // are elsewhere and stay admin-only.
+  if (
+    !session ||
+    !(
+      hasPermission(session, "manage:tutorial-settings") ||
+      hasPermission(session, "edit:tutorial-workflow")
+    )
+  ) {
     return { success: false, error: "Unauthorized" };
   }
   const parsed = UpdatePromptSchema.safeParse(input);
@@ -106,7 +131,16 @@ export async function updateTutorialSettingsAction(
   input: unknown,
 ): Promise<ActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "manage:tutorial-settings")) {
+  // A producer VA may tune these workflow settings (edit:tutorial-workflow);
+  // manage:tutorial-settings (admin) also qualifies. Credentials/storage/alerts
+  // are elsewhere and stay admin-only.
+  if (
+    !session ||
+    !(
+      hasPermission(session, "manage:tutorial-settings") ||
+      hasPermission(session, "edit:tutorial-workflow")
+    )
+  ) {
     return { success: false, error: "Unauthorized" };
   }
   const parsed = UpdateSettingsSchema.safeParse(input);

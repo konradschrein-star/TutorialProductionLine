@@ -798,6 +798,59 @@ export function buildLengthLine(
 }
 
 /**
+ * LENGTH line for the sub-3-minute ADAPTIVE modes (SHORT_MATCH, SHORT_PLUS).
+ *
+ * Why this exists instead of reusing `buildLengthLine`'s SHORT branch: that
+ * branch floors its printed band at `Math.max(3, …)` minutes / `Math.max(4, …)`
+ * for the ceiling, because it was written for THREE_MIN / SIX_MIN, which are
+ * never under three minutes. Passing it a 2-minute target still prints "between
+ * about 3 and 4 minutes" — the exact floor we are trying to escape. So the
+ * adaptive short modes get their own honest sub-3 band.
+ *
+ * The target is measured off the reference video's real runtime (see
+ * `targetMinutesForMode`), not chosen from a menu. `spendExtraOnExamples` is set
+ * for SHORT_PLUS, whose target is ~15% over the source: it directs that extra
+ * runtime into worked examples and short explanations, never filler — the whole
+ * reason the owner wants a "slightly longer" variant at all.
+ */
+export function buildShortAdaptiveLengthLine(
+  targetMinutes: number,
+  opts: { spendExtraOnExamples?: boolean } = {},
+): string[] {
+  const targetWords = Math.round(targetMinutes * WORDS_PER_MINUTE);
+  // A tight band around the target — roughly ±15%, never floored up to 3 min.
+  const lowWords = Math.round(targetWords * 0.85);
+  const highWords = Math.round(targetWords * 1.15);
+  const mins = targetMinutes % 1 === 0 ? targetMinutes.toFixed(0) : targetMinutes.toFixed(1);
+  const lines = [
+    "LENGTH — match the reference video you are based on. It ran roughly this long, and that",
+    `is the runtime the market already rewards for this exact search, not a guess. Aim for about`,
+    `${mins} minutes — about ${targetWords} words — and stay between roughly ${lowWords} and ${highWords} words.`,
+    "Do not pad to stretch it and do not race to shorten it.",
+    "Hit that length by TEACHING each step properly — say what appears on screen after every",
+    "action, and the one thing that goes wrong right there. NEVER reach it with an intro, an",
+    "outro, a recap, a general-tips section, or the same point said twice. If the task is",
+    "genuinely complete in fewer words without padding, stop there — a complete shorter script",
+    "always beats a padded one.",
+  ];
+  if (opts.spendExtraOnExamples) {
+    lines.push(
+      "You have a little more room than the bare clicks need — spend it, but ONLY on real",
+      "teaching: one or two concrete worked examples performed on screen (real values typed into",
+      "real fields, a real file name, a real number) and a short 'why this works' on the steps",
+      "that matter. That extra teaching is the entire point of the few extra seconds. Restating,",
+      "filler, or a second lap of the same point is not, and is worse than simply being shorter.",
+    );
+  }
+  return lines;
+}
+
+/** The two adaptive sub-3-minute modes whose length tracks the reference video. */
+export function isShortAdaptiveMode(mode: string): boolean {
+  return mode === "SHORT_MATCH" || mode === "SHORT_PLUS";
+}
+
+/**
  * Assemble the rule stack every tutorial prompt shares, in priority order.
  * Exported so the transcript-rewrite prompt uses the identical stack and the two
  * can never drift.
@@ -919,14 +972,19 @@ export function buildAnswerFirstScriptPrompt(
      * `baseInstructions` on purpose — see buildVaInstructionsBlock.
      */
     vaInstructions?: string | null;
+    /**
+     * Pre-built LENGTH lines to use instead of `buildLengthLine`. The adaptive
+     * sub-3-minute modes (SHORT_MATCH / SHORT_PLUS) pass a
+     * `buildShortAdaptiveLengthLine` result here so the working THREE_MIN /
+     * SIX_MIN branch of `buildLengthLine` is never touched.
+     */
+    lengthLineOverride?: string[];
   } = {},
 ): string {
   const tier = opts.tier ?? tierForMinutes(targetMinutes);
-  const lengthLine = buildLengthLine(
-    targetMinutes,
-    opts.allowLonger ?? false,
-    tier,
-  );
+  const lengthLine =
+    opts.lengthLineOverride ??
+    buildLengthLine(targetMinutes, opts.allowLonger ?? false, tier);
   const title = opts.title?.trim();
   const vaBlock = buildVaInstructionsBlock(opts.vaInstructions);
 
@@ -993,6 +1051,33 @@ export function targetMinutesForMode(
       return withTier(3, false);
     case "SIX_MIN":
       return withTier(6, false);
+    // Adaptive sub-3-minute modes: length is MEASURED off the reference video's
+    // runtime, then clamped into a sub-3 band. SHORT_MATCH mirrors the source;
+    // SHORT_PLUS runs ~15% longer, the extra spent on examples (see
+    // buildShortAdaptiveLengthLine). Both fall back to the VA's typed
+    // target_minutes, then to 2 min, when no reference runtime is known.
+    case "SHORT_MATCH":
+    case "SHORT_PLUS": {
+      const baseMinutes =
+        refVideoSeconds && refVideoSeconds > 0
+          ? refVideoSeconds / 60
+          : targetMinutesField && targetMinutesField > 0
+            ? targetMinutesField
+            : 2;
+      const multiplier = mode === "SHORT_PLUS" ? 1.15 : 1;
+      const floor = mode === "SHORT_PLUS" ? 1.75 : 1.5;
+      const ceiling = mode === "SHORT_PLUS" ? 3.25 : 3;
+      const clamped = Math.min(
+        Math.max(baseMinutes * multiplier, floor),
+        ceiling,
+      );
+      // Two decimals, not one: the clamp bounds (1.75, 3.25) are half-tenths,
+      // and rounding to one decimal would push 3.25 up to 3.3 and past the
+      // ceiling. The word count (target × 150) is rounded separately in the
+      // length line.
+      const targetMinutes = Math.round(clamped * 100) / 100;
+      return { targetMinutes, allowLonger: false, tier: "SHORT" };
+    }
     case "SIX_MIN_STITCH": {
       // Master gets chunked into ~6-min parts; rich topics legitimately run
       // longer, so seed from the VA's total target when they set one, then from

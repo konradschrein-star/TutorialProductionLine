@@ -72,6 +72,24 @@ const SEEDS = [
     is_seeded: true,
     is_default: true,
   },
+  // Adaptive sub-3-minute modes (2026-08-24). Persona is identical to the SHORT
+  // tier — the Match vs Plus difference lives in the code-side length line
+  // (buildShortAdaptiveLengthLine), exactly as THREE_MIN and SIX_MIN both reuse
+  // this same preset and differ only in their length target.
+  {
+    category: "SHORT_MATCH" as const,
+    name: "Short — Match reference length (default)",
+    system_prompt: SHORT_TIER_PRESET,
+    is_seeded: true,
+    is_default: true,
+  },
+  {
+    category: "SHORT_PLUS" as const,
+    name: "Short — Plus, reference + examples (default)",
+    system_prompt: SHORT_TIER_PRESET,
+    is_seeded: true,
+    is_default: true,
+  },
   {
     category: "SIX_MIN_STITCH" as const,
     name: "Stitched Tutorial — screen recording (default)",

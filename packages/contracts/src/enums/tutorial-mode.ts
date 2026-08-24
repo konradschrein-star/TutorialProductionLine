@@ -1,3 +1,10 @@
 import { z } from "zod";
-export const TutorialMode = z.enum(["THREE_MIN", "SIX_MIN", "SIX_MIN_STITCH"]);
+export const TutorialMode = z.enum([
+  "THREE_MIN",
+  "SIX_MIN",
+  "SIX_MIN_STITCH",
+  "LONG_FORM",
+  "SHORT_MATCH",
+  "SHORT_PLUS",
+]);
 export type TutorialMode = z.infer<typeof TutorialMode>;

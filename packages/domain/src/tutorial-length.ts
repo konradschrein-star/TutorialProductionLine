@@ -108,6 +108,10 @@ export function labelForMode(mode: TutorialMode): string {
       return "Long-form (40+ min, stitched)";
     case "THREE_MIN":
       return "3-Minute Tutorial";
+    case "SHORT_MATCH":
+      return "Short — Match the reference length";
+    case "SHORT_PLUS":
+      return "Short — Plus (reference + examples)";
     default: {
       const never: never = mode;
       return never;
@@ -161,7 +165,11 @@ export type TutorialMode =
   | "THREE_MIN"
   | "SIX_MIN"
   | "SIX_MIN_STITCH"
-  | "LONG_FORM";
+  | "LONG_FORM"
+  // Adaptive sub-3-minute modes — length tracks the reference video. Manual
+  // selection only; the auto planner (planForMinutes) never emits them.
+  | "SHORT_MATCH"
+  | "SHORT_PLUS";
 
 export interface LengthBucket {
   /** The Keyword Tool's own label, e.g. "10-20min". */

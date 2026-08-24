@@ -75,6 +75,8 @@ describe("stepCountAdvice", () => {
     expect(labelForMode("THREE_MIN")).toBe("3-Minute Tutorial");
     expect(labelForMode("SIX_MIN_STITCH")).toContain("Stitch");
     expect(labelForMode("LONG_FORM")).toContain("Long-form");
+    expect(labelForMode("SHORT_MATCH")).toContain("Match");
+    expect(labelForMode("SHORT_PLUS")).toContain("Plus");
   });
 });
 

@@ -29,6 +29,8 @@ import {
 } from "../../utils/tutorial/long-form.js";
 import {
   buildAnswerFirstScriptPrompt,
+  buildShortAdaptiveLengthLine,
+  isShortAdaptiveMode,
   targetMinutesForMode,
   tierExpectsMarkers,
 } from "../../utils/tutorial/script-prompt.js";
@@ -781,6 +783,16 @@ export function createTutorialGenerateProcessor(
           tutorialJob.target_minutes,
           refVideoSeconds,
         );
+        // Adaptive sub-3-minute modes get an honest sub-3 LENGTH line measured
+        // off the reference video, instead of buildLengthLine's SHORT branch
+        // (which floors at 3 min). SHORT_PLUS also directs its ~15% of extra
+        // runtime into examples. undefined for every other mode, so those keep
+        // the untouched buildLengthLine behaviour.
+        const shortAdaptiveLengthLine = isShortAdaptiveMode(tutorialJob.mode)
+          ? buildShortAdaptiveLengthLine(scriptTargetMinutes, {
+              spendExtraOnExamples: tutorialJob.mode === "SHORT_PLUS",
+            })
+          : undefined;
         // Source-mode branch: TRANSCRIPT_REWRITE rewrites the reference video's
         // transcript into our own unique script (the transcript is guaranteed
         // present here — resolveSourceTranscript threw otherwise); otherwise
@@ -802,12 +814,14 @@ export function createTutorialGenerateProcessor(
                   : sourceTranscript.source === "youtube_manual_captions"
                     ? "human"
                     : "unknown",
+              lengthLineOverride: shortAdaptiveLengthLine,
             })
           : buildAnswerFirstScriptPrompt(promptText, scriptTargetMinutes, {
               allowLonger,
               tier: scriptTier,
               title: tutorialJob.title,
               vaInstructions,
+              lengthLineOverride: shortAdaptiveLengthLine,
             });
         console.log(
           JSON.stringify({

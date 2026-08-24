@@ -110,15 +110,20 @@ export function buildTranscriptRewritePrompt(params: {
    * keeps its authority. See buildVaInstructionsBlock in script-prompt.ts.
    */
   vaInstructions?: string | null;
+  /**
+   * Pre-built LENGTH lines to use instead of `buildLengthLine`. The adaptive
+   * sub-3-minute modes (SHORT_MATCH / SHORT_PLUS) pass a
+   * `buildShortAdaptiveLengthLine` result here — production sub-3 jobs run
+   * through this rewrite path, so this is its primary consumer.
+   */
+  lengthLineOverride?: string[];
 }): string {
   const { baseInstructions, transcript, targetMinutes, title } = params;
   const vaBlock = buildVaInstructionsBlock(params.vaInstructions);
   const tier = params.tier ?? tierForMinutes(targetMinutes);
-  const lengthLine = buildLengthLine(
-    targetMinutes,
-    params.allowLonger ?? false,
-    tier,
-  );
+  const lengthLine =
+    params.lengthLineOverride ??
+    buildLengthLine(targetMinutes, params.allowLonger ?? false, tier);
 
   const sourceMinutes =
     params.sourceVideoSeconds && params.sourceVideoSeconds > 0

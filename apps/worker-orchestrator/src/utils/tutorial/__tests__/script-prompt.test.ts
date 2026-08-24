@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   buildAnswerFirstScriptPrompt,
   buildLengthLine,
+  buildShortAdaptiveLengthLine,
+  isShortAdaptiveMode,
   targetMinutesForMode,
   tierForMinutes,
   tierExpectsMarkers,
@@ -660,6 +662,90 @@ describe("targetMinutesForMode", () => {
   it("ignores it for fixed-length modes — THREE_MIN means three minutes", () => {
     expect(targetMinutesForMode("THREE_MIN", null, 3600).targetMinutes).toBe(3);
     expect(targetMinutesForMode("SIX_MIN", null, 3600).targetMinutes).toBe(6);
+  });
+
+  /**
+   * The adaptive sub-3-minute modes measure length off the reference video's
+   * runtime — the whole point of the VA's "the lengths are off" report: a
+   * 2-minute source should get a ~2-minute script, not a fixed 3.
+   */
+  describe("adaptive short modes", () => {
+    it("SHORT_MATCH mirrors the reference runtime, in the SHORT tier", () => {
+      // 120s source → 2.0 min.
+      expect(targetMinutesForMode("SHORT_MATCH", null, 120)).toEqual({
+        targetMinutes: 2,
+        allowLonger: false,
+        tier: "SHORT",
+      });
+    });
+
+    it("SHORT_PLUS runs ~15% over the reference runtime", () => {
+      // 120s source → 2.0 × 1.15 = 2.3 min.
+      expect(targetMinutesForMode("SHORT_PLUS", null, 120).targetMinutes).toBe(
+        2.3,
+      );
+    });
+
+    it("clamps into the sub-3 band — a long source never yields a >3-min short", () => {
+      expect(
+        targetMinutesForMode("SHORT_MATCH", null, 3600).targetMinutes,
+      ).toBe(3);
+      expect(targetMinutesForMode("SHORT_PLUS", null, 3600).targetMinutes).toBe(
+        3.25,
+      );
+    });
+
+    it("floors a very short source so there is room to teach", () => {
+      // 30s source clamps up to the 1.5-min floor (Match) / 1.75 (Plus).
+      expect(targetMinutesForMode("SHORT_MATCH", null, 30).targetMinutes).toBe(
+        1.5,
+      );
+      expect(targetMinutesForMode("SHORT_PLUS", null, 30).targetMinutes).toBe(
+        1.75,
+      );
+    });
+
+    it("falls back to the VA's target, then 2 min, without a reference runtime", () => {
+      expect(targetMinutesForMode("SHORT_MATCH", 2.5, null).targetMinutes).toBe(
+        2.5,
+      );
+      expect(targetMinutesForMode("SHORT_MATCH", null, null).targetMinutes).toBe(
+        2,
+      );
+    });
+  });
+});
+
+describe("buildShortAdaptiveLengthLine", () => {
+  it("states an honest sub-3 band — never floored up to 3-4 minutes", () => {
+    const text = buildShortAdaptiveLengthLine(2).join("\n");
+    // 2 min × 150 wpm = 300 words; the band is ~255-345, all under the 450 the
+    // old SHORT branch would have imposed.
+    expect(text).toContain("about 300 words");
+    expect(text).not.toContain("3 and 4 minutes");
+    expect(text).not.toContain("450");
+  });
+
+  it("only directs the extra time to examples for the PLUS variant", () => {
+    expect(
+      buildShortAdaptiveLengthLine(2, { spendExtraOnExamples: false }).join(
+        "\n",
+      ),
+    ).not.toContain("worked examples");
+    expect(
+      buildShortAdaptiveLengthLine(2.3, { spendExtraOnExamples: true }).join(
+        "\n",
+      ),
+    ).toContain("worked examples");
+  });
+});
+
+describe("isShortAdaptiveMode", () => {
+  it("is true only for the two adaptive short modes", () => {
+    expect(isShortAdaptiveMode("SHORT_MATCH")).toBe(true);
+    expect(isShortAdaptiveMode("SHORT_PLUS")).toBe(true);
+    expect(isShortAdaptiveMode("THREE_MIN")).toBe(false);
+    expect(isShortAdaptiveMode("SIX_MIN_STITCH")).toBe(false);
   });
 });
 

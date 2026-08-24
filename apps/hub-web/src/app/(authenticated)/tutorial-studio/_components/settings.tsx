@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { V2Button, V2Input, GlassCard } from "../../_components";
 import {
@@ -12,12 +12,24 @@ import type { TutorialPromptPreset, TutorialSettingsRow } from "@repo/db";
 import { TUTORIAL_PROVIDERS } from "@repo/contracts";
 import { voiceControlsFor } from "./voice-controls";
 
-type PromptCategory = "THREE_MIN" | "SIX_MIN" | "SIX_MIN_STITCH";
+type PromptCategory =
+  | "THREE_MIN"
+  | "SIX_MIN"
+  | "SIX_MIN_STITCH"
+  | "SHORT_MATCH"
+  | "SHORT_PLUS";
 
 interface SettingsProps {
   presets: TutorialPromptPreset[];
   settings: TutorialSettingsRow;
+  /** manage:tutorial-settings — full admin. Reserved for admin-only surfaces. */
   canManage: boolean;
+  /**
+   * edit:tutorial-workflow — a producer VA may tune the workflow settings on
+   * this tab (prompts, recording defaults, voice defaults). None of these are
+   * secrets; credentials live on the admin /settings page.
+   */
+  canEditWorkflow: boolean;
 }
 
 function PromptLibrary({ presets }: { presets: TutorialPromptPreset[] }) {
@@ -35,6 +47,8 @@ function PromptLibrary({ presets }: { presets: TutorialPromptPreset[] }) {
 
   const CATS: Array<{ id: PromptCategory; label: string }> = [
     { id: "THREE_MIN", label: "3-Min" },
+    { id: "SHORT_MATCH", label: "Short · Match" },
+    { id: "SHORT_PLUS", label: "Short · Plus" },
     { id: "SIX_MIN", label: "6-Min" },
     { id: "SIX_MIN_STITCH", label: "6-Min Stitch" },
   ];
@@ -470,10 +484,35 @@ function PromptLibrary({ presets }: { presets: TutorialPromptPreset[] }) {
 
 function RecordingDefaults({ settings }: { settings: TutorialSettingsRow }) {
   const [hotkey, setHotkey] = useState(settings.record_hotkey ?? "F8");
+  const [listening, setListening] = useState(false);
   const [speed, setSpeed] = useState(
     Number(settings.default_playback_speed ?? 1),
   );
   const [saving, setSaving] = useState(false);
+
+  // "Click to set, then press a key" capture. While listening, the next
+  // keydown becomes the hotkey. We store it in the SAME format Studio compares
+  // against (studio.tsx onKey: `const code = e.code === "Space" ? "Space" : e.key`)
+  // — Space by its e.code ("Space"), every other key by e.key ("F8", "a", …) —
+  // so the value round-trips through the existing matcher unchanged. Escape (or
+  // blurring the button) cancels without changing anything.
+  useEffect(() => {
+    if (!listening) return;
+    function onKey(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setListening(false);
+        return;
+      }
+      // Ignore a lone modifier press — wait for the actual key.
+      if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      setHotkey(e.code === "Space" ? "Space" : e.key);
+      setListening(false);
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [listening]);
 
   async function handleSave() {
     setSaving(true);
@@ -494,14 +533,84 @@ function RecordingDefaults({ settings }: { settings: TutorialSettingsRow }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <V2Input
-        label="Record Hotkey"
-        placeholder="e.g. F8, F9, Space"
-        value={hotkey}
-        onChange={(e) => setHotkey(e.target.value)}
-        helperText="Key code to toggle audio play/pause in Studio (default: F8)"
-        fullWidth
-      />
+      <div>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: "var(--v2-text-2)",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          Record Hotkey
+        </div>
+        <button
+          type="button"
+          onClick={() => setListening((v) => !v)}
+          onBlur={() => setListening(false)}
+          aria-label={
+            listening
+              ? "Listening — press a key to set the record hotkey, or Escape to cancel"
+              : `Record hotkey is ${hotkey}. Click to set a new key.`
+          }
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "var(--v2-surface-2)",
+            border: listening
+              ? "1px solid var(--v2-accent)"
+              : "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 8,
+            padding: "8px 12px",
+            color: "var(--v2-text-1)",
+            fontSize: 12,
+            cursor: "pointer",
+            outline: "none",
+            boxShadow: listening
+              ? "0 0 0 3px rgba(var(--v2-accent-rgb), 0.15)"
+              : "none",
+            textAlign: "left",
+          }}
+        >
+          <span
+            className="material-symbols-outlined"
+            style={{
+              fontSize: 16,
+              color: listening ? "var(--v2-accent)" : "var(--v2-text-2)",
+            }}
+          >
+            keyboard
+          </span>
+          {listening ? (
+            <span style={{ color: "var(--v2-accent)", fontWeight: 600 }}>
+              Press a key…
+            </span>
+          ) : (
+            <kbd
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 6,
+                padding: "2px 8px",
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "inherit",
+                color: "var(--v2-text-1)",
+              }}
+            >
+              {hotkey}
+            </kbd>
+          )}
+        </button>
+        <div style={{ fontSize: 9, color: "var(--v2-text-2)", marginTop: 6 }}>
+          Toggles audio play/pause in Studio (default: F8). Click, then press
+          the key you want — Esc to cancel.
+        </div>
+      </div>
 
       <div>
         <div
@@ -786,12 +895,13 @@ export function ProductionSettings({
   presets,
   settings,
   canManage,
+  canEditWorkflow,
 }: SettingsProps) {
-  if (!canManage) {
+  if (!canEditWorkflow) {
     return (
       <GlassCard style={{ padding: 40, textAlign: "center" }}>
         <p style={{ fontSize: 14, color: "var(--v2-text-2)" }}>
-          Settings are only available to Admins and Managers.
+          You do not have access to production settings.
         </p>
       </GlassCard>
     );
@@ -800,26 +910,30 @@ export function ProductionSettings({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {/* Provider API keys are no longer entered per-VA. They live in the ONE
-          secrets area (Settings → Credentials, admin only). VAs never handle keys. */}
-      <GlassCard style={{ padding: 24 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--v2-text-1)",
-            marginBottom: 8,
-          }}
-        >
-          Provider API Keys
-        </div>
-        <p style={{ fontSize: 12, color: "var(--v2-text-2)", margin: 0 }}>
-          API keys are now managed centrally by an administrator in{" "}
-          <a href="/settings" style={{ color: "var(--v2-accent)" }}>
-            Settings → Credentials
-          </a>
-          . Assistants no longer enter or see keys here.
-        </p>
-      </GlassCard>
+          secrets area (Settings → Credentials, admin only). VAs never handle
+          keys — and the pointer to the admin page is hidden from them, since
+          they cannot open it anyway. */}
+      {canManage && (
+        <GlassCard style={{ padding: 24 }}>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: "var(--v2-text-1)",
+              marginBottom: 8,
+            }}
+          >
+            Provider API Keys
+          </div>
+          <p style={{ fontSize: 12, color: "var(--v2-text-2)", margin: 0 }}>
+            API keys are managed centrally by an administrator in{" "}
+            <a href="/settings" style={{ color: "var(--v2-accent)" }}>
+              Settings → Credentials
+            </a>
+            . Assistants no longer enter or see keys here.
+          </p>
+        </GlassCard>
+      )}
 
       {/* Prompt Library */}
       <GlassCard style={{ padding: 24 }}>

@@ -26,8 +26,15 @@ interface CreateProps {
   settings: TutorialSettingsRow;
   /** manage:tutorial-settings — ADMIN/MANAGER. Gates the engine controls. */
   canManage: boolean;
-  channels: Array<{ id: string; name: string }>;
+  channels: Array<{ id: string; name: string; language: string }>;
   onCreated: () => void;
+  /**
+   * A keyword picked from the "Initial Keywords" fallback, waiting to prefill
+   * this form. When set, the title is filled and the job binds to it as
+   * keyword_ref = "seed:<id>". Consumed once via onSeedConsumed.
+   */
+  pendingSeed?: { id: number; title: string } | null;
+  onSeedConsumed?: () => void;
 }
 
 interface BatchJob {
@@ -37,8 +44,21 @@ interface BatchJob {
   createdAt: string;
 }
 
-type TutorialMode = "THREE_MIN" | "SIX_MIN" | "SIX_MIN_STITCH" | "LONG_FORM";
+type TutorialMode =
+  | "THREE_MIN"
+  | "SIX_MIN"
+  | "SIX_MIN_STITCH"
+  | "LONG_FORM"
+  | "SHORT_MATCH"
+  | "SHORT_PLUS";
 type SourceMode = "FROM_SCRATCH" | "TRANSCRIPT_REWRITE";
+
+/**
+ * The adaptive sub-3-minute modes. Length tracks the reference video's runtime
+ * instead of a fixed 3 min; picked by hand to A/B against the classic 3-Min
+ * mode, so they are deliberately NOT auto-selected by the length planner.
+ */
+const SHORT_ADAPTIVE_MODES: TutorialMode[] = ["SHORT_MATCH", "SHORT_PLUS"];
 
 /**
  * What happened to the reference transcript. Deliberately a discriminated union
@@ -85,6 +105,24 @@ const LANGUAGE_OPTIONS = [
   { value: "French", label: "French" },
   { value: "Portuguese", label: "Portuguese" },
 ];
+
+/**
+ * Channel language code → the label the pipeline expects. A VA never types a
+ * language on Create anymore; it is derived from the chosen channel so an
+ * original job can't be filed in a language its channel doesn't publish (the
+ * old free selector let someone pick "Italian channel + German language").
+ * Other languages are produced downstream by the Localize lane, not here.
+ */
+const CODE_TO_LANGUAGE: Record<string, string> = {
+  en: "English",
+  de: "German",
+  es: "Spanish",
+  fr: "French",
+  pt: "Portuguese",
+  it: "Italian",
+  nl: "Dutch",
+  sv: "Swedish",
+};
 
 const STATUS_COLORS: Record<string, string> = {
   QUEUED: "#6366f1",
@@ -214,11 +252,19 @@ export function ProductionCreate({
   canManage,
   channels,
   onCreated,
+  pendingSeed,
+  onSeedConsumed,
 }: CreateProps) {
   const [title, setTitle] = useState("");
+  // keyword_ref for a job started from the "Initial Keywords" fallback
+  // ("seed:<id>"). Kept separate from `keyword` (a live Keyword Tool claim)
+  // because the seed set has no board session to advance.
+  const [seedRef, setSeedRef] = useState<string | null>(null);
   const [channelId, setChannelId] = useState("");
   const [steps, setSteps] = useState("");
-  const [mode, setMode] = useState<TutorialMode>("THREE_MIN");
+  // "AUTO" (the default) means: take the length from the reference material,
+  // not a fixed 3-minute floor. See effectiveMode below.
+  const [mode, setMode] = useState<TutorialMode | "AUTO">("AUTO");
 
   const [sourceMode, setSourceMode] = useState<SourceMode>("FROM_SCRATCH");
   const [referenceUrl, setReferenceUrl] = useState("");
@@ -321,6 +367,22 @@ export function ProductionCreate({
   const topRef = useRef<HTMLDivElement>(null);
 
   /**
+   * Consume a keyword handed over from the "Initial Keywords" fallback. Fill the
+   * title, bind the seed ref, drop any live-board keyword (they are mutually
+   * exclusive sources), scroll to the top, and tell the parent it is done so the
+   * same pick does not re-apply on the next render.
+   */
+  useEffect(() => {
+    if (!pendingSeed) return;
+    setTitle(pendingSeed.title);
+    setSeedRef(`seed:${pendingSeed.id}`);
+    setKeyword(null);
+    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    onSeedConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSeed]);
+
+  /**
    * The length judgement, in one place, from the best evidence available.
    *
    * The owner: "the three minute tutorial is auto selected even though we just
@@ -363,6 +425,38 @@ export function ProductionCreate({
     if (plan.partLengthMinutes !== null)
       setPartLengthMinutes(plan.partLengthMinutes);
   }
+
+  /**
+   * The mode actually run, once "AUTO" is resolved.
+   *
+   * AUTO is the standard choice: it takes the length straight from the reference
+   * material via `tutorialLengthPlan` (the reference video's runtime, then the
+   * fetched transcript, then the keyword bucket, then the steps). Before this,
+   * the form defaulted to THREE_MIN and quietly forced a 13-minute topic down to
+   * three. When AUTO has no evidence yet it falls back to the shortest shape and
+   * says so in the note under the picker.
+   */
+  const effectiveMode: TutorialMode =
+    mode === "AUTO" ? (lengthPlan?.mode ?? "THREE_MIN") : mode;
+  const effectiveTargetMinutes: number | null =
+    mode === "AUTO"
+      ? (lengthPlan?.targetMinutes ?? null)
+      : targetMinutes === ""
+        ? null
+        : Number(targetMinutes);
+  const effectivePartLengthMinutes: number | null =
+    mode === "AUTO"
+      ? (lengthPlan?.partLengthMinutes ?? null)
+      : partLengthMinutes === ""
+        ? null
+        : Number(partLengthMinutes);
+
+  // Under AUTO the prompt preset must follow the resolved shape, or a topic that
+  // resolves to SIX_MIN would be generated with the THREE_MIN prompt.
+  useEffect(() => {
+    if (mode === "AUTO") setPresetId(pickDefaultPresetId(effectiveMode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, effectiveMode]);
 
   /**
    * Pull the reference video's transcript into the box.
@@ -462,7 +556,10 @@ export function ProductionCreate({
   const voiceControls = voiceControlsFor(ttsProvider);
 
   const modeOptions = [
+    { value: "AUTO", label: "Auto — match the reference length (standard)" },
     { value: "THREE_MIN", label: "3-Minute Tutorial" },
+    { value: "SHORT_MATCH", label: "Short — Match the reference length" },
+    { value: "SHORT_PLUS", label: "Short — Plus (reference + examples)" },
     { value: "SIX_MIN", label: "6-Minute Tutorial" },
     { value: "SIX_MIN_STITCH", label: "Long-Form Stitch (6-Min segments)" },
     { value: "LONG_FORM", label: "Long-form (40+ min, stitched)" },
@@ -481,8 +578,19 @@ export function ProductionCreate({
     ...channels.map((c) => ({ value: c.id, label: c.name })),
   ];
 
+  // The job's language is the channel's language — a VA can't mismatch them.
+  const selectedChannel = channels.find((c) => c.id === channelId);
+  const channelLanguage = selectedChannel
+    ? (CODE_TO_LANGUAGE[selectedChannel.language] ?? "English")
+    : "";
+  useEffect(() => {
+    if (channelLanguage) setLanguage(channelLanguage);
+  }, [channelLanguage]);
+
   const relevantPresets = presets.filter(
-    (p) => p.category === (mode === "SIX_MIN_STITCH" ? "SIX_MIN_STITCH" : mode),
+    (p) =>
+      p.category ===
+      (effectiveMode === "SIX_MIN_STITCH" ? "SIX_MIN_STITCH" : effectiveMode),
   );
   const presetOptions = [
     { value: "none", label: "— Select a prompt preset —" },
@@ -576,7 +684,8 @@ export function ProductionCreate({
         title: title.trim(),
         channel_id: channelId,
         steps_input: steps.trim(),
-        mode,
+        // AUTO is resolved to a concrete shape from the reference material here.
+        mode: effectiveMode,
         script_provider: scriptProvider,
         script_model: scriptModel || undefined,
         tts_provider: ttsProvider,
@@ -598,18 +707,24 @@ export function ProductionCreate({
       // runtime, it seeds the STITCH length target, and it tells the rewrite
       // prompt how much coverage it has to beat. Send it whenever it is set.
       if (refVideoSeconds !== "") body.ref_video_seconds = refVideoSeconds;
-      if (mode === "SIX_MIN_STITCH") {
-        if (targetMinutes !== "") body.target_minutes = targetMinutes;
+      if (effectiveMode === "SIX_MIN_STITCH") {
+        if (effectiveTargetMinutes !== null)
+          body.target_minutes = effectiveTargetMinutes;
       }
-      if (mode === "LONG_FORM") {
-        if (targetMinutes !== "") body.target_minutes = targetMinutes;
-        if (partLengthMinutes !== "")
-          body.part_length_minutes = partLengthMinutes;
+      if (effectiveMode === "LONG_FORM") {
+        if (effectiveTargetMinutes !== null)
+          body.target_minutes = effectiveTargetMinutes;
+        if (effectivePartLengthMinutes !== null)
+          body.part_length_minutes = effectivePartLengthMinutes;
         if (extraContext.trim()) body.extra_context = extraContext.trim();
       }
       if (keyword) {
         body.keyword_ref = String(keyword.id);
         body.kt_url = keyword.ktUrl;
+      } else if (seedRef) {
+        // From the "Initial Keywords" fallback — bind it so the row shows as
+        // made, but there is no board session to notify (no kt_url).
+        body.keyword_ref = seedRef;
       }
       if (presetId !== "none") body.prompt_preset_id = presetId;
       if (useCustomPrompt && customPrompt.trim())
@@ -651,6 +766,7 @@ export function ProductionCreate({
        */
       setTitle("");
       setKeyword(null);
+      setSeedRef(null);
       setSteps("");
       setSourceMode("FROM_SCRATCH");
       setReferenceUrl("");
@@ -658,7 +774,7 @@ export function ProductionCreate({
       setRefVideoSeconds("");
       transcriptTokenRef.current++;
       setTranscript({ status: "idle" });
-      setMode("THREE_MIN");
+      setMode("AUTO");
       setPresetId(pickDefaultPresetId("THREE_MIN"));
       setTargetMinutes(20);
       setPartLengthMinutes(8);
@@ -680,7 +796,7 @@ export function ProductionCreate({
     setTitle("");
     setChannelId("");
     setSteps("");
-    setMode("THREE_MIN");
+    setMode("AUTO");
     setSourceMode("FROM_SCRATCH");
     setReferenceUrl("");
     setReferenceTranscript("");
@@ -753,6 +869,7 @@ export function ProductionCreate({
 
   const pickKeyword = (k: MyKeyword) => {
     setKeyword(k);
+    setSeedRef(null); // a live-board claim supersedes any fallback pick
     setTitle(k.keyword);
 
     /**
@@ -1095,14 +1212,27 @@ export function ProductionCreate({
             </>
           )}
 
-          {/* Language */}
+          {/* Language — derived from the channel, not chosen. Locked to the
+              channel's language so an original job can't be filed in a language
+              the channel doesn't publish; other languages come from Localize. */}
           <div style={{ marginTop: 16 }}>
             <V2Listbox
               label="Language"
-              value={language}
-              onChange={setLanguage}
-              options={LANGUAGE_OPTIONS}
+              value={channelId ? channelLanguage : language}
+              onChange={channelId ? () => {} : setLanguage}
+              options={
+                channelId
+                  ? [{ value: channelLanguage, label: channelLanguage }]
+                  : LANGUAGE_OPTIONS
+              }
             />
+            <div
+              style={{ fontSize: 11, color: "var(--v2-text-2)", marginTop: 4 }}
+            >
+              {channelId
+                ? "Set by the channel. Translations into other languages are made on the Localize tab."
+                : "Pick a channel above — the language follows it."}
+            </div>
           </div>
 
           {/* Steps + dropzone */}
@@ -1178,59 +1308,98 @@ export function ProductionCreate({
               label="Tutorial Mode"
               value={mode}
               onChange={(v) => {
-                const newMode = v as TutorialMode;
+                const newMode = v as TutorialMode | "AUTO";
                 setMode(newMode);
-                // Re-pick a sensible preset for the new mode's category —
-                // the previously-selected preset.id will be wrong-category
-                // for the new mode, so submitting would send a mismatched
-                // preset id.
-                setPresetId(pickDefaultPresetId(newMode));
-                // Reset target minutes to a mode-appropriate default
-                if (newMode === "LONG_FORM") setTargetMinutes(40);
-                else if (newMode === "SIX_MIN_STITCH") setTargetMinutes(20);
+                if (newMode !== "AUTO") {
+                  // Re-pick a sensible preset for the new mode's category —
+                  // the previously-selected preset.id will be wrong-category
+                  // for the new mode, so submitting would send a mismatched
+                  // preset id.
+                  setPresetId(pickDefaultPresetId(newMode));
+                  // Reset target minutes to a mode-appropriate default
+                  if (newMode === "LONG_FORM") setTargetMinutes(40);
+                  else if (newMode === "SIX_MIN_STITCH") setTargetMinutes(20);
+                }
+                // AUTO keeps its preset in sync via the effect above.
               }}
               options={modeOptions}
             />
             {/* Where the suggestion comes from — the owner asked, and the honest
                 answer is now printed: the keyword's own runtime, the transcript
                 we fetched, or the steps typed, in that order. */}
-            {lengthPlan && (
+            {mode === "AUTO" ? (
               <div
                 style={{
                   marginTop: 8,
                   fontSize: 11,
-                  color:
-                    lengthPlan.mode === mode ? "var(--v2-text-2)" : "#f59e0b",
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
+                  color: "var(--v2-text-2)",
                   lineHeight: 1.5,
                 }}
               >
-                <span>
-                  {lengthPlan.mode === mode
-                    ? `Looks right — ${LENGTH_SOURCE_LABEL[lengthPlan.source]}: ${lengthPlan.reason}`
-                    : `Suggested: ${labelForMode(lengthPlan.mode)} — ${LENGTH_SOURCE_LABEL[lengthPlan.source]}: ${lengthPlan.reason}`}
-                </span>
-                {lengthPlan.mode !== mode && (
-                  <button
-                    type="button"
-                    onClick={() => applyLengthPlan(lengthPlan)}
-                    style={{
-                      background: "none",
-                      border: "1px solid #f59e0b",
-                      color: "#f59e0b",
-                      borderRadius: 4,
-                      fontSize: 10,
-                      padding: "2px 8px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Use it
-                  </button>
-                )}
+                {lengthPlan
+                  ? `Auto → ${labelForMode(effectiveMode)} · ~${Math.round(
+                      lengthPlan.estimatedMinutes,
+                    )} min. ${LENGTH_SOURCE_LABEL[lengthPlan.source]}: ${lengthPlan.reason}`
+                  : "Auto → a 3-minute tutorial for now. Fetch a reference video, pick a keyword, or list steps and the length will follow the reference material."}
               </div>
+            ) : SHORT_ADAPTIVE_MODES.includes(mode) ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  color: "var(--v2-text-2)",
+                  lineHeight: 1.5,
+                }}
+              >
+                {refVideoSeconds !== ""
+                  ? `Length is measured off the reference video (~${Math.round(
+                      Number(refVideoSeconds) / 60,
+                    )} min source). ${
+                      mode === "SHORT_PLUS"
+                        ? "Plus runs a bit longer than the source, spending it on worked examples."
+                        : "Match mirrors the source length."
+                    }`
+                  : "Length will match the reference video — pick a keyword or fetch a reference video so it has a runtime to match. Without one it falls back to about 2 minutes."}
+              </div>
+            ) : (
+              lengthPlan && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11,
+                    color:
+                      lengthPlan.mode === mode ? "var(--v2-text-2)" : "#f59e0b",
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <span>
+                    {lengthPlan.mode === mode
+                      ? `Looks right — ${LENGTH_SOURCE_LABEL[lengthPlan.source]}: ${lengthPlan.reason}`
+                      : `Suggested: ${labelForMode(lengthPlan.mode)} — ${LENGTH_SOURCE_LABEL[lengthPlan.source]}: ${lengthPlan.reason}`}
+                  </span>
+                  {lengthPlan.mode !== mode && (
+                    <button
+                      type="button"
+                      onClick={() => applyLengthPlan(lengthPlan)}
+                      style={{
+                        background: "none",
+                        border: "1px solid #f59e0b",
+                        color: "#f59e0b",
+                        borderRadius: 4,
+                        fontSize: 10,
+                        padding: "2px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Use it
+                    </button>
+                  )}
+                </div>
+              )
             )}
           </div>
 
@@ -1560,7 +1729,11 @@ export function ProductionCreate({
                 : (relevantPresets.find((p) => p.id === presetId)?.name ??
                   "— none selected —")
             }
-            detail={modeOptions.find((m) => m.value === mode)?.label ?? mode}
+            detail={
+              mode === "AUTO"
+                ? `Auto → ${labelForMode(effectiveMode)}`
+                : (modeOptions.find((m) => m.value === mode)?.label ?? mode)
+            }
           />
 
           {llmProviders.length === 0 && (

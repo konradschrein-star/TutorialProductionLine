@@ -23,6 +23,11 @@ export const tutorialModeEnum = pgEnum("tutorial_mode", [
   "SIX_MIN",
   "SIX_MIN_STITCH",
   "LONG_FORM",
+  // Adaptive sub-3-minute modes: length tracks the reference video's runtime.
+  // SHORT_MATCH mirrors it; SHORT_PLUS runs ~15% longer, on examples. Added
+  // 2026-08-24 via migration 0074 (ALTER TYPE ... ADD VALUE).
+  "SHORT_MATCH",
+  "SHORT_PLUS",
 ]);
 
 export const tutorialPromptCategoryEnum = pgEnum("tutorial_prompt_category", [
@@ -30,6 +35,8 @@ export const tutorialPromptCategoryEnum = pgEnum("tutorial_prompt_category", [
   "SIX_MIN",
   "SIX_MIN_STITCH",
   "LONG_FORM",
+  "SHORT_MATCH",
+  "SHORT_PLUS",
 ]);
 
 // capability identifies WHAT kind of key this is (LLM vs TTS).
