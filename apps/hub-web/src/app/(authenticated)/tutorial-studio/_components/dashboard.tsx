@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { GlassCard } from "../../_components";
 import { StepMetricsPanel } from "./step-metrics-panel";
+import { VaDailyTimeline } from "./va-daily-timeline";
 import type { TutorialJob } from "@repo/db";
 
 interface LeaderboardEntry {
@@ -846,6 +847,9 @@ export function ProductionDashboard({
 
       {/* Industry-4.0 step metrics */}
       <StepMetricsPanel />
+
+      {/* Per-VA daily production timeline — when did she actually work today */}
+      <VaDailyTimeline />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         {/* All-time leaderboard */}

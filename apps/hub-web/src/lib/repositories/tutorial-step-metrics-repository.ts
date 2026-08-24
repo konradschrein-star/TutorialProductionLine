@@ -131,6 +131,72 @@ export async function getScriptTimeByDow(
   }));
 }
 
+/** One tutorial job with its VA-action timestamps, for the daily event timeline. */
+export interface VaTimelineJob {
+  userId: string | null;
+  va: string | null;
+  jobId: string;
+  title: string | null;
+  status: string;
+  /** VA hit "Generate/Render" — the job was created. Always present. */
+  createdAt: string;
+  /** VA uploaded their screen recording. Null until they do. */
+  recordedAt: string | null;
+  /** System finished splicing. Null until done. */
+  completedAt: string | null;
+}
+
+/**
+ * Raw per-job event timeline for the "when did the VA actually work today" view.
+ *
+ * Returns every original (hands-on) job in the window with its VA-action
+ * timestamps as ISO strings, newest first. The client unpivots each job into
+ * events (created = render/generate click, recorded = upload click, completed =
+ * finish) and plots them on a 24h-per-day axis, so the owner's eye can read the
+ * real working window, the length of the noon pause, and videos-per-day —
+ * without inventing any "claimed hours" the system does not store.
+ *
+ * Timestamps are returned as UTC ISO; the client renders hour-of-day in the
+ * viewer's local timezone (labelled), since the DB stores only timestamptz.
+ */
+export async function getVaEventTimeline(
+  windowDays = 14,
+): Promise<VaTimelineJob[]> {
+  const rows = await db
+    .select({
+      userId: tutorialJobs.created_by,
+      va: users.name,
+      jobId: tutorialJobs.id,
+      title: tutorialJobs.title,
+      status: tutorialJobs.status,
+      createdAt: sql<string>`to_char(${tutorialJobs.created_at} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`,
+      recordedAt: sql<
+        string | null
+      >`to_char(${tutorialJobs.recorded_at} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`,
+      completedAt: sql<
+        string | null
+      >`to_char(${tutorialJobs.completed_at} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`,
+    })
+    .from(tutorialJobs)
+    .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
+    .where(
+      sql`${tutorialJobs.source_job_id} is null and ${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
+    )
+    .orderBy(sql`${tutorialJobs.created_at} desc`)
+    .limit(5000);
+
+  return rows.map((r) => ({
+    userId: r.userId,
+    va: r.va,
+    jobId: r.jobId,
+    title: r.title,
+    status: r.status,
+    createdAt: r.createdAt,
+    recordedAt: r.recordedAt ?? null,
+    completedAt: r.completedAt ?? null,
+  }));
+}
+
 /**
  * Intraday production rhythm — every produced video mapped to its HOUR OF DAY
  * (0..24) of completion, per VA. This is the "clock" view: it reveals the VA's
