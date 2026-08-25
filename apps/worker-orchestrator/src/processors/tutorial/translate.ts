@@ -20,14 +20,19 @@ import {
   getSecret,
   getTutorialSettings,
   getChannelVoice,
+  getVoiceForLanguage,
   tutorialJobs,
+  channels,
   eq,
   and,
 } from "@repo/db";
 import { generateScript } from "../../utils/tutorial/llm-registry.js";
 import { generateTutorialUploadMetadata } from "../../utils/tutorial/upload-metadata.js";
 import { sanitizeScriptText } from "../../utils/tutorial/sanitize-script.js";
-import { createTutorialTTSProvider } from "../../utils/tutorial/tts-registry.js";
+import {
+  createTutorialTTSProvider,
+  formatTtsChainFailure,
+} from "../../utils/tutorial/tts-registry.js";
 import { withTTSSlot } from "../../utils/tts-gateway.js";
 import { ai33TTSCircuitBreaker } from "../../utils/ai33-circuit-breaker.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
@@ -53,9 +58,21 @@ const TRANSLATE_MAX_TOKENS = 32768;
 const LANGUAGE_NAMES: Record<string, string> = {
   de: "German",
   fr: "French",
+  it: "Italian",
   es: "Spanish",
+  nl: "Dutch",
+  sv: "Swedish",
+  no: "Norwegian",
+  da: "Danish",
+  pt: "Portuguese",
+  pl: "Polish",
+  cs: "Czech",
+  ru: "Russian",
+  ar: "Arabic",
+  zh: "Chinese",
   ja: "Japanese",
   ko: "Korean",
+  id: "Indonesian",
 };
 
 /**
@@ -199,6 +216,44 @@ function resolveVoiceForProvider(
     );
   }
   return originalVoice;
+}
+
+/**
+ * Normalise a `tts_voices.provider` value (which may be a human label like
+ * "ElevenLabs"/"Fish" set via the Settings → Voices UI, or already a canonical
+ * TTSProviderId) to the worker's TTSProviderId. Returns null when it can't be
+ * mapped, so the caller falls back to the source/channel voice.
+ */
+function normalizeTtsProviderId(raw: string): string | null {
+  const v = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const KNOWN = new Set([
+    "fish_audio",
+    "ai33_minimax",
+    "ai33_kokoro",
+    "ai33_elevenlabs",
+    "minimax_official",
+    "inworld_tts",
+    "elevenlabs_official",
+    "google_tts",
+    "openai_tts",
+  ]);
+  if (KNOWN.has(v)) return v;
+  const ALIASES: Record<string, string> = {
+    fish: "fish_audio",
+    fishaudio: "fish_audio",
+    elevenlabs: "elevenlabs_official",
+    eleven_labs: "elevenlabs_official",
+    eleven: "elevenlabs_official",
+    minimax: "minimax_official",
+    inworld: "inworld_tts",
+    google: "google_tts",
+    googletts: "google_tts",
+    gcp: "google_tts",
+    openai: "openai_tts",
+    ai33: "ai33_elevenlabs",
+    ai33_official: "ai33_elevenlabs",
+  };
+  return ALIASES[v] ?? null;
 }
 
 /**
@@ -349,11 +404,7 @@ async function synthesizeTranslatedTts(
   }
 
   if (chunkPaths.length === 0) {
-    throw new Error(
-      `All TTS providers failed:\n${fallbackErrors
-        .map((e) => `  - ${e.provider}: ${e.error}`)
-        .join("\n")}`,
-    );
+    throw new Error(formatTtsChainFailure(fallbackErrors));
   }
 
   const audioPath = join(outputDir, "tts.mp3");
@@ -545,6 +596,48 @@ export function createTutorialTranslateProcessor(
         language: languageName,
       });
 
+      // 3b) Resolve a NATIVE per-language voice. If the friend configured a
+      //     voice for this target language in Settings → Voices, synthesize the
+      //     localized audio in that native voice/provider instead of reusing the
+      //     English source voice. No per-language voice configured → keep the
+      //     source (and channel) voice exactly as before.
+      let ttsProvider = source.tts_provider;
+      let ttsVoice = source.tts_voice;
+      const langVoice = await getVoiceForLanguage(db, targetLanguage);
+      if (langVoice) {
+        const mappedProvider = normalizeTtsProviderId(langVoice.provider);
+        if (mappedProvider) {
+          ttsProvider = mappedProvider;
+          ttsVoice = langVoice.voice_id;
+          console.log(
+            JSON.stringify({
+              level: "info",
+              message: "Tutorial translate: using native per-language voice",
+              source_job_id: sourceJobId,
+              target_language: targetLanguage,
+              provider: mappedProvider,
+              voice_id: langVoice.voice_id,
+            }),
+          );
+        }
+      }
+
+      // 3c) Route the child to the TARGET-LANGUAGE channel (e.g. German
+      //     translations → the German channel) so Drive filing and the future
+      //     uploader target the right brand. Falls back to the source channel.
+      let targetChannelId = source.channel_id;
+      const [langChannel] = await db
+        .select({ id: channels.id })
+        .from(channels)
+        .where(
+          and(
+            eq(channels.language, targetLanguage),
+            eq(channels.accepts_tutorials, true),
+          ),
+        )
+        .limit(1);
+      if (langChannel) targetChannelId = langChannel.id;
+
       // 4) Create or reuse the CHILD job (reuses the SOURCE recording).
       if (existingChild) {
         childId = existingChild.id;
@@ -554,6 +647,9 @@ export function createTutorialTranslateProcessor(
           script_done_at: new Date(),
           description: uploadMeta.description,
           tags: uploadMeta.tags,
+          tts_provider: ttsProvider,
+          tts_voice: ttsVoice,
+          channel_id: targetChannelId,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
@@ -573,10 +669,10 @@ export function createTutorialTranslateProcessor(
           tags: uploadMeta.tags,
           script_provider: source.script_provider,
           script_model: source.script_model,
-          tts_provider: source.tts_provider,
-          tts_voice: source.tts_voice,
+          tts_provider: ttsProvider,
+          tts_voice: ttsVoice,
           voice_settings: source.voice_settings ?? undefined,
-          channel_id: source.channel_id,
+          channel_id: targetChannelId,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
@@ -600,8 +696,8 @@ export function createTutorialTranslateProcessor(
         await synthesizeTranslatedTts(db, {
           childId,
           scriptText: translatedScript,
-          ttsProvider: source.tts_provider,
-          ttsVoice: source.tts_voice,
+          ttsProvider,
+          ttsVoice,
           voiceSettings: source.voice_settings ?? null,
           channelId: source.channel_id,
         });

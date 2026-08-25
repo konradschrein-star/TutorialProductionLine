@@ -238,6 +238,46 @@ class FishAudioTTSProvider implements TTSProvider {
   }
 }
 
+/**
+ * Build the VA/operator-facing error thrown when every provider in the TTS
+ * fallback chain fails. Leads with a plain-language, actionable summary and
+ * separates real upstream errors from links that were skipped for lack of an
+ * API key — so the job's error banner is useful instead of a raw dump.
+ */
+export function formatTtsChainFailure(
+  errors: Array<{ provider: string; error: string }>,
+): string {
+  const isNoKey = (e: { error: string }) => /no api key/i.test(e.error);
+  const failed = errors.filter((e) => !isNoKey(e));
+  const skipped = errors.filter(isNoKey);
+
+  const lines: string[] = [];
+  if (failed.length > 0) {
+    lines.push(
+      'Voice generation failed — every available TTS provider errored. This is ' +
+        'usually a temporary Fish Audio outage or stall. Click "Retry Audio ' +
+        "Generation\" to try again; it should recover on its own.",
+    );
+    lines.push("", "Provider errors:");
+    for (const e of failed) lines.push(`  - ${e.provider}: ${e.error}`);
+  } else {
+    lines.push(
+      "Voice generation failed — no TTS provider was usable. None of the " +
+        "fallback providers have an API key configured, so nothing could run. " +
+        "Check the Fish Audio (FISH_API_KEY) credential in Settings.",
+    );
+  }
+  if (skipped.length > 0) {
+    lines.push(
+      "",
+      `Skipped (no API key configured): ${skipped
+        .map((e) => e.provider)
+        .join(", ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 export function createTutorialTTSProvider(
   providerId: string,
   apiKey: string,

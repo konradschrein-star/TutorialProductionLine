@@ -46,7 +46,10 @@ import {
   structureFromParts,
   type ScriptStructure,
 } from "../../utils/tutorial/script-structure.js";
-import { createTutorialTTSProvider } from "../../utils/tutorial/tts-registry.js";
+import {
+  createTutorialTTSProvider,
+  formatTtsChainFailure,
+} from "../../utils/tutorial/tts-registry.js";
 import { withTTSSlot } from "../../utils/tts-gateway.js";
 import { ai33TTSCircuitBreaker } from "../../utils/ai33-circuit-breaker.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
@@ -1191,11 +1194,7 @@ export function createTutorialGenerateProcessor(
         }
 
         if (chunkPaths.length === 0) {
-          throw new Error(
-            `All TTS providers failed:\n${fallbackErrors
-              .map((e) => `  - ${e.provider}: ${e.error}`)
-              .join("\n")}`,
-          );
+          throw new Error(formatTtsChainFailure(fallbackErrors));
         }
 
         if (providerUsed !== tutorialJob.tts_provider) {

@@ -113,19 +113,34 @@ async function executeFishRequest(
   body: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<Buffer> {
-  const res = await fetch(`${FISH_API_BASE}/v1/tts`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      model,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const timeoutS = Math.round(timeoutMs / 1000);
+  let res: Response;
+  try {
+    res = await fetch(`${FISH_API_BASE}/v1/tts`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        model,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error && (err.name === "TimeoutError" || /abort|timeout/i.test(msg))) {
+      throw new Error(
+        `Fish Audio "${model}" did not respond within ${timeoutS}s (upstream stall)`,
+      );
+    }
+    throw new Error(`Fish Audio "${model}" request failed: ${msg}`);
+  }
   if (!res.ok) {
     throw new Error(
-      `Fish Audio TTS error ${res.status}: ${(await res.text()).slice(0, 300)}`,
+      `Fish Audio "${model}" error ${res.status}: ${(await res.text()).slice(
+        0,
+        300,
+      )}`,
     );
   }
   return Buffer.from(await res.arrayBuffer());
