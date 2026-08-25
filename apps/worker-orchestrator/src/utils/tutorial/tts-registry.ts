@@ -222,9 +222,17 @@ class FishAudioTTSProvider implements TTSProvider {
   ) {}
   async generateChunk(text: string, voiceId: string): Promise<Buffer> {
     return generateFishTTS(this.apiKey, voiceId, text, {
-      speed: this.settings.speed,
-      // FORCE the free S2.1 Pro tier — never a paid Fish model, regardless of
-      // any preset/env override (2026-07-29, Konrad: "keep it free").
+      // Default to 1.05 — a touch quicker than natural pace so tutorials feel
+      // brisk without sounding rushed (2026-08-23, Konrad: "a teeny tiny bit
+      // faster, like 1.05"). The Settings → Default Voice Settings speed slider
+      // (or a per-job value) overrides this when set.
+      speed: this.settings.speed ?? 1.05,
+      // FORCE the free S2.1 Pro tier as primary (Konrad: "s2.1-pro-free is the
+      // one we want to primarily use"). Hardcoded — NOT env-driven — so a stray
+      // FISH_TTS_MODEL on the server (e.g. the old speech-1.6 in the .env
+      // example) can't silently route tutorials to a paid/legacy model and
+      // disable the free→paid failover. fish-client fails over to paid s2.1-pro
+      // only if the free tier stalls past its window AND the daily budget allows.
       model: "s2.1-pro-free",
     });
   }
