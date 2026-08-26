@@ -22,6 +22,12 @@ export function fireTutorialStatusWebhook(
   const url = process.env["KT_STATUS_WEBHOOK_URL"];
   if (!url) return;
 
+  // Jobs started from the hub-web-native "Initial Keywords" fallback carry a
+  // "seed:<id>" ref that has no counterpart on the Keyword Tool board. There is
+  // nothing to advance there, and calling KT for one is pure noise — especially
+  // when the fallback is being used precisely because KT is down.
+  if (input.keyword_ref.startsWith("seed:")) return;
+
   const updatedIso =
     input.updated_at instanceof Date
       ? input.updated_at.toISOString()

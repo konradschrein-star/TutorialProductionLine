@@ -16,7 +16,7 @@
  */
 import type { Job, Queue } from "bullmq";
 import { join, dirname } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, rename } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { DrizzleClient } from "@repo/db";
@@ -25,10 +25,12 @@ import {
   updateTutorialJob,
   listTutorialJobsByParent,
 } from "@repo/db";
+import { probeMediaDimensions } from "@repo/media-core";
 import type { TutorialStitchPayload, ThumbnailPayload } from "@repo/contracts";
 import { TutorialStitchPayloadSchema } from "@repo/contracts";
 import { deriveLogoSubject } from "@repo/domain";
 import { firstNSentences } from "../../utils/thumbnail/prompt-builder.js";
+import { buildLikeSubscribeOutroArgs } from "../../utils/tutorial/like-subscribe-outro.js";
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
@@ -155,6 +157,35 @@ export function createTutorialStitchProcessor(
           "-b:a",
           "192k",
         ]);
+      }
+
+      // Like & Subscribe outro on the finished long-form video (best-effort;
+      // never fails a completed stitch). Same end card the single-segment
+      // splice appends, so every deliverable gets one.
+      try {
+        const dims = await probeMediaDimensions(outputPath);
+        const outroPath = join(outputDir, "final.outro.mp4");
+        const argv = buildLikeSubscribeOutroArgs(outputPath, outroPath, {
+          width: dims.width,
+          height: dims.height,
+          seed: parentJobId,
+          lang: parentJob.language ?? "en",
+        });
+        await execFileAsync(argv[0]!, argv.slice(1), {
+          maxBuffer: 1024 * 1024 * 64,
+        });
+        await rename(outroPath, outputPath);
+      } catch (outroErr) {
+        console.error(
+          JSON.stringify({
+            level: "warn",
+            message:
+              "Like/subscribe outro failed on stitch (non-fatal) — shipping without it",
+            parent_job_id: parentJobId,
+            error:
+              outroErr instanceof Error ? outroErr.message : String(outroErr),
+          }),
+        );
       }
 
       await updateTutorialJob(db, parentJobId, {

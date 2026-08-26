@@ -3,18 +3,18 @@
 @tailwind utilities;
 
 @layer base {
-  /* Light Mode Defaults (Notion / Linear Minimalist) */
+  /* Light Mode Defaults (Notion / Linear Minimalist Pure White) */
   :root {
-    --bg-app: #f9fafb;
+    --bg-app: #fbfbfb;
     --bg-surface-50: #ffffff;
     --bg-surface-100: #ffffff;
-    --bg-surface-200: #f3f4f6;
-    --bg-surface-300: #e5e7eb;
+    --bg-surface-200: #f4f5f7;
+    --bg-surface-300: #e8eaed;
     --border-color: #e5e7eb;
     --border-strong: #d1d5db;
-    --text-primary: #111827;
-    --text-muted: #6b7280;
-    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+    --text-primary: #0f172a;
+    --text-muted: #64748b;
+    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
   }
 
   /* Dark Mode Defaults (DaVinci Resolve / Palantir Pro Workstation) */
@@ -78,17 +78,18 @@
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .pro-input:focus {
   border-color: var(--border-strong);
+  background-color: var(--bg-surface-100);
 }
 
 /* Crisp Monochrome Button Tokens */
 .btn-solid {
   background-color: var(--text-primary);
-  color: var(--bg-app);
+  color: var(--bg-surface-50);
   font-weight: 600;
   border: 1px solid transparent;
   transition: opacity 0.15s ease, transform 0.1s ease;
@@ -118,4 +119,13 @@
   background-image: 
     linear-gradient(to right, var(--border-color) 1px, transparent 1px),
     linear-gradient(to bottom, var(--border-color) 1px, transparent 1px);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out forwards;
 }

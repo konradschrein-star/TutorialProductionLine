@@ -24,7 +24,25 @@ export type TutorialSplicePayload = z.infer<typeof TutorialSplicePayloadSchema>;
  */
 export const TutorialTranslatePayloadSchema = z.object({
   sourceJobId: z.string().uuid(),
-  targetLanguage: z.enum(["de", "fr", "es", "ja", "ko"]),
+  targetLanguage: z.enum([
+    "de",
+    "fr",
+    "it",
+    "es",
+    "nl",
+    "sv",
+    "no",
+    "da",
+    "pt",
+    "pl",
+    "cs",
+    "ru",
+    "ar",
+    "zh",
+    "ja",
+    "ko",
+    "id",
+  ]),
 });
 export type TutorialTranslatePayload = z.infer<
   typeof TutorialTranslatePayloadSchema

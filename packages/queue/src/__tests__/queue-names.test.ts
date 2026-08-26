@@ -5,9 +5,10 @@ import type { QueueName } from "../constants/queue-names.js";
 // ── QUEUE_NAMES object ────────────────────────────────────────────
 
 describe("QUEUE_NAMES", () => {
-  it("exports an object with exactly 46 queue name entries", () => {
-    expect(Object.keys(QUEUE_NAMES)).toHaveLength(46);
+  it("exports an object with exactly 47 queue name entries", () => {
+    expect(Object.keys(QUEUE_NAMES)).toHaveLength(47);
   });
+
 
   it("all queue name values are non-empty strings", () => {
     for (const value of Object.values(QUEUE_NAMES)) {

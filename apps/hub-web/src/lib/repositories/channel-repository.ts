@@ -35,6 +35,12 @@ export interface Channel {
    * migration for why one flag cannot serve both formats.
    */
   accepts_rankings: boolean;
+  /**
+   * Is this a PRIMARY channel a VA may create ORIGINAL tutorials against?
+   * Migration 0064. Secondary (translation-only) channels are excluded from the
+   * Create picker; they still receive translated children via the Localize lane.
+   */
+  is_primary: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -49,13 +55,15 @@ export interface ChannelWithJobCount extends Channel {
  * @returns Array of channels with job counts
  */
 export async function listChannels(): Promise<ChannelWithJobCount[]> {
+  // This is a tutorial tool: jobs live in tutorial_jobs, not the ContentForge
+  // content_jobs table. Counting content_jobs made every channel read "0 jobs".
   const result = await db
     .select({
       channel: channels,
-      job_count: sql<number>`cast(count(cj.id) as integer)`,
+      job_count: sql<number>`cast(count(tj.id) as integer)`,
     })
     .from(channels)
-    .leftJoin(sql`content_jobs cj`, sql`${channels.id} = cj.channel_id`)
+    .leftJoin(sql`tutorial_jobs tj`, sql`${channels.id} = tj.channel_id`)
     .groupBy(channels.id)
     .orderBy(desc(channels.updated_at));
 
@@ -113,16 +121,29 @@ export async function updateSubtitleConfig(
  * @returns Created channel
  */
 export async function createChannel(data: {
-  youtube_channel_id: string;
+  youtube_channel_id?: string;
   name: string;
   language?: string;
 }): Promise<Channel> {
+  // The YouTube channel ID is optional here — a friend can produce and archive
+  // tutorials to Drive long before a channel is linked. The column is
+  // NOT NULL UNIQUE, so an unlinked channel gets a unique placeholder that the
+  // UI renders as "Not linked".
+  const youtubeId =
+    data.youtube_channel_id && data.youtube_channel_id.trim()
+      ? data.youtube_channel_id.trim()
+      : `pending-${crypto.randomUUID()}`;
+
   const result = await db
     .insert(channels)
     .values({
-      youtube_channel_id: data.youtube_channel_id,
+      youtube_channel_id: youtubeId,
       name: data.name,
       language: data.language ?? "en",
+      // This is a tutorial tool — every channel should be selectable for
+      // tutorials the moment it is created. Defaulting the column to false made
+      // new channels invisible to the job picker until fixed by hand in SQL.
+      accepts_tutorials: true,
     })
     .returning();
 
@@ -142,6 +163,7 @@ export async function updateChannel(
     youtube_channel_id: string;
     name: string;
     language: string;
+    is_primary: boolean;
   }>,
 ): Promise<Channel | null> {
   const result = await db

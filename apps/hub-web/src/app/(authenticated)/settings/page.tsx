@@ -9,20 +9,12 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSettings } from "@/lib/repositories/settings-repository";
 import { resolveSectionById } from "@/lib/services/settings-service";
 import { SettingsShell } from "@/components/settings/settings-shell";
-import type { CredentialRow } from "@/components/settings/credentials-card";
 import { ConfigMap, type ConfigTile } from "./_components/config-map";
 import { db } from "@/lib/db";
-import { getSecretPresences } from "@repo/db";
-import { BUILT_IN_PROVIDERS } from "@repo/provider-registry";
+import { buildTutorialCredentialRows } from "@/lib/tutorial/credentials";
 import { getHubConfig } from "@/lib/config";
-import {
-  ttsVoices,
-  musicLibrary,
-  subtitlePresets,
-  channels,
-  contentTemplates,
-  users,
-} from "@repo/db/schema";
+import { ttsVoices, musicLibrary, channels, users } from "@repo/db/schema";
+import { DriveArchiveCard } from "@/components/settings/sections/drive-archive-card";
 import type { PgTable } from "drizzle-orm/pg-core";
 
 /**
@@ -80,36 +72,6 @@ async function readStorageStat(): Promise<{
   }
 }
 
-async function buildCredentialRows(): Promise<CredentialRow[]> {
-  const names = Array.from(
-    new Set(
-      BUILT_IN_PROVIDERS.map((p) => p.keyEnvVar).filter(
-        (n): n is string => !!n,
-      ),
-    ),
-  );
-  let presences: Awaited<ReturnType<typeof getSecretPresences>>;
-  try {
-    presences = await getSecretPresences(db, names);
-  } catch (error) {
-    console.warn("[settings] credential presence lookup failed:", error);
-    presences = new Map();
-  }
-  return BUILT_IN_PROVIDERS.map((p) => {
-    const pres = p.keyEnvVar ? presences.get(p.keyEnvVar) : undefined;
-    return {
-      providerKey: p.key,
-      displayName: p.displayName,
-      keyEnvVar: p.keyEnvVar,
-      source: pres?.source ?? "none",
-      last4: pres?.last4 ?? null,
-      expiresAt: pres?.expiresAt ? pres.expiresAt.toISOString() : null,
-      costTier: String(p.costTier),
-      sortOrder: p.sortOrder ?? 0,
-    };
-  }).sort((a, b) => a.sortOrder - b.sortOrder);
-}
-
 export default async function SettingsPage() {
   const session = await getSession();
 
@@ -150,24 +112,15 @@ export default async function SettingsPage() {
   }
 
   const [credentials, storageStat] = await Promise.all([
-    buildCredentialRows(),
+    buildTutorialCredentialRows(),
     readStorageStat(),
   ]);
 
   // ── Live counts for the configuration map ─────────────────────────────────
-  const [
-    voiceCount,
-    trackCount,
-    presetCount,
-    channelCount,
-    templateCount,
-    userCount,
-  ] = await Promise.all([
+  const [voiceCount, trackCount, channelCount, userCount] = await Promise.all([
     safeCount(ttsVoices),
     safeCount(musicLibrary),
-    safeCount(subtitlePresets),
     safeCount(channels),
-    safeCount(contentTemplates),
     safeCount(users),
   ]);
 
@@ -198,22 +151,6 @@ export default async function SettingsPage() {
       hint: "unavailable",
     },
     {
-      label: "Subtitle Presets",
-      href: "/subtitles",
-      icon: "subtitles",
-      count: presetCount,
-      countLabel: "presets",
-      hint: "unavailable",
-    },
-    {
-      label: "Formats & Templates",
-      href: "/formats",
-      icon: "category",
-      count: templateCount,
-      countLabel: "templates",
-      hint: "unavailable",
-    },
-    {
       label: "Channels",
       href: "/channels",
       icon: "live_tv",
@@ -221,16 +158,12 @@ export default async function SettingsPage() {
       countLabel: "channels",
       hint: "unavailable",
     },
-    // "Narrators" tile removed (S3): it pointed at /narrators, a deprecated
-    // tombstone that just redirects to /channels. Narrators are managed per
-    // channel now; TTS Voices above is the live voice surface. Removing this
-    // also de-duplicates the two "voice" rows Konrad flagged.
     {
-      label: "Team & Access",
+      label: "Accounts",
       href: "/team",
       icon: "group",
       count: userCount,
-      countLabel: "users",
+      countLabel: "accounts",
       hint: "unavailable",
     },
   ];
@@ -379,6 +312,43 @@ export default async function SettingsPage() {
         canManageCredentials={canManageCredentials}
         storageStat={storageStat}
       />
+
+      {/* Google Drive delivery status. Paste the Drive Client ID / Secret /
+          Refresh token into Credentials above to connect; this card then shows
+          real quota + last-upload truth. */}
+      <GlassCard style={{ padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: 18, color: "var(--v2-accent)" }}
+          >
+            cloud_upload
+          </span>
+          <div>
+            <h2
+              style={{
+                fontSize: 13,
+                fontWeight: 800,
+                color: "#e5e2e1",
+                margin: 0,
+              }}
+            >
+              Delivery — Google Drive
+            </h2>
+            <p
+              style={{
+                fontSize: 11,
+                color: "rgba(205,195,215,0.5)",
+                margin: "2px 0 0",
+              }}
+            >
+              Finished videos are archived here. Connect it by setting the three
+              Google Drive credentials above.
+            </p>
+          </div>
+        </div>
+        <DriveArchiveCard />
+      </GlassCard>
     </div>
   );
 }

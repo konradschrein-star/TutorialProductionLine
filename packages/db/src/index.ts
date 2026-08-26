@@ -52,6 +52,18 @@ export {
   getChannelVoice,
   type ChannelVoice,
 } from "./repositories/channel-voice-repository.js";
+// TTS voice registry (per-language native voices for localized audio).
+export {
+  listTTSVoices,
+  getDefaultVoice,
+  getVoiceForLanguage,
+  getTTSVoiceByDatabaseId,
+  getTTSVoiceById,
+  createTTSVoice,
+  updateTTSVoice,
+  deleteTTSVoice,
+  setDefaultVoice,
+} from "./repositories/tts-voice-repository.js";
 // Tutorial Production Engine repositories
 export * from "./repositories/tutorial-job-repository.js";
 export * from "./repositories/tutorial-prompt-repository.js";

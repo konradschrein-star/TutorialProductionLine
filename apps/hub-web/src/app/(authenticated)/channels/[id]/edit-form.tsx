@@ -15,15 +15,23 @@ export function V2ChannelEditForm({ channel }: Props) {
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState(channel.name);
   const [youtubeChannelId, setYoutubeChannelId] = useState(channel.youtube_channel_id);
+  const [isPrimary, setIsPrimary] = useState(channel.is_primary);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = 'Name is required';
+    // Accept either a canonical UC… id OR an @handle. The channels were seeded
+    // with @handles (e.g. @slflggfsll5106), so a UC-only rule made every one of
+    // them unsavable. A UC id can be linked later once known.
     if (!youtubeChannelId.trim()) {
-      next.ytid = 'YouTube Channel ID is required';
-    } else if (!/^UC[a-zA-Z0-9_-]{22}$/.test(youtubeChannelId)) {
-      next.ytid = 'Must start with UC and be 24 characters total';
+      next.ytid = 'YouTube channel ID or @handle is required';
+    } else if (
+      !/^UC[a-zA-Z0-9_-]{22}$/.test(youtubeChannelId) &&
+      !/^@[a-zA-Z0-9._-]{2,}$/.test(youtubeChannelId) &&
+      !youtubeChannelId.startsWith('pending-')
+    ) {
+      next.ytid = 'Use a UC… channel ID (24 chars) or an @handle';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -33,7 +41,11 @@ export function V2ChannelEditForm({ channel }: Props) {
     e.preventDefault();
     if (!validate()) return;
     setLoading(true);
-    const result = await updateChannel(channel.id, { name, youtube_channel_id: youtubeChannelId });
+    const result = await updateChannel(channel.id, {
+      name,
+      youtube_channel_id: youtubeChannelId,
+      is_primary: isPrimary,
+    });
     if (result.success) {
       router.push('/channels');
     } else {
@@ -90,6 +102,38 @@ export function V2ChannelEditForm({ channel }: Props) {
             Found on your YouTube channel page URL (starts with UC, 24 chars)
           </span>
         )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label style={labelStyle}>Origination</label>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            cursor: 'pointer',
+            padding: '10px 14px',
+            background: '#111',
+            border: '1px solid rgba(75,68,85,0.4)',
+            borderRadius: 8,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={isPrimary}
+            onChange={(e) => setIsPrimary(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span style={{ fontSize: 12, color: '#e5e2e1' }}>
+            <strong>Primary channel</strong> — VAs can create original tutorials
+            here on the Create tab.
+            <br />
+            <span style={{ color: 'rgba(205,195,215,0.55)' }}>
+              Leave off for translation-only channels (the language versions that
+              only receive videos from the Localize tab).
+            </span>
+          </span>
+        </label>
       </div>
 
       {errors.form && <span style={{ fontSize: 12, color: '#ffb4ab' }}>{errors.form}</span>}

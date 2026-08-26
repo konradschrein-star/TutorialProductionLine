@@ -121,6 +121,13 @@ function isSegmentChild(j: TutorialJob): boolean {
   return j.parent_job_id !== null;
 }
 
+/** Whether a job is a translation child (has a source_job_id set).
+ * Translation jobs are managed in the Localize tab and reuse the source recording. */
+function isTranslationChild(j: TutorialJob): boolean {
+  return j.source_job_id !== null;
+}
+
+
 /** Terminal statuses — a finished (or dead) job the VA no longer needs to act
  * on. Mirrors page-client.tsx's TERMINAL set. Hidden from the worklist by
  * default so completed/failed work doesn't clutter the VA's active queue. */
@@ -197,11 +204,13 @@ const STUCK_THRESHOLD_SEC: Record<string, number> = {
  *
  * Screen capture is the worst case for this because cursor movement and
  * scrolling are exactly the high-motion content duplicated frames betray. So:
- * hard cap 1.6, warn above 1.5. Below 1.0 is pointless for throughput (the VA
- * spends longer recording than the video runs), so the floor is 1.0.
+ * Owner override (2026-08): widen the range to 0.75×–2.5×. Below 1.0 the VA
+ * records slower than real time (more unique frames, slower throughput); above
+ * 1.6 frames start duplicating on scroll-heavy capture — the fps hint + the
+ * warning above SPEED_WARN_ABOVE keep that visible rather than forbidden.
  */
-const SPEED_MIN = 1.0;
-const SPEED_MAX = 1.6;
+const SPEED_MIN = 0.75;
+const SPEED_MAX = 2.5;
 const SPEED_STEP = 0.05;
 /** Above this, duplicated frames start being visible on scroll-heavy capture. */
 const SPEED_WARN_ABOVE = 1.5;
@@ -740,8 +749,11 @@ export function ProductionStudio({
   // Show finished/dead jobs in the worklist only when the VA opts in. Segment
   // children stay hidden regardless (they live inside their parent's detail).
   const [showCompleted, setShowCompleted] = useState(false);
-  const topLevelJobs = jobs.filter((j) => !isSegmentChild(j));
+  const topLevelJobs = jobs.filter(
+    (j) => !isSegmentChild(j) && !isTranslationChild(j),
+  );
   const hiddenCompletedCount = topLevelJobs.filter((j) =>
+
     TERMINAL_STATUSES.has(j.status),
   ).length;
   const readyJobs = showCompleted
@@ -789,6 +801,10 @@ export function ProductionStudio({
     null,
   );
   const [regenerating, setRegenerating] = useState<RetryTarget | null>(null);
+  // The narration the VA is editing. Kept separate from the stored script so an
+  // in-progress edit is not clobbered by the 5s job poll; it only resyncs when
+  // the job actually changes or a fresh script is generated (see the effect).
+  const [scriptDraft, setScriptDraft] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hotkey = settings?.record_hotkey ?? "F8";
 
@@ -796,6 +812,45 @@ export function ProductionStudio({
   const selectedJob = selected
     ? (jobs.find((j) => j.id === selected.id) ?? selected)
     : null;
+
+  // Load the editable script when the job changes or its script is (re)generated.
+  useEffect(() => {
+    setScriptDraft(selectedJob?.script_text ?? "");
+  }, [selectedJob?.id, selectedJob?.script_text]);
+
+  const scriptDirty =
+    !!selectedJob?.script_text &&
+    scriptDraft.trim() !== (selectedJob.script_text ?? "").trim();
+
+  /**
+   * Persist the VA's edited script, then re-synthesize the audio from it. The
+   * two steps are deliberate: the PATCH writes script_text first so the TTS
+   * regeneration (which reads script_text off the job) picks up the new words.
+   */
+  async function saveScriptAndRegenAudio() {
+    if (!selectedJob) return;
+    const text = scriptDraft.trim();
+    if (!text) {
+      toast.error("The script can't be empty.");
+      return;
+    }
+    try {
+      const save = await fetch(`/api/production/jobs/${selectedJob.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ script_text: text }),
+      });
+      if (!save.ok) {
+        const b = (await save.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? `Save failed (${save.status})`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    // Re-synthesize the voiceover from the script we just saved.
+    await handleRegenerate("audio");
+  }
 
   // Live view of the background upload queue (module singleton — it keeps
   // running when this component unmounts on a tab switch).
@@ -2458,29 +2513,50 @@ export function ProductionStudio({
             )}
 
             {selectedJob.script_text ? (
-              <pre
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  borderRadius: 8,
-                  padding: 16,
-                  fontSize: 12,
-                  color: "var(--v2-text-1)",
-                  whiteSpace: "pre-wrap",
-                  maxHeight: 300,
-                  overflow: "auto",
-                  fontFamily: "inherit",
-                  margin: 0,
-                }}
-              >
-                {selectedJob.script_text}
-              </pre>
+              <>
+                <textarea
+                  value={scriptDraft}
+                  onChange={(e) => setScriptDraft(e.target.value)}
+                  spellCheck
+                  disabled={!!regenerating}
+                  style={{
+                    width: "100%",
+                    minHeight: 240,
+                    resize: "vertical",
+                    background: "rgba(0,0,0,0.3)",
+                    border: scriptDirty
+                      ? "1px solid var(--v2-accent)"
+                      : "1px solid var(--v2-border-1)",
+                    borderRadius: 8,
+                    padding: 16,
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                    color: "var(--v2-text-1)",
+                    whiteSpace: "pre-wrap",
+                    fontFamily: "inherit",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: scriptDirty ? "var(--v2-accent)" : "var(--v2-text-2)",
+                    marginTop: 4,
+                  }}
+                >
+                  {scriptDirty
+                    ? "Unsaved edits — hit Save & Regenerate Audio to re-voice them."
+                    : "Edit the narration directly, then Save & Regenerate Audio to re-synthesize it."}
+                </div>
+              </>
             ) : (
               <p style={{ color: "var(--v2-text-2)", fontSize: 12 }}>
                 Script not yet generated.
               </p>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <V2Button
                 variant="outline"
                 size="sm"
@@ -2492,14 +2568,18 @@ export function ProductionStudio({
                   : "Regenerate Script"}
               </V2Button>
               <V2Button
-                variant="outline"
+                variant="accent"
                 size="sm"
-                onClick={() => handleRegenerate("audio")}
-                disabled={!!regenerating || !selectedJob.script_text}
+                onClick={saveScriptAndRegenAudio}
+                disabled={
+                  !!regenerating ||
+                  !selectedJob.script_text ||
+                  scriptDraft.trim().length === 0
+                }
               >
                 {regenerating === "audio"
-                  ? "Regenerating…"
-                  : "Regenerate Audio"}
+                  ? "Saving & regenerating…"
+                  : "Save & Regenerate Audio"}
               </V2Button>
             </div>
           </GlassCard>
@@ -2584,7 +2664,7 @@ export function ProductionStudio({
                     </span>
                     {!midTake && (
                       <V2Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
                         onClick={saveMyDefaultSpeed}
                         title="Use this speed for every new job you open on this machine"

@@ -38,6 +38,12 @@ const API_ROUTES = [
   // hub_session. The inbound request has no hub_session yet, so it must bypass
   // the deny-by-default gate (it self-authenticates via the ?t= token).
   "/api/auth/kt-sso",
+  // Machine (bearer) API surface. Inbound calls carry Authorization: Bearer
+  // ${CF_API_TOKEN} and no hub_session cookie, so without this bypass the
+  // deny-by-default gate would redirect them to /login. Every handler under
+  // /api/v1/** self-authenticates via resolvePrincipal() (see _lib/auth.ts) —
+  // e.g. /api/v1/tutorial/jobs (KT "Produce"), which REQUIRES kind==="machine".
+  "/api/v1",
   // Create form + Studio pickers. Each handler self-authenticates.
   "/api/tts-voices",
   "/api/voices",

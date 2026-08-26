@@ -40,7 +40,8 @@ const FINISHED_CONTENT_STATUSES = [
   "PUBLISHED",
 ] as const;
 
-const LIMIT = 25;
+const DEFAULT_LIMIT = 24;
+const MAX_LIMIT = 300;
 
 interface JobHit {
   kind: "content_job" | "tutorial_job";
@@ -87,6 +88,22 @@ export async function GET(req: NextRequest) {
   const kind = req.nextUrl.searchParams.get("kind") ?? "all";
   const pattern = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
 
+  // Pagination: the tab used to hard-cap at 25 with no way to see the rest, so a
+  // line with 100+ finished videos could never reach the older ones. The client
+  // grows `limit` on "Load more"; we fetch one extra row per source as an
+  // overflow sentinel to tell the client whether another page exists.
+  const requested = Math.min(
+    Math.max(
+      parseInt(req.nextUrl.searchParams.get("limit") ?? "", 10) ||
+        DEFAULT_LIMIT,
+      1,
+    ),
+    MAX_LIMIT,
+  );
+  const fetchN = requested + 1;
+  let contentOverflow = false;
+  let tutorialOverflow = false;
+
   const hits: JobHit[] = [];
 
   if (kind === "all" || kind === "content_job") {
@@ -112,7 +129,8 @@ export async function GET(req: NextRequest) {
       .leftJoin(users, eq(users.id, contentJobs.assigned_production_va_id))
       .where(and(...filters))
       .orderBy(desc(contentJobs.created_at))
-      .limit(LIMIT);
+      .limit(fetchN);
+    contentOverflow = rows.length > requested;
     for (const r of rows) {
       hits.push({
         kind: "content_job",
@@ -153,7 +171,8 @@ export async function GET(req: NextRequest) {
       .leftJoin(users, eq(users.id, tutorialJobs.created_by))
       .where(and(...filters))
       .orderBy(desc(tutorialJobs.created_at))
-      .limit(LIMIT);
+      .limit(fetchN);
+    tutorialOverflow = rows.length > requested;
     for (const r of rows) {
       hits.push({
         kind: "tutorial_job",
@@ -244,9 +263,11 @@ export async function GET(req: NextRequest) {
   }
 
   hits.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const hasMore = contentOverflow || tutorialOverflow || hits.length > requested;
   return NextResponse.json({
     // Stated, not implied. Consumers render this rather than guessing.
     scope: "all_producers",
-    jobs: hits.slice(0, LIMIT),
+    jobs: hits.slice(0, requested),
+    hasMore,
   });
 }

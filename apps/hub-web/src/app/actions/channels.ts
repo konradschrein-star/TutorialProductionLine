@@ -23,7 +23,7 @@ export interface ActionResult {
  * @returns ActionResult
  */
 export async function createChannel(data: {
-  youtube_channel_id: string;
+  youtube_channel_id?: string;
   name: string;
   language?: string;
 }): Promise<ActionResult> {
@@ -60,6 +60,7 @@ export async function updateChannel(
     youtube_channel_id: string;
     name: string;
     language?: string;
+    is_primary?: boolean;
   },
 ): Promise<ActionResult> {
   try {

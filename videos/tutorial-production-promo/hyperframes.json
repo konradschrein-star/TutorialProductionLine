@@ -1,0 +1,15 @@
+{
+  "name": "tutorial-production-promo",
+  "version": "2.0.0",
+  "composition": {
+    "id": "promo",
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "duration": 32
+  },
+  "scripts": {
+    "preview": "npx hyperframes preview",
+    "render": "npx hyperframes render"
+  }
+}

@@ -75,7 +75,19 @@ const nextConfig = {
     // Route Handler body limit (recording uploads can be 500MB+)
     middlewareClientMaxBodySize: 2 * 1024 * 1024 * 1024,
     serverActions: {
-      allowedOrigins: ["localhost:3000", "65.108.6.149:3000"],
+      // Origins the Server Actions same-origin guard trusts. Behind the
+      // Cloudflare proxy the browser Origin is the public host, so the public
+      // domain must be listed or every form POST (login, create job, settings)
+      // is rejected. 212.132.103.168 = direct IP access to the friend's box;
+      // tutorials.axtrelis.com = the live proxied domain. (65.108.6.149 was the
+      // retired Hetzner box, kept harmless.)
+      allowedOrigins: [
+        "localhost:3000",
+        "212.132.103.168",
+        "212.132.103.168:3000",
+        "tutorials.axtrelis.com",
+        "65.108.6.149:3000",
+      ],
       bodySizeLimit: "10gb", // Video stitcher needs large uploads (tutorial videos can be very long)
     },
   },

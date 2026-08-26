@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { V2Button } from "../_components";
 import { ProductionDashboard } from "./_components/dashboard";
 import { LocalizePanel } from "./_components/localize-panel";
@@ -41,6 +41,13 @@ const TABS = [
 
 /** Tabs an uploader VA (manage:thumbnails, no view:production) may see. */
 const THUMBNAIL_ONLY_TABS = new Set<TabId>(["thumbnails"]);
+
+/**
+ * Ranking / tier-list production is an optional add-on. This deployment has not
+ * commissioned it, so the tab shows a "not available in this version" notice
+ * instead of the live ProductionRanking surface. Flip to true to enable.
+ */
+const RANKING_ENABLED: boolean = false;
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -105,6 +112,8 @@ interface ProductionClientProps {
     tts: Record<string, boolean>;
   };
   canManage: boolean;
+  /** edit:tutorial-workflow — a producer VA may tune voice/speed/hotkey/prompts. */
+  canEditWorkflow: boolean;
   totals: { total: number; week: number };
   leaderboard: LeaderboardEntry[];
   myCompleted: number;
@@ -112,7 +121,7 @@ interface ProductionClientProps {
   vaStats: VAStats[];
   dailyLeaderboard: VADailyEntry[];
   vaTimeseries: VADailyPoint[];
-  channels: Array<{ id: string; name: string }>;
+  channels: Array<{ id: string; name: string; language: string }>;
   /** Channels flagged accepts_rankings — the RANKING tab's picker. */
   rankingChannels: Array<{ id: string; name: string }>;
   /** view:production — the tutorial producer sees every tab. */
@@ -128,6 +137,7 @@ export function ProductionClient({
   providers,
   providerAvailability,
   canManage,
+  canEditWorkflow,
   totals,
   leaderboard,
   myCompleted,
@@ -141,6 +151,7 @@ export function ProductionClient({
   canFixThumbnails,
 }: ProductionClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   // Two independent grants: production tabs need view:production, the
   // Thumbnails tab needs manage:thumbnails. A TUTORIAL_VA has the first and
   // not the second, an UPLOADER_VA the second and not the first, ADMIN both —
@@ -161,10 +172,26 @@ export function ProductionClient({
   const visibleTabs = TABS.filter((t) =>
     THUMBNAIL_ONLY_TABS.has(t.id) ? canFixThumbnails : canProduce,
   );
-  const [tab, setTab] = useState<TabId>(
-    canProduce ? "create" : "thumbnails",
-  );
+  // Default landing tab per role. A ?tab=<id> deep-link (e.g. the Keywords
+  // sidebar item -> /tutorial-studio?tab=keywords) overrides it, but ONLY when
+  // that tab is actually visible to this user — otherwise an UPLOADER_VA
+  // following a Keywords link would land on a tab they cannot use. Read once at
+  // mount via the lazy initializer; tab switches thereafter stay local state.
+  const defaultTab: TabId = canProduce ? "create" : "thumbnails";
+  const [tab, setTab] = useState<TabId>(() => {
+    const requested = searchParams.get("tab");
+    return requested && visibleTabs.some((t) => t.id === requested)
+      ? (requested as TabId)
+      : defaultTab;
+  });
   const [jobs, setJobs] = useState<TutorialJob[]>(initialJobs);
+  // A seed keyword the VA picked from the "Initial Keywords" fallback, waiting
+  // to prefill the Create form. Set when they press "Create tutorial" there;
+  // consumed (and cleared) by ProductionCreate once it has loaded it.
+  const [pendingSeed, setPendingSeed] = useState<{
+    id: number;
+    title: string;
+  } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * Detail fetches already attempted, so a field that is legitimately EMPTY
@@ -378,6 +405,8 @@ export function ProductionClient({
           onCreated={() => {
             void refresh();
           }}
+          pendingSeed={pendingSeed}
+          onSeedConsumed={() => setPendingSeed(null)}
         />
       )}
       {tab === "studio" && (
@@ -387,19 +416,107 @@ export function ProductionClient({
           onChange={refresh}
         />
       )}
-      {tab === "ranking" && <ProductionRanking channels={rankingChannels} />}
+      {/* Ranking / tier-list is an optional add-on the client has not enabled
+          for this deployment. The tab stays visible so the capability is
+          discoverable, but ProductionRanking is withheld behind a friendly
+          notice rather than exposing an unconfigured pipeline. Flip
+          RANKING_ENABLED to true once the add-on is commissioned. */}
+      {tab === "ranking" &&
+        (RANKING_ENABLED ? (
+          <ProductionRanking channels={rankingChannels} />
+        ) : (
+          <RankingNotAvailable />
+        ))}
       {tab === "review" && <Review />}
       {tab === "localize" && <LocalizePanel />}
       {tab === "thumbnails" && canFixThumbnails && <ProductionThumbnails />}
-      {tab === "keywords" && <ProductionKeywords />}
+      {tab === "keywords" && (
+        <ProductionKeywords
+          onUseSeed={(seed) => {
+            setPendingSeed(seed);
+            setTab("create");
+          }}
+        />
+      )}
       <RecordingUploadQueue />
       {tab === "settings" && (
         <ProductionSettings
           presets={presets}
           settings={settings}
           canManage={canManage}
+          canEditWorkflow={canEditWorkflow}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Ranking tab placeholder shown when the tier-list add-on is not enabled for
+ * this deployment. Keeps the tab discoverable while making clear the feature
+ * is an optional extra that can be switched on later.
+ */
+function RankingNotAvailable() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        gap: 14,
+        padding: "48px 24px",
+        borderRadius: 14,
+        background: "var(--v2-surface-2)",
+        border: "1px dashed rgba(255,255,255,0.12)",
+      }}
+    >
+      <span
+        className="material-symbols-outlined"
+        style={{ fontSize: 40, color: "var(--v2-text-2)", opacity: 0.7 }}
+      >
+        leaderboard
+      </span>
+      <div style={{ maxWidth: 460, display: "flex", flexDirection: "column", gap: 8 }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 800,
+            color: "var(--v2-text-1)",
+            margin: 0,
+          }}
+        >
+          Ranking is not available in this version
+        </h3>
+        <p
+          style={{
+            fontSize: 13,
+            lineHeight: 1.6,
+            color: "var(--v2-text-2)",
+            margin: 0,
+          }}
+        >
+          Tier-list / ranking videos are an optional add-on and are not enabled
+          for this deployment. Your tutorial production workflow is unaffected —
+          everything else works as normal. This lane can be switched on later if
+          you decide to produce ranking content.
+        </p>
+      </div>
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: "var(--v2-text-2)",
+          background: "rgba(255,255,255,0.05)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          padding: "4px 12px",
+          borderRadius: 999,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+        }}
+      >
+        Optional add-on
+      </span>
     </div>
   );
 }

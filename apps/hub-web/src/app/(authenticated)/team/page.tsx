@@ -4,18 +4,12 @@ import { getSession } from "../_lib/v2-auth";
 import { GlassCard } from "../_components/glass-card";
 import { hasPermission } from "@/lib/auth/rbac";
 import { listUsersWithStats } from "@/lib/repositories/team-repository";
-import { VAProductivityChart } from "@/components/team/va-productivity-chart";
-import { TeamKPIs } from "@/components/team/team-kpis";
 
 const ROLE_COLORS: Record<string, { bg: string; color: string }> = {
   ADMIN: { bg: "rgba(var(--v2-accent-rgb), 0.15)", color: "var(--v2-accent)" },
-  MANAGER: {
-    bg: "rgba(var(--v2-accent-rgb), 0.08)",
-    color: "var(--v2-accent-secondary)",
-  },
   PRODUCTION_VA: { bg: "rgba(249,115,22,0.12)", color: "#f97316" },
   UPLOADER_VA: { bg: "rgba(35,222,203,0.12)", color: "#23decb" },
-  VIEWER: { bg: "rgba(75,68,85,0.25)", color: "#4b4455" },
+  VIEWER: { bg: "rgba(75,68,85,0.25)", color: "#a79db3" },
 };
 
 function getRoleStyle(role: string) {
@@ -38,9 +32,6 @@ export default async function V2TeamPage() {
   const canEditUsers = hasPermission(session, "edit:user");
   const users = await listUsersWithStats();
 
-  const productionVAs = users.filter((u) => u.role === "PRODUCTION_VA");
-  const uploaderVAs = users.filter((u) => u.role === "UPLOADER_VA");
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
       {/* Header */}
@@ -61,10 +52,18 @@ export default async function V2TeamPage() {
               marginBottom: 4,
             }}
           >
-            Team
+            Accounts
           </h1>
           <p style={{ fontSize: 12, color: "#cdc3d7", margin: 0 }}>
-            {users.length} team member{users.length !== 1 ? "s" : ""}
+            {users.length} account{users.length !== 1 ? "s" : ""} · admins, VAs
+            and viewers. Production metrics live on the{" "}
+            <a
+              href="/dashboard"
+              style={{ color: "var(--v2-accent)", textDecoration: "none" }}
+            >
+              Dashboard
+            </a>
+            .
           </p>
         </div>
 
@@ -331,254 +330,6 @@ export default async function V2TeamPage() {
           );
         })}
       </GlassCard>
-
-      {/* VA Productivity Chart */}
-      <GlassCard style={{ padding: 20 }}>
-        <div
-          style={{
-            paddingBottom: 16,
-            marginBottom: 20,
-            borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.1)",
-          }}
-        >
-          <h3
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#e5e2e1",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              margin: 0,
-            }}
-          >
-            VA Productivity
-          </h3>
-        </div>
-        <VAProductivityChart />
-      </GlassCard>
-
-      {/* More KPIs */}
-      <GlassCard style={{ padding: 20 }}>
-        <div
-          style={{
-            paddingBottom: 16,
-            marginBottom: 20,
-            borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.1)",
-          }}
-        >
-          <h3
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#e5e2e1",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              margin: 0,
-            }}
-          >
-            Team Performance Metrics
-          </h3>
-        </div>
-        <TeamKPIs />
-      </GlassCard>
-
-      {/* VA Productivity Section (Existing) */}
-      {(productionVAs.length > 0 || uploaderVAs.length > 0) && (
-        <div>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#e5e2e1",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              marginBottom: 16,
-              marginTop: 0,
-            }}
-          >
-            VA Quick Stats
-          </p>
-          <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}
-          >
-            {/* Production VAs */}
-            <GlassCard className="p-5">
-              <h4
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "#f97316",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  margin: 0,
-                  marginBottom: 16,
-                }}
-              >
-                Production VAs
-              </h4>
-              {productionVAs.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: "rgba(205,195,215,0.4)",
-                    margin: 0,
-                  }}
-                >
-                  No Production VAs
-                </p>
-              ) : (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
-                >
-                  {productionVAs.map((va) => (
-                    <div
-                      key={va.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "10px 14px",
-                        background: "#0e0e0e",
-                        borderRadius: 8,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: "50%",
-                            background:
-                              "linear-gradient(135deg, var(--v2-accent), var(--v2-accent-dim))",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 11,
-                            fontWeight: 800,
-                            color: "#fff",
-                          }}
-                        >
-                          {getUserInitial(va.name, va.email)}
-                        </div>
-                        <span style={{ fontSize: 12, color: "#e5e2e1" }}>
-                          {va.name || va.email}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 16,
-                          fontSize: 10,
-                          color: "rgba(205,195,215,0.5)",
-                        }}
-                      >
-                        <span style={{ color: "#23decb", fontWeight: 700 }}>
-                          {va.jobs_completed} done
-                        </span>
-                        <span>{va.jobs_in_progress} active</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </GlassCard>
-
-            {/* Uploader VAs */}
-            <GlassCard className="p-5">
-              <h4
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "#23decb",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  margin: 0,
-                  marginBottom: 16,
-                }}
-              >
-                Uploader VAs
-              </h4>
-              {uploaderVAs.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: "rgba(205,195,215,0.4)",
-                    margin: 0,
-                  }}
-                >
-                  No Uploader VAs
-                </p>
-              ) : (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
-                >
-                  {uploaderVAs.map((va) => (
-                    <div
-                      key={va.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "10px 14px",
-                        background: "#0e0e0e",
-                        borderRadius: 8,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: "50%",
-                            background:
-                              "linear-gradient(135deg, var(--v2-accent), var(--v2-accent-dim))",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 11,
-                            fontWeight: 800,
-                            color: "#fff",
-                          }}
-                        >
-                          {getUserInitial(va.name, va.email)}
-                        </div>
-                        <span style={{ fontSize: 12, color: "#e5e2e1" }}>
-                          {va.name || va.email}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 16,
-                          fontSize: 10,
-                          color: "rgba(205,195,215,0.5)",
-                        }}
-                      >
-                        <span style={{ color: "#23decb", fontWeight: 700 }}>
-                          {va.jobs_completed} done
-                        </span>
-                        <span>{va.jobs_in_progress} active</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </GlassCard>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

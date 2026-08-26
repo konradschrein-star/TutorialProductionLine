@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import type { DrizzleClient } from "../client.js";
 import {
   ttsVoices,
@@ -73,6 +73,28 @@ export async function getDefaultVoice(
     .limit(1);
 
   return voice ?? null;
+}
+
+/**
+ * Get the best native voice for a target language, across ANY provider.
+ *
+ * Used by the translate worker to synthesize localized audio in a native voice
+ * (instead of reusing the English source voice). Prefers a voice explicitly
+ * marked `is_default` for that language; otherwise falls back to the first
+ * active voice configured for the language. Returns null when no voice is
+ * configured for the language (caller then keeps the source/channel voice).
+ */
+export async function getVoiceForLanguage(
+  db: DrizzleClient,
+  language: string,
+): Promise<TTSVoice | null> {
+  const voices = await db
+    .select()
+    .from(ttsVoices)
+    .where(and(eq(ttsVoices.language, language), eq(ttsVoices.is_active, true)))
+    .orderBy(desc(ttsVoices.is_default), ttsVoices.provider, ttsVoices.name);
+
+  return voices[0] ?? null;
 }
 
 /**

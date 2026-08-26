@@ -92,10 +92,10 @@ export default async function LoginPage() {
               </span>
             </div>
             <h1 style={{ color: '#eceae6', fontSize: 24, fontWeight: 900, letterSpacing: '-0.02em', marginBottom: 5 }}>
-              Content Forge
+              Tutorial Studio
             </h1>
             <p style={{ color: 'rgba(229,226,225,0.35)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 600 }}>
-              Hub Control Plane
+              Production Console
             </p>
           </div>
 

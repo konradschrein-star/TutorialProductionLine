@@ -4,21 +4,33 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createChannel } from "@/app/actions/channels";
+import { TARGET_LANGUAGES } from "@/lib/tutorial/languages";
+
+// English is the source/original language; the rest come from the single
+// localization language registry so this dropdown never drifts out of sync.
+const LANGUAGE_OPTIONS = [
+  { code: "en", label: "English" },
+  ...TARGET_LANGUAGES.map((l) => ({ code: l.code, label: l.name })),
+];
 
 export default function V2ChannelCreatePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
   const [youtubeChannelId, setYoutubeChannelId] = useState("");
+  const [language, setLanguage] = useState("en");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = "Name is required";
-    if (!youtubeChannelId.trim()) {
-      next.ytid = "YouTube Channel ID is required";
-    } else if (!/^UC[a-zA-Z0-9_-]{22}$/.test(youtubeChannelId)) {
-      next.ytid = "Must start with UC and be 24 characters total";
+    // YouTube ID is optional — you can produce and archive tutorials before a
+    // channel is linked. Only validate the format if something was entered.
+    if (
+      youtubeChannelId.trim() &&
+      !/^UC[a-zA-Z0-9_-]{22}$/.test(youtubeChannelId.trim())
+    ) {
+      next.ytid = "If provided, must start with UC and be 24 characters total";
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -30,7 +42,8 @@ export default function V2ChannelCreatePage() {
     setLoading(true);
     const result = await createChannel({
       name,
-      youtube_channel_id: youtubeChannelId,
+      youtube_channel_id: youtubeChannelId.trim() || undefined,
+      language,
     });
     if (result.success) {
       router.push("/channels");
@@ -128,6 +141,42 @@ export default function V2ChannelCreatePage() {
           )}
         </div>
 
+        {/* Language */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#cdc3d7",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            Primary language
+          </label>
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "10px 14px",
+              background: "#111",
+              border: "1px solid rgba(75,68,85,0.4)",
+              borderRadius: 8,
+              color: "#e5e2e1",
+              fontSize: 13,
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          >
+            {LANGUAGE_OPTIONS.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* YouTube Channel ID */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <label
@@ -139,7 +188,8 @@ export default function V2ChannelCreatePage() {
               letterSpacing: "0.08em",
             }}
           >
-            YouTube Channel ID
+            YouTube Channel ID{" "}
+            <span style={{ color: "rgba(205,195,215,0.4)" }}>(optional)</span>
           </label>
           <input
             type="text"
@@ -165,7 +215,8 @@ export default function V2ChannelCreatePage() {
             </span>
           ) : (
             <span style={{ fontSize: 10, color: "rgba(205,195,215,0.4)" }}>
-              Found on your YouTube channel page URL (starts with UC, 24 chars)
+              Optional — leave blank and link it later. Found on your YouTube
+              channel page URL (starts with UC, 24 chars).
             </span>
           )}
         </div>

@@ -75,14 +75,20 @@ export async function listTutorialJobsByUser(
   db: DrizzleClient,
   userId: string,
   limit = 50,
+  includeTranslations = false,
 ): Promise<TutorialJob[]> {
+  const conditions = [eq(tutorialJobs.created_by, userId)];
+  if (!includeTranslations) {
+    conditions.push(isNull(tutorialJobs.source_job_id));
+  }
   return db
     .select()
     .from(tutorialJobs)
-    .where(eq(tutorialJobs.created_by, userId))
+    .where(and(...conditions))
     .orderBy(desc(tutorialJobs.created_at))
     .limit(limit);
 }
+
 
 export async function listTutorialJobsByStatus(
   db: DrizzleClient,

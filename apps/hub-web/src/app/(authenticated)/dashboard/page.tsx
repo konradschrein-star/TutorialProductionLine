@@ -184,7 +184,7 @@ function JobLine({
   const waited = shortDuration(job.statusUpdatedAt);
   return (
     <Link
-      href={`/jobs/${job.id}`}
+      href="/tutorial-studio"
       style={{
         display: "flex",
         alignItems: "center",
@@ -400,28 +400,28 @@ export default async function DashboardPage() {
             label="Needs you"
             value={needsHuman}
             hint="blocked on a human"
-            href="/jobs?status=needs-human"
+            href="/tutorial-studio"
             color="#f97316"
           />
           <KpiTile
             label="Failed"
             value={failed}
             hint="need a retry or a fix"
-            href="/jobs?status=failed"
+            href="/tutorial-studio"
             color="#ffb4ab"
           />
           <KpiTile
             label="In flight"
             value={working}
             hint="pipeline is working"
-            href="/jobs?status=working"
+            href="/tutorial-studio"
             color="#80ccff"
           />
           <KpiTile
             label="Ready to upload"
             value={readyToUpload}
             hint="rendered and approved"
-            href="/jobs?status=upload-queue"
+            href="/tutorial-studio"
             color="#23decb"
           />
         </div>
@@ -522,7 +522,7 @@ export default async function DashboardPage() {
               icon="error"
               title="Failed in the last 24h"
               hint={failures.length > 0 ? `${failures.length}` : undefined}
-              href="/jobs?status=failed"
+              href="/tutorial-studio"
             />
             {failures.length === 0 ? (
               <EmptyLine text="Nothing failed in the last 24 hours." />
@@ -543,7 +543,7 @@ export default async function DashboardPage() {
               icon="person_alert"
               title="Waiting on a human"
               hint={awaitingHuman.length > 0 ? "oldest first" : undefined}
-              href="/jobs?status=needs-human"
+              href="/tutorial-studio"
             />
             {awaitingHuman.length === 0 ? (
               <EmptyLine text="Nothing is blocked on a person right now." />
@@ -564,7 +564,7 @@ export default async function DashboardPage() {
               icon="hourglass_disabled"
               title="Stuck in an automated stage"
               hint="over 2h with no movement"
-              href="/jobs?status=working"
+              href="/tutorial-studio"
             />
             {stuck.length === 0 ? (
               <EmptyLine text="No job has been sitting in an automated stage for over 2 hours." />
@@ -585,7 +585,7 @@ export default async function DashboardPage() {
               icon="movie"
               title="Recently finished"
               hint="open one to see its video"
-              href="/jobs?status=upload-queue"
+              href="/tutorial-studio"
             />
             {completions.length === 0 ? (
               <EmptyLine text="No completed renders yet." />
@@ -607,7 +607,7 @@ export default async function DashboardPage() {
             icon="account_tree"
             title="Where the work is"
             hint="every unfinished stage that has jobs in it"
-            href="/jobs"
+            href="/tutorial-studio"
           />
           {activeStages.length === 0 ? (
             <EmptyLine text="No jobs are in progress." />
@@ -620,7 +620,7 @@ export default async function DashboardPage() {
                   return (
                     <Link
                       key={s.status}
-                      href={`/jobs?status=${encodeURIComponent(s.status)}`}
+                      href="/tutorial-studio"
                       style={{
                         display: "flex",
                         alignItems: "center",

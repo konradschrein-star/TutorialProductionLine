@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, isNotNull, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, inArray } from "drizzle-orm";
 import { access } from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -97,6 +97,11 @@ export async function GET(request: Request): Promise<NextResponse> {
         eq(tutorialJobs.status, "COMPLETED"),
         isNotNull(tutorialJobs.completed_at),
         gte(tutorialJobs.completed_at, since),
+        // Only the ENGLISH originals the VA actually recorded. Localized
+        // children (source_job_id set) reuse the same recorded background and
+        // are auto-delivered, so they never need a separate approval — showing
+        // them would make the VA re-approve the same video in five languages.
+        isNull(tutorialJobs.source_job_id),
         ...(scopeAll ? [] : [eq(tutorialJobs.created_by, session.userId)]),
       ),
     )

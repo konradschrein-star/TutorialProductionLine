@@ -1,5 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Trash2, Copy, Check } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -9,6 +9,7 @@ interface State {
   hasError: boolean;
   error: Error | null;
   errorInfo: ErrorInfo | null;
+  copied: boolean;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -17,7 +18,8 @@ export class ErrorBoundary extends Component<Props, State> {
     this.state = {
       hasError: false,
       error: null,
-      errorInfo: null
+      errorInfo: null,
+      copied: false
     };
   }
 
@@ -25,7 +27,8 @@ export class ErrorBoundary extends Component<Props, State> {
     return {
       hasError: true,
       error,
-      errorInfo: null
+      errorInfo: null,
+      copied: false
     };
   }
 
@@ -37,6 +40,22 @@ export class ErrorBoundary extends Component<Props, State> {
   handleReset = (): void => {
     this.setState({ hasError: false, error: null, errorInfo: null });
     window.location.reload();
+  };
+
+  handleClearCacheAndReset = (): void => {
+    if (confirm('Clear local workstation storage cache and reload? Your API keys and channel setups will be reset to defaults.')) {
+      try {
+        localStorage.clear();
+      } catch {}
+      window.location.reload();
+    }
+  };
+
+  handleCopyError = (): void => {
+    const errorText = `${this.state.error?.toString()}\n\nStack:\n${this.state.errorInfo?.componentStack || ''}`;
+    navigator.clipboard.writeText(errorText);
+    this.setState({ copied: true });
+    setTimeout(() => this.setState({ copied: false }), 2000);
   };
 
   render(): ReactNode {
@@ -53,7 +72,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 Workstation Unexpected State
               </h2>
               <p className="text-xs text-muted mt-1">
-                An unhandled exception occurred in the UI runtime. Your session data has been preserved in local storage.
+                An unhandled exception occurred in the UI runtime. Your session data has been preserved.
               </p>
             </div>
 
@@ -63,13 +82,30 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             )}
 
-            <div className="pt-2">
+            <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
               <button
                 onClick={this.handleReset}
-                className="btn-solid px-5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 mx-auto"
+                className="btn-solid px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Reload Workstation
+              </button>
+
+              <button
+                onClick={this.handleCopyError}
+                className="btn-outline px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+              >
+                {this.state.copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                {this.state.copied ? 'Copied' : 'Copy Error Details'}
+              </button>
+
+              <button
+                onClick={this.handleClearCacheAndReset}
+                className="btn-outline px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 text-red-400 hover:text-red-300"
+                title="Wipe local storage and restart fresh"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Cache
               </button>
             </div>
           </div>

@@ -127,6 +127,8 @@ export function ProductionThumbnails() {
   const [jobs, setJobs] = useState<JobHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [limit, setLimit] = useState(24);
+  const [hasMore, setHasMore] = useState(false);
 
   const [selectedJob, setSelectedJob] = useState<JobHit | null>(null);
   const [rows, setRows] = useState<ThumbnailRow[]>([]);
@@ -142,12 +144,12 @@ export function ProductionThumbnails() {
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Search ───────────────────────────────────────────────────────────────
-  const runSearch = useCallback(async (q: string) => {
+  const runSearch = useCallback(async (q: string, lim: number) => {
     setSearching(true);
     setSearchError(null);
     try {
       const res = await fetch(
-        `/api/thumbnails/jobs?q=${encodeURIComponent(q)}`,
+        `/api/thumbnails/jobs?q=${encodeURIComponent(q)}&limit=${lim}`,
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
@@ -155,26 +157,35 @@ export function ProductionThumbnails() {
         };
         throw new Error(body.error ?? `Search failed (${res.status})`);
       }
-      const data = (await res.json()) as { jobs: JobHit[] };
+      const data = (await res.json()) as {
+        jobs: JobHit[];
+        hasMore?: boolean;
+      };
       setJobs(data.jobs);
+      setHasMore(Boolean(data.hasMore));
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : String(err));
       setJobs([]);
+      setHasMore(false);
     } finally {
       setSearching(false);
     }
   }, []);
 
-  // Initial load = most recent finished videos, so the tab is useful before
-  // anything is typed.
+  // Any new search term collapses back to the first page.
   useEffect(() => {
-    void runSearch("");
-  }, [runSearch]);
-
-  useEffect(() => {
-    const t = setTimeout(() => void runSearch(query), 300);
+    const t = setTimeout(() => {
+      setLimit(24);
+      void runSearch(query, 24);
+    }, 300);
     return () => clearTimeout(t);
   }, [query, runSearch]);
+
+  function loadMore() {
+    const next = limit + 24;
+    setLimit(next);
+    void runSearch(query, next);
+  }
 
   // ── Thumbnails for the chosen job ────────────────────────────────────────
   const loadRows = useCallback(async (job: JobHit) => {
@@ -473,6 +484,23 @@ export function ProductionThumbnails() {
               );
             })}
           </div>
+          {hasMore && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: 14,
+              }}
+            >
+              <V2Button
+                variant="outline"
+                disabled={searching}
+                onClick={loadMore}
+              >
+                {searching ? "Loading…" : "Load more"}
+              </V2Button>
+            </div>
+          )}
         </div>
       </V2Card>
 

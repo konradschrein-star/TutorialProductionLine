@@ -40,6 +40,15 @@ export const channels = pgTable("channels", {
   // would mean enabling a ranking-only channel also offers it for tutorials,
   // and a VA would record a screen capture into a tier-list channel.
   accepts_rankings: boolean("accepts_rankings").notNull().default(false),
+  // Is this a PRIMARY channel a VA may create original tutorials against?
+  // Migration 0064. The friend's line has ONE primary channel (USA/English);
+  // its German/French/Italian/Dutch/Swedish counterparts are SECONDARY —
+  // they only ever receive *translations* produced from the primary via the
+  // Localize lane, so a VA must never be able to start an original job (or,
+  // worse, an original job in a mismatched language) against them. The Create
+  // picker filters on this flag; Localize/translate routing keeps using
+  // language + accepts_tutorials, so secondary channels stay valid targets.
+  is_primary: boolean("is_primary").notNull().default(false),
   // Per-channel clip library (drama stock-chain template). Many
   // channels can point at the same clip library so libraries can
   // be shared.

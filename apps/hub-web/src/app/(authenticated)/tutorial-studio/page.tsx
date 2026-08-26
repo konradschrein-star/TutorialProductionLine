@@ -31,6 +31,10 @@ export default async function ProductionPage() {
   if (!canProduce && !canFixThumbnails) notFound();
 
   const canManage = hasPermission(session, "manage:tutorial-settings");
+  // Producer VAs may edit their own workflow defaults (voice, speed, hotkey,
+  // prompts) even without the broad admin settings grant.
+  const canEditWorkflow =
+    canManage || hasPermission(session, "edit:tutorial-workflow");
 
   const [
     jobs,
@@ -86,6 +90,7 @@ export default async function ProductionPage() {
         providers={TUTORIAL_PROVIDERS}
         providerAvailability={providerAvailability}
         canManage={canManage}
+        canEditWorkflow={canEditWorkflow}
         totals={totals}
         leaderboard={leaderboard}
         myCompleted={myCompleted}
@@ -93,10 +98,13 @@ export default async function ProductionPage() {
         vaStats={vaStats}
         dailyLeaderboard={dailyLeaderboard}
         vaTimeseries={vaTimeseries}
-        // Only channels that actually receive tutorials (migration 0059).
+        // Only PRIMARY channels may originate tutorials (migration 0064). The
+        // language counterparts are translation-only and must not appear in the
+        // Create picker. `language` rides along so Create can bind the job's
+        // language to the channel and stop a VA from mismatching them.
         channels={channels
-          .filter((c) => c.accepts_tutorials)
-          .map((c) => ({ id: c.id, name: c.name }))}
+          .filter((c) => c.is_primary)
+          .map((c) => ({ id: c.id, name: c.name, language: c.language }))}
         // Rankings get their own opt-in flag (migration 0063).
         rankingChannels={channels
           .filter((c) => c.accepts_rankings)

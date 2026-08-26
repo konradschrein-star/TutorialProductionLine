@@ -9,8 +9,15 @@ import {
   updateTutorialSettingsAction,
 } from "@/app/actions/tutorial";
 import type { TutorialPromptPreset, TutorialSettingsRow } from "@repo/db";
+
 import { TUTORIAL_PROVIDERS } from "@repo/contracts";
 import { voiceControlsFor } from "./voice-controls";
+import {
+  ALL_TARGET_LANGUAGES,
+  DEFAULT_STANDARD_LANGUAGES,
+} from "@/lib/tutorial/languages";
+import { FlagIcon } from "@/lib/tutorial/flag-icon";
+
 
 type PromptCategory =
   | "THREE_MIN"
@@ -891,6 +898,143 @@ function DefaultVoiceSettings({ settings }: { settings: TutorialSettingsRow }) {
   );
 }
 
+function StandardTranslationLanguagesSettings() {
+
+  const STORAGE_KEY = "tutorial_standard_translation_languages";
+  const [standardLangs, setStandardLangs] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [...DEFAULT_STANDARD_LANGUAGES];
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [...DEFAULT_STANDARD_LANGUAGES];
+  });
+  const [saving, setSaving] = useState(false);
+
+  function handleToggle(code: string) {
+    if (standardLangs.includes(code)) {
+      if (standardLangs.length <= 1) {
+        toast.error("Keep at least one standard language.");
+        return;
+      }
+      const updated = standardLangs.filter((c) => c !== code);
+      setStandardLangs(updated);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      }
+    } else {
+      const updated = [...standardLangs, code];
+      setStandardLangs(updated);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      }
+    }
+  }
+
+  function handleReset() {
+    setStandardLangs([...DEFAULT_STANDARD_LANGUAGES]);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([...DEFAULT_STANDARD_LANGUAGES]),
+      );
+    }
+    toast.success("Reset to 5 core launch languages (DE, FR, ES, JA, KO).");
+  }
+
+  async function handleCancelNonStandard() {
+    setSaving(true);
+    try {
+      const res = await fetch(
+        "/api/production/tutorial-translate/cancel-nonstandard",
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      toast.success(
+        `Cancelled ${data.cancelled} non-standard translation jobs in flight.`,
+      );
+    } catch (e) {
+      toast.error(String((e as Error).message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.5 }}>
+        Configure the standard languages used for automatic video translations.
+        When virtual assistants click &quot;Translate everything missing&quot;, translations
+        are strictly created only for these {standardLangs.length} standard languages.
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+          gap: 8,
+        }}
+      >
+        {ALL_TARGET_LANGUAGES.map((l) => {
+          const isSelected = standardLangs.includes(l.code);
+          return (
+            <button
+              key={l.code}
+              type="button"
+              onClick={() => handleToggle(l.code)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: isSelected ? 700 : 500,
+                background: isSelected
+                  ? "rgba(var(--v2-accent-rgb),0.15)"
+                  : "var(--v2-surface-2)",
+                border: isSelected
+                  ? "1px solid var(--v2-accent)"
+                  : "1px solid rgba(255,255,255,0.1)",
+                color: isSelected ? "var(--v2-accent)" : "var(--v2-text-2)",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <FlagIcon code={l.code} />
+                <span>{l.name}</span>
+              </span>
+              <span>{isSelected ? "✓" : "+"}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", paddingTop: 8 }}>
+        <V2Button variant="outline" size="sm" onClick={handleReset}>
+          Reset to 5 Core Languages
+        </V2Button>
+        <V2Button
+          variant="outline"
+          size="sm"
+          disabled={saving}
+          onClick={handleCancelNonStandard}
+        >
+          {saving ? "Cancelling…" : "Cancel Non-Standard Jobs in Flight"}
+        </V2Button>
+      </div>
+    </div>
+  );
+}
+
 export function ProductionSettings({
   presets,
   settings,
@@ -934,6 +1078,21 @@ export function ProductionSettings({
           </p>
         </GlassCard>
       )}
+
+      {/* Standard Translation Languages */}
+      <GlassCard style={{ padding: 24 }}>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            color: "var(--v2-text-1)",
+            marginBottom: 16,
+          }}
+        >
+          Standard Translation Languages
+        </div>
+        <StandardTranslationLanguagesSettings />
+      </GlassCard>
 
       {/* Prompt Library */}
       <GlassCard style={{ padding: 24 }}>
@@ -979,13 +1138,7 @@ export function ProductionSettings({
         </div>
         <DefaultVoiceSettings settings={settings} />
       </GlassCard>
-
-      {/* The "Voice Cloning (AI33) — Coming Soon" card that sat here was
-          removed. AI33 is no longer a TTS provider in this system, so the card
-          advertised a feature that was not coming: a permanent disabled button
-          promising something built on a dependency that had been dropped.
-          Cloning against the current engine (Fish) is a different feature and
-          belongs here only when it exists. */}
     </div>
   );
 }
+

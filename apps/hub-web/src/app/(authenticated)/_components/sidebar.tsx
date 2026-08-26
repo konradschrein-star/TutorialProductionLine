@@ -40,6 +40,12 @@ const NAV_SECTIONS: NavSection[] = [
         label: "Tutorial Studio",
         icon: "smart_display",
       },
+      // Deep-links to the Keywords tab inside Tutorial Studio (an in-page tab,
+      // not its own route). The query string is stripped by canAccessRoute's
+      // startsWith("/tutorial-studio") check, and never matches the active-state
+      // logic below (pathname carries no query), so it will not steal the
+      // Tutorial Studio item's highlight.
+      { href: "/tutorial-studio?tab=keywords", label: "Keywords", icon: "search" },
       { href: "/thumbnails", label: "Thumbnails", icon: "image" },
       { href: "/channels", label: "Channels", icon: "subscriptions" },
     ],
@@ -52,7 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
         label: "System Health",
         icon: "health_and_safety",
       },
-      { href: "/team", label: "Team", icon: "group" },
+      { href: "/team", label: "Accounts", icon: "group" },
       { href: "/settings", label: "Settings", icon: "settings" },
     ],
   },
@@ -91,7 +97,7 @@ export function AppSidebar({ session }: Props) {
     [],
   );
   useRegisterKeybind(
-    { key: "g+m", description: "Go to Team", category: "Navigation" },
+    { key: "g+m", description: "Go to Accounts", category: "Navigation" },
     () => router.push("/team"),
     [],
   );
@@ -152,7 +158,7 @@ export function AppSidebar({ session }: Props) {
                 lineHeight: 1,
               }}
             >
-              Pulse Console
+              Tutorial Studio
             </h2>
             <p
               style={{
@@ -164,7 +170,7 @@ export function AppSidebar({ session }: Props) {
                 marginTop: 3,
               }}
             >
-              Content Forge
+              Production Console
             </p>
           </div>
         </div>

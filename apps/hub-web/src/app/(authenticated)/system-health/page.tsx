@@ -1,102 +1,86 @@
 import { redirect } from "next/navigation";
+import { statfs } from "node:fs/promises";
 import { getSession } from "../_lib/v2-auth";
 import { GlassCard } from "../_components/glass-card";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db } from "@/lib/db";
 import {
   getFailedJobs,
   getFailedJobCountsByStatus,
 } from "@/lib/repositories/system-health-repository";
 import { getAllQueueMetrics } from "@/lib/services/queue-service";
+import { getHubConfig } from "@/lib/config";
 import {
-  loadSnapshot,
-  recentFallbacks,
-  setRegistryDb,
-  syncCatalog,
-  usageRollup,
-  type UsageEventRow,
-} from "@repo/provider-registry";
-import { buildRegistryView, type RegistryView } from "./_lib/registry-view";
-import { loadProductionOutcomes } from "./_lib/production-outcomes";
-import { ProviderBoard } from "@/components/system-health/provider-board";
-import { FallbackFeed } from "@/components/system-health/fallback-feed";
-import { OutcomeHeadline } from "@/components/system-health/outcome-headline";
+  buildTutorialCredentialRows,
+  type CredentialKind,
+  type TutorialCredentialRow,
+} from "@/lib/tutorial/credentials";
+import { DriveArchiveCard } from "@/components/settings/sections/drive-archive-card";
 import { formatTimestamp } from "@/components/system-health/status-visuals";
+import { HealthTests } from "./_components/health-tests";
 
 /**
- * System Health.
+ * System Health — a lean, self-contained status page for THIS tutorial tool.
  *
- * Reading order is the point:
- *   1. Did the work come out?           (production outcomes)
- *   2. Did we get what we asked for?    (substitutions / fallbacks)
- *   3. What do we have and does it work? (provider board + chains)
- *   4. Is the plumbing moving?           (queues, failed jobs)
- *
- * Provider reachability comes third because it is the least informative of
- * the four — everything can be green while nothing works.
+ * No provider-registry, no fallback ledger, none of the Content Forge health
+ * machinery. Just the four things an operator actually needs to answer "is it
+ * working?": are the keys set, are the queues moving, did anything fail, and is
+ * there disk + Drive to deliver to.
  */
 
 export const dynamic = "force-dynamic";
 
-interface RegistryLoad {
-  migrated: boolean;
-  error: string | null;
-  view: RegistryView | null;
-  fallbacks: UsageEventRow[];
-  anyUsageRecorded: boolean;
+const GOOD = "#57d38c";
+const WARN = "#e6b34a";
+const BAD = "#e0605e";
+const HINT = "rgba(205,195,215,0.5)";
+
+function fmtBytes(n: number | null): string {
+  if (n === null) return "—";
+  if (n === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-async function loadRegistry(): Promise<RegistryLoad> {
-  const empty: RegistryLoad = {
-    migrated: false,
-    error: null,
-    view: null,
-    fallbacks: [],
-    anyUsageRecorded: false,
-  };
+async function readDisk(): Promise<{
+  ok: boolean;
+  totalBytes?: number;
+  freeBytes?: number;
+  usedBytes?: number;
+  error?: string;
+}> {
   try {
-    setRegistryDb(db);
-    await syncCatalog();
-    const [snapshot, rollup, fallbacks] = await Promise.all([
-      loadSnapshot(),
-      usageRollup(24),
-      recentFallbacks(25),
-    ]);
-    return {
-      migrated: true,
-      error: null,
-      view: buildRegistryView(snapshot, rollup),
-      fallbacks,
-      anyUsageRecorded: rollup.length > 0,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const missingTables =
-      /relation "provider/i.test(message) ||
-      (err as { code?: string } | null)?.code === "42P01";
-    return {
-      ...empty,
-      error: missingTables
-        ? "Provider registry tables are not present yet. Apply migrations 0038 + 0043–0045 — run `pnpm --filter @repo/db exec tsx src/run-migration-system-health.ts` against the real Content Forge DB (docker pg :5432), then reload."
-        : `Provider registry unavailable: ${message}`,
-    };
+    const root = getHubConfig().LOCAL_MEDIA_ROOT;
+    const s = await statfs(root);
+    const total = Number(s.bsize) * Number(s.blocks);
+    const free = Number(s.bsize) * Number(s.bavail);
+    return { ok: true, totalBytes: total, freeBytes: free, usedBytes: total - free };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "statfs failed" };
   }
 }
 
-export default async function V2SystemHealthPage() {
-  const session = await getSession();
+const KIND_LABELS: Record<CredentialKind, string> = {
+  script: "Script engine",
+  tts: "Voice / TTS",
+  delivery: "Delivery (Drive)",
+  alerts: "Alerts (Telegram)",
+};
+const KIND_ORDER: CredentialKind[] = ["script", "tts", "delivery", "alerts"];
 
+export default async function SystemHealthPage() {
+  const session = await getSession();
   if (!hasPermission(session, "view:system-health")) {
     redirect("/dashboard");
   }
 
-  const [failedJobs, failedJobCounts, queueMetrics, registry, outcomes] =
+  const [failedJobs, failedJobCounts, queueMetrics, credentials, disk] =
     await Promise.all([
-      getFailedJobs(),
-      getFailedJobCountsByStatus(),
-      getAllQueueMetrics(),
-      loadRegistry(),
-      loadProductionOutcomes(),
+      getFailedJobs().catch(() => []),
+      getFailedJobCountsByStatus().catch(() => ({}) as Record<string, number>),
+      getAllQueueMetrics().catch(() => []),
+      buildTutorialCredentialRows().catch(() => [] as TutorialCredentialRow[]),
+      readDisk(),
     ]);
 
   const totalFailedJobs = Object.values(failedJobCounts).reduce(
@@ -107,14 +91,24 @@ export default async function V2SystemHealthPage() {
     (sum, q) => sum + q.waiting + q.active,
     0,
   );
-
   const top10Failed = failedJobs.slice(0, 10);
   const activeQueues = queueMetrics
     .filter((m) => m.waiting + m.active + m.failed > 0)
     .sort((a, b) => b.waiting + b.active - (a.waiting + a.active));
 
+  // A key is "ready" when present anywhere (secrets store or .env).
+  const credsByKind = KIND_ORDER.map((kind) => ({
+    kind,
+    rows: credentials.filter((c) => c.kind === kind),
+  })).filter((g) => g.rows.length > 0);
+
+  const diskPct =
+    disk.ok && disk.totalBytes
+      ? Math.min(100, ((disk.usedBytes ?? 0) / disk.totalBytes) * 100)
+      : 0;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
       {/* Header */}
       <div
         style={{
@@ -126,320 +120,351 @@ export default async function V2SystemHealthPage() {
         }}
       >
         <div>
-          <h1
-            style={{
-              fontSize: 20,
-              fontWeight: 800,
-              color: "#e5e2e1",
-              margin: 0,
-              marginBottom: 4,
-            }}
-          >
+          <h1 style={{ fontSize: 20, fontWeight: 800, color: "#e5e2e1", margin: 0 }}>
             System Health
           </h1>
-          <p style={{ fontSize: 12, color: "#cdc3d7", margin: 0 }}>
-            What we have, whether it works, and who actually served each
-            request.
+          <p style={{ fontSize: 12, color: "#cdc3d7", margin: "4px 0 0" }}>
+            Keys, queues, failures and delivery — everything you need to know it
+            is working.
           </p>
         </div>
-
-        <div style={{ display: "flex", gap: 12 }}>
-          <Pill
-            label={`${totalQueueDepth} in queues`}
-            tone={totalQueueDepth > 0 ? "accent" : "good"}
-          />
-          <Pill
-            label={`${totalFailedJobs} failed jobs`}
-            tone={totalFailedJobs > 0 ? "bad" : "good"}
-          />
+        <div style={{ display: "flex", gap: 10 }}>
+          <Pill label={`${totalQueueDepth} in queues`} tone={totalQueueDepth > 0 ? "accent" : "good"} />
+          <Pill label={`${totalFailedJobs} failed`} tone={totalFailedJobs > 0 ? "bad" : "good"} />
         </div>
       </div>
 
-      {/* 1. Outcomes */}
+      {/* 1. Keys */}
       <Section
-        title="Did the work come out?"
-        subtitle="Real production results. This is the signal a provider ping cannot give you."
+        title="Are the keys set?"
+        subtitle="Green = a key is present (in the secrets store or .env). Set missing keys in Settings → Credentials."
       >
-        <OutcomeHeadline signals={outcomes} />
-      </Section>
-
-      {/* 2. Substitutions */}
-      <Section
-        title="Did we get what we asked for?"
-        subtitle="Silent substitution is the failure mode that shipped bad thumbnails for weeks. It is not silent any more."
-      >
-        <FallbackFeed
-          events={registry.fallbacks.map((e) => ({
-            id: e.id,
-            capability: e.capability,
-            consumer: e.consumer,
-            requestedProvider: e.requestedProvider,
-            servedProvider: e.servedProvider,
-            fallbackDepth: e.fallbackDepth,
-            outcome: e.outcome,
-            context: e.context ?? null,
-            jobId: e.jobId ?? null,
-            createdAt: e.createdAt,
-          }))}
-          anyUsageRecorded={registry.anyUsageRecorded}
-        />
-      </Section>
-
-      {/* 3. Providers */}
-      <Section
-        title="What do we have?"
-        subtitle="Every external service this codebase can call, its credentials, plan, cost and capacity — and the chains that decide who gets asked first."
-      >
-        {registry.error && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              padding: "14px 18px",
-              marginBottom: 16,
-              background: "rgba(245,194,107,0.08)",
-              border: "1px solid rgba(245,194,107,0.3)",
-              borderRadius: 12,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 20, color: "#f5c26b", flexShrink: 0 }}
-            >
-              build
-            </span>
-            <div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {credsByKind.length === 0 && (
+            <GlassCard style={{ padding: 16 }}>
+              <p style={{ fontSize: 12, color: HINT, margin: 0 }}>
+                Could not read credential status.
+              </p>
+            </GlassCard>
+          )}
+          {credsByKind.map((group) => (
+            <div key={group.kind}>
               <p
                 style={{
-                  fontSize: 12,
+                  fontSize: 10,
                   fontWeight: 700,
-                  color: "#f5c26b",
-                  margin: 0,
-                }}
-              >
-                Registry not initialised
-              </p>
-              <p
-                style={{
-                  fontSize: 11,
                   color: "#cdc3d7",
-                  margin: "4px 0 0 0",
-                  lineHeight: 1.6,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  margin: "0 0 8px",
                 }}
               >
-                {registry.error} Until then this section shows nothing rather
-                than guessing.
+                {KIND_LABELS[group.kind]}
               </p>
-            </div>
-          </div>
-        )}
-        {registry.view && (
-          <ProviderBoard
-            providers={registry.view.providers}
-            chains={registry.view.chains}
-            consumerPriorities={registry.view.consumerPriorities}
-            migrated={registry.migrated}
-          />
-        )}
-      </Section>
-
-      {/* 4. Plumbing */}
-      <Section
-        title="Is the plumbing moving?"
-        subtitle="Queue depth and recent job failures."
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <GlassCard style={{ padding: 16 }}>
-            {activeQueues.length === 0 ? (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "rgba(205,195,215,0.5)",
-                  margin: 0,
-                }}
-              >
-                All queues are empty and none are carrying failures.
-              </p>
-            ) : (
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-                  gap: 12,
+                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                  gap: 8,
                 }}
               >
-                {activeQueues.map((m) => (
-                  <div
-                    key={m.name}
-                    style={{
-                      padding: "10px 12px",
-                      background: "rgba(255,255,255,0.03)",
-                      borderRadius: 8,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                    }}
-                  >
-                    <span
+                {group.rows.map((row) => {
+                  const ready = row.source !== "none";
+                  // Providers this deployment does not use never read as red.
+                  // They render muted with a gray dot and a "not needed" chip,
+                  // so an operator does not mistake them for a broken key.
+                  const notNeeded = row.notNeeded && !ready;
+                  return (
+                    <div
+                      key={row.providerKey}
                       style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        color: "#cdc3d7",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.06em",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(75,68,85,0.3)",
+                        opacity: notNeeded ? 0.45 : 1,
                       }}
                     >
-                      {m.name.replace(/^queue-/, "")}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 20,
-                        fontWeight: 900,
-                        color: "#e5e2e1",
-                      }}
-                    >
-                      {m.waiting + m.active}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 9,
-                        color: "rgba(205,195,215,0.5)",
-                      }}
-                    >
-                      {m.waiting} waiting · {m.active} active
-                      {m.failed > 0 && (
-                        <span style={{ color: "#f97316" }}>
-                          {" "}
-                          · {m.failed} failed
-                        </span>
-                      )}
-                      {m.paused && (
-                        <span style={{ color: "#f97316" }}> · PAUSED</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </GlassCard>
-
-          <GlassCard style={{ overflow: "hidden" }}>
-            <div
-              style={{
-                padding: "14px 20px",
-                borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.1)",
-                background: "#131313",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#e5e2e1",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  margin: 0,
-                }}
-              >
-                Recent failed jobs
-              </h3>
-            </div>
-            {top10Failed.length === 0 ? (
-              <div
-                style={{
-                  padding: "24px 20px",
-                  color: "rgba(205,195,215,0.45)",
-                  fontSize: 12,
-                }}
-              >
-                No jobs are in a FAILED_* state.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {top10Failed.map((job, i) => (
-                  <div
-                    key={job.id}
-                    style={{
-                      padding: "12px 20px",
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 16,
-                      borderBottom:
-                        i < top10Failed.length - 1
-                          ? "1px solid rgba(75,68,85,0.12)"
-                          : "none",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        color: "#ffb4ab",
-                        background: "rgba(255,180,171,0.08)",
-                        border: "1px solid rgba(255,180,171,0.2)",
-                        padding: "3px 8px",
-                        borderRadius: 4,
-                        flexShrink: 0,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {job.status}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
+                      <span
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginBottom: 3,
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: notNeeded ? HINT : ready ? GOOD : BAD,
+                          flexShrink: 0,
+                          boxShadow: ready ? `0 0 6px ${GOOD}66` : "none",
                         }}
-                      >
-                        <span
+                      />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
                           style={{
-                            fontSize: 11,
+                            fontSize: 12,
+                            fontWeight: 600,
                             color: "#e5e2e1",
-                            fontFamily: "monospace",
-                          }}
-                        >
-                          {job.id.slice(0, 8)}…
-                        </span>
-                        {job.channel?.name && (
-                          <span style={{ fontSize: 10, color: "#cdc3d7" }}>
-                            {job.channel.name}
-                          </span>
-                        )}
-                      </div>
-                      {job.error_message && (
-                        <p
-                          style={{
-                            fontSize: 11,
-                            color: "rgba(255,180,171,0.7)",
-                            margin: 0,
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {job.error_message}
-                        </p>
+                          {row.displayName}
+                        </div>
+                        <div style={{ fontSize: 10, color: HINT }}>
+                          {notNeeded
+                            ? "Not used by this deployment"
+                            : ready
+                              ? row.source === "db"
+                                ? "Secrets store"
+                                : ".env"
+                              : "Missing"}
+                        </div>
+                      </div>
+                      {notNeeded && (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            color: HINT,
+                            background: "rgba(255,255,255,0.05)",
+                            border: "1px solid rgba(75,68,85,0.4)",
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            whiteSpace: "nowrap",
+                            flexShrink: 0,
+                          }}
+                        >
+                          not needed
+                        </span>
                       )}
                     </div>
-                    <span
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <a
+            href="/settings"
+            style={{ fontSize: 11, color: "var(--v2-accent)", textDecoration: "none" }}
+          >
+            Manage credentials →
+          </a>
+        </div>
+      </Section>
+
+      {/* 2. Run live tests */}
+      <Section
+        title="Do they actually work?"
+        subtitle="Fire a real, cheap health check at each dependency and see pass/fail + latency. A present key can still be revoked, rate-limited or dead — only a live call proves it."
+      >
+        <HealthTests />
+      </Section>
+
+      {/* 3. Queues */}
+      <Section title="Is the plumbing moving?" subtitle="Live queue depth across the pipeline.">
+        <GlassCard style={{ padding: 16 }}>
+          {activeQueues.length === 0 ? (
+            <p style={{ fontSize: 12, color: HINT, margin: 0 }}>
+              All queues are empty and none are carrying failures.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 12,
+              }}
+            >
+              {activeQueues.map((m) => (
+                <div
+                  key={m.name}
+                  style={{
+                    padding: "10px 12px",
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      color: "#cdc3d7",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {m.name.replace(/^queue-/, "")}
+                  </span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: "#e5e2e1" }}>
+                    {m.waiting + m.active}
+                  </span>
+                  <span style={{ fontSize: 9, color: HINT }}>
+                    {m.waiting} waiting · {m.active} active
+                    {m.failed > 0 && (
+                      <span style={{ color: WARN }}> · {m.failed} failed</span>
+                    )}
+                    {m.paused && <span style={{ color: WARN }}> · PAUSED</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      </Section>
+
+      {/* 3. Failures */}
+      <Section title="Did anything fail?" subtitle="The most recent jobs in a FAILED_* state.">
+        <GlassCard style={{ overflow: "hidden" }}>
+          {top10Failed.length === 0 ? (
+            <div style={{ padding: "24px 20px", color: HINT, fontSize: 12 }}>
+              No jobs are in a FAILED_* state.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {top10Failed.map((job, i) => (
+                <div
+                  key={job.id}
+                  style={{
+                    padding: "12px 20px",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 16,
+                    borderBottom:
+                      i < top10Failed.length - 1
+                        ? "1px solid rgba(75,68,85,0.12)"
+                        : "none",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      color: "#ffb4ab",
+                      background: "rgba(255,180,171,0.08)",
+                      border: "1px solid rgba(255,180,171,0.2)",
+                      padding: "3px 8px",
+                      borderRadius: 4,
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {job.status}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
                       style={{
-                        fontSize: 9,
-                        color: "rgba(205,195,215,0.4)",
-                        fontFamily: "monospace",
-                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 3,
                       }}
                     >
-                      {formatTimestamp(job.updated_at)}
-                    </span>
+                      <span
+                        style={{ fontSize: 11, color: "#e5e2e1", fontFamily: "monospace" }}
+                      >
+                        {job.id.slice(0, 8)}…
+                      </span>
+                      {job.channel?.name && (
+                        <span style={{ fontSize: 10, color: "#cdc3d7" }}>
+                          {job.channel.name}
+                        </span>
+                      )}
+                    </div>
+                    {job.error_message && (
+                      <p
+                        style={{
+                          fontSize: 11,
+                          color: "rgba(255,180,171,0.7)",
+                          margin: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {job.error_message}
+                      </p>
+                    )}
                   </div>
-                ))}
-              </div>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: "rgba(205,195,215,0.4)",
+                      fontFamily: "monospace",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {formatTimestamp(job.updated_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
+      </Section>
+
+      {/* 4. Storage + Delivery */}
+      <Section title="Room to deliver?" subtitle="Local disk for renders, and the Google Drive archive.">
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <GlassCard style={{ padding: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 12,
+                color: "#e5e2e1",
+                marginBottom: 6,
+              }}
+            >
+              <span>Local media disk</span>
+              {disk.ok ? (
+                <span style={{ color: HINT }}>
+                  {fmtBytes(disk.usedBytes ?? 0)} / {fmtBytes(disk.totalBytes ?? 0)}
+                </span>
+              ) : (
+                <span style={{ color: BAD }}>unavailable</span>
+              )}
+            </div>
+            {disk.ok ? (
+              <>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 3,
+                    background: "rgba(255,255,255,0.06)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${diskPct}%`,
+                      height: "100%",
+                      background: diskPct > 90 ? BAD : diskPct > 75 ? WARN : GOOD,
+                    }}
+                  />
+                </div>
+                <p style={{ fontSize: 11, color: HINT, margin: "6px 0 0" }}>
+                  {fmtBytes(disk.freeBytes ?? 0)} free
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 11, color: HINT, margin: 0 }}>{disk.error}</p>
             )}
           </GlassCard>
+
+          <DriveArchiveCard />
         </div>
       </Section>
     </div>
@@ -457,24 +482,10 @@ function Section({
 }) {
   return (
     <div>
-      <p
-        style={{
-          fontSize: 13,
-          fontWeight: 800,
-          color: "#e5e2e1",
-          margin: "0 0 3px 0",
-        }}
-      >
+      <p style={{ fontSize: 13, fontWeight: 800, color: "#e5e2e1", margin: "0 0 3px 0" }}>
         {title}
       </p>
-      <p
-        style={{
-          fontSize: 11,
-          color: "rgba(205,195,215,0.5)",
-          margin: "0 0 16px 0",
-          lineHeight: 1.6,
-        }}
-      >
+      <p style={{ fontSize: 11, color: HINT, margin: "0 0 14px 0", lineHeight: 1.6 }}>
         {subtitle}
       </p>
       {children}
@@ -490,16 +501,8 @@ function Pill({
   tone: "good" | "bad" | "accent";
 }) {
   const colors = {
-    good: {
-      fg: "#23decb",
-      bg: "rgba(35,222,203,0.1)",
-      bd: "rgba(35,222,203,0.25)",
-    },
-    bad: {
-      fg: "#ffb4ab",
-      bg: "rgba(255,180,171,0.1)",
-      bd: "rgba(255,180,171,0.3)",
-    },
+    good: { fg: "#23decb", bg: "rgba(35,222,203,0.1)", bd: "rgba(35,222,203,0.25)" },
+    bad: { fg: "#ffb4ab", bg: "rgba(255,180,171,0.1)", bd: "rgba(255,180,171,0.3)" },
     accent: {
       fg: "var(--v2-accent)",
       bg: "rgba(var(--v2-accent-rgb), 0.1)",

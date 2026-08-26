@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1920, height=1080">
+  <title>Tutorial Production Line — Workstation Showcase</title>
+  <!-- Google Fonts: Plus Jakarta Sans, JetBrains Mono, Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- GSAP 3 -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      /* DaVinci Resolve & Linear Workstation Brand Tokens */
+      --bg-app: #0a0c10;
+      --bg-surface-50: #1a1e26;
+      --bg-surface-100: #12151b;
+      --bg-surface-200: #171b22;
+      --bg-surface-300: #212732;
+      
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.18);
+      
+      --text-primary: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+
+      --accent-blue: #3b82f6;
+      --accent-cyan: #06b6d4;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+
+      --font-main: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    body {
+      background-color: var(--bg-app);
+      color: var(--text-primary);
+      font-family: var(--font-main);
+      overflow: hidden;
+      width: 1920px;
+      height: 1080px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 20%, #151821 0%, #0a0c10 75%);
+      perspective: 1200px;
+    }
+
+    /* Subtle Workstation Grid Background */
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    .bg-glow-subtle {
+      position: absolute;
+      width: 1000px;
+      height: 600px;
+      top: -150px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.08) 0%, rgba(10, 12, 16, 0) 70%);
+      pointer-events: none;
+      filter: blur(80px);
+    }
+
+    /* Top Persistent Workstation Header */
+    .top-header {
+      position: absolute;
+      top: 36px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      background: #ffffff;
+      color: #0a0c10;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      font-family: var(--font-display);
+      font-size: 20px;
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+    }
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+    }
+    .brand-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+    }
+    .brand-subtitle {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .header-badges {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .h-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: var(--bg-surface-100);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+    }
+
+    /* Base Scene Container */
+    .scene-wrap {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 100px 64px 60px;
+    }
+
+    /* UI Frame Showcase Styling */
+    .ui-showcase-container {
+      position: relative;
+      border-radius: 14px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface-100);
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+    .ui-image {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .ui-overlay-tag {
+      position: absolute;
+      padding: 8px 16px;
+      background: rgba(18, 21, 27, 0.92);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      backdrop-filter: blur(12px);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 10;
+    }
+    .tag-dot-blue { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-blue); box-shadow: 0 0 8px var(--accent-blue); }
+    .tag-dot-green { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-emerald); box-shadow: 0 0 8px var(--accent-emerald); }
+    .tag-dot-gold { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); }
+
+    /* Scene 1: Bottleneck vs Autonomous Workstation */
+    .s1-header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      border-radius: 9999px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-rose);
+      margin-bottom: 20px;
+      letter-spacing: 1px;
+    }
+    .s1-title {
+      font-family: var(--font-display);
+      font-size: 80px;
+      font-weight: 900;
+      line-height: 1.05;
+      text-align: center;
+      letter-spacing: -2px;
+      color: #ffffff;
+      margin-bottom: 40px;
+    }
+    .s1-split-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 40px;
+      width: 1400px;
+      align-items: stretch;
+    }
+    .s1-card {
+      background: var(--bg-surface-100);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .s1-card-muted {
+      opacity: 0.7;
+      border-color: rgba(244, 63, 94, 0.2);
+    }
+    .s1-card-highlight {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: linear-gradient(180deg, rgba(23, 27, 34, 0.9) 0%, rgba(18, 21, 27, 0.9) 100%);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+    }
+
+    /* Scene 2: Studio Pipeline (Real UI) */
+    .scene2-layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 50px;
+      width: 1640px;
+      align-items: center;
+    }
+    .scene-text-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .section-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-blue);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+    .section-heading {
+      font-family: var(--font-display);
+      font-size: 54px;
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -1.5px;
+      color: #ffffff;
+    }
+    .section-body {
+      font-size: 17px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .pipeline-feature-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .pf-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .pf-check {
+      color: var(--accent-blue);
+      font-family: var(--font-mono);
+    }
+
+    /* Scene 3: Localization Matrix */
+    .scene3-layout {
+      display: grid;
+      grid-template-columns: 1fr 440px;
+      gap: 50px;
+      width: 1640px;
+      align-items: center;
+    }
+
+    /* Scene 4: Thumbnail Studio */
+    .scene4-layout {
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      gap: 50px;
+      width: 1640px;
+      align-items: center;
+    }
+
+    /* Scene 5: Final Call to Action */
+    .s5-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 28px;
+    }
+    .s5-headline {
+      font-family: var(--font-display);
+      font-size: 88px;
+      font-weight: 900;
+      line-height: 1.0;
+      letter-spacing: -3px;
+      color: #ffffff;
+    }
+    .s5-headline span {
+      background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .s5-sub {
+      font-size: 22px;
+      color: var(--text-muted);
+      max-width: 700px;
+      line-height: 1.5;
+    }
+    .s5-cta-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      padding: 20px 48px;
+      background: #ffffff;
+      color: #0a0c10;
+      border-radius: 12px;
+      font-family: var(--font-main);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      box-shadow: 0 10px 30px rgba(255, 255, 255, 0.2);
+    }
+    .s5-url {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      color: var(--text-muted);
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="root" data-composition-id="promo" data-width="1920" data-height="1080" data-duration="32">
+    
+    <!-- Master Synced Fish Audio Soundtrack -->
+    <audio src="assets/audio/master_audio.mp3" data-start="0" data-duration="32" data-track-index="99"></audio>
+
+    <!-- Ambient Subtle Background Grid -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow-subtle"></div>
+
+    <!-- Persistent Workstation Top Header -->
+    <div class="top-header">
+      <div class="brand-wrap">
+        <div class="brand-icon">T</div>
+        <div class="brand-text">
+          <div class="brand-title">Tutorial Production Line</div>
+          <div class="brand-subtitle">Autonomous Workstation // v2.4 Pro</div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <div class="h-badge"><div class="status-dot"></div> ENGINE ONLINE</div>
+        <div class="h-badge">FISH AUDIO NEURAL TTS</div>
+        <div class="h-badge">QUICKSYNC 60 FPS</div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         SCENE 1: THE MANUAL BOTTLENECK VS THE MACHINE (0.0s - 6.5s)
+         ===================================================================== -->
+    <div id="scene1" class="scene-wrap" style="z-index: 10;">
+      <div class="s1-header-badge" id="s1Badge">MANUAL PRODUCTION BOTTLENECK</div>
+      <h1 class="s1-title" id="s1Title">
+        MANUAL VIDEO EDITING IS OFFICIALLY DEAD.
+      </h1>
+
+      <div class="s1-split-grid" id="s1Grid">
+        <div class="s1-card s1-card-muted">
+          <div>
+            <div style="font-family: var(--font-mono); font-size: 12px; color: var(--accent-rose); margin-bottom: 8px;">TRADITIONAL EDITING WORKFLOW</div>
+            <div style="font-size: 26px; font-weight: 800; margin-bottom: 12px;">4.5 Hours Per Video</div>
+            <div style="font-size: 15px; color: var(--text-muted); line-height: 1.5;">Manual screen recording, take trimming, voiceover recording, and repetitive Photoshop thumbnail work.</div>
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--accent-rose); margin-top: 20px;">✕ ZERO SCALABILITY // BURNOUT</div>
+        </div>
+
+        <div class="s1-card s1-card-highlight">
+          <div>
+            <div style="font-family: var(--font-mono); font-size: 12px; color: var(--accent-blue); margin-bottom: 8px;">TUTORIAL PRODUCTION LINE WORKSTATION</div>
+            <div style="font-size: 26px; font-weight: 800; margin-bottom: 12px;">Complete Autonomous Conveyor</div>
+            <div style="font-size: 15px; color: var(--text-primary); line-height: 1.5;">End-to-end automation: Ingest keywords, synthesize DeepSeek scripts, generate Fish Audio neural voice, splice QuickSync takes, and deliver.</div>
+          </div>
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--accent-emerald); margin-top: 20px;">✓ 500+ VIDEOS / DAY // 100% AUTONOMOUS</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         SCENE 2: STUDIO PIPELINE (REAL UI) (6.5s - 13.5s)
+         ===================================================================== -->
+    <div id="scene2" class="scene-wrap" style="opacity: 0; z-index: 20;">
+      <div class="scene2-layout">
+        <div class="scene-text-col" id="s2Text">
+          <div class="section-eyebrow">01 // STUDIO PIPELINE</div>
+          <h2 class="section-heading">Autonomous Video Assembly</h2>
+          <p class="section-body">Real-time pipeline orchestration with instant script re-synthesis, multi-stage retries, and hardware-accelerated video take splicing.</p>
+          <div class="pipeline-feature-list">
+            <div class="pf-item"><span class="pf-check">✓</span> DeepSeek V4 Script Synthesizer</div>
+            <div class="pf-item"><span class="pf-check">✓</span> 1.0x – 1.6x Speed Ramping</div>
+            <div class="pf-item"><span class="pf-check">✓</span> QuickSync Video Take Splicer</div>
+          </div>
+        </div>
+
+        <div class="ui-showcase-container" id="s2UI" style="width: 1080px; height: 600px; transform: rotateX(8deg) rotateY(-5deg);">
+          <img src="assets/ui/smoke-tutorial-studio.png" alt="Studio Pipeline UI" class="ui-image">
+          <div class="ui-overlay-tag" style="top: 24px; right: 24px;">
+            <div class="tag-dot-blue"></div> LIVE PIPELINE RUNNING
+          </div>
+          <div class="ui-overlay-tag" style="bottom: 24px; left: 24px;">
+            <div class="tag-dot-green"></div> SPEED: 1.4X (42 FPS)
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         SCENE 3: 10-LANGUAGE NEURAL LOCALIZATION (REAL UI) (13.5s - 20.5s)
+         ===================================================================== -->
+    <div id="scene3" class="scene-wrap" style="opacity: 0; z-index: 30;">
+      <div class="scene3-layout">
+        <div class="ui-showcase-container" id="s3UI" style="width: 1060px; height: 600px; transform: rotateX(6deg) rotateY(4deg);">
+          <img src="assets/ui/smoke-system-health.png" alt="System Health & Localization UI" class="ui-image">
+          <div class="ui-overlay-tag" style="top: 24px; left: 24px;">
+            <div class="tag-dot-green"></div> 10 LANGUAGES SYNCHRONIZED
+          </div>
+          <div class="ui-overlay-tag" style="bottom: 24px; right: 24px;">
+            <div class="tag-dot-gold"></div> FISH AUDIO NEURAL VOICES
+          </div>
+        </div>
+
+        <div class="scene-text-col" id="s3Text">
+          <div class="section-eyebrow">02 // GLOBAL SCALE</div>
+          <h2 class="section-heading">1 Topic. 10 Languages. Infinite Scale.</h2>
+          <p class="section-body">Native multilingual voice synthesis with dedicated channel profiles, custom prompts, and automated Google Drive cloud delivery.</p>
+          <div class="pipeline-feature-list">
+            <div class="pf-item"><span class="pf-check">✓</span> 10 Native Language Personas</div>
+            <div class="pf-item"><span class="pf-check">✓</span> Cloud Google Drive Dispatch</div>
+            <div class="pf-item"><span class="pf-check">✓</span> Zero Audio Drift Synchronization</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         SCENE 4: FULL-FEATURED THUMBNAIL STUDIO (REAL UI) (20.5s - 27.0s)
+         ===================================================================== -->
+    <div id="scene4" class="scene-wrap" style="opacity: 0; z-index: 40;">
+      <div class="scene4-layout">
+        <div class="scene-text-col" id="s4Text">
+          <div class="section-eyebrow">03 // THUMBNAIL STUDIO</div>
+          <h2 class="section-heading">Pixel-Perfect Thumbnail Engine</h2>
+          <p class="section-body">High-CTR YouTube thumbnail workstation with 71 app logos, 111 colored badges, 2.4x retina export, and 1-click brand preset templates.</p>
+          <div class="pipeline-feature-list">
+            <div class="pf-item"><span class="pf-check">✓</span> 71 App Logos + 111 Badges</div>
+            <div class="pf-item"><span class="pf-check">✓</span> 16:9 & 9:16 Shorts Switching</div>
+            <div class="pf-item"><span class="pf-check">✓</span> 2.4x Ultra-Retina ZIP Exporter</div>
+          </div>
+        </div>
+
+        <div class="ui-showcase-container" id="s4UI" style="width: 1080px; height: 600px; transform: rotateX(8deg) rotateY(-6deg);">
+          <img src="assets/ui/smoke-thumbnails.png" alt="Thumbnail Studio UI" class="ui-image">
+          <div class="ui-overlay-tag" style="top: 24px; right: 24px;">
+            <div class="tag-dot-gold"></div> 2.4X RETINA ENGINE
+          </div>
+          <div class="ui-overlay-tag" style="bottom: 24px; left: 24px;">
+            <div class="tag-dot-blue"></div> 71 APP LOGOS EMBEDDED
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         SCENE 5: VERDICT & CALL TO ACTION (27.0s - 32.0s)
+         ===================================================================== -->
+    <div id="scene5" class="scene-wrap" style="opacity: 0; z-index: 50;">
+      <div class="s5-container" id="s5Content">
+        <div class="h-badge" style="background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); color: var(--accent-blue);">
+          THE NEXT-GEN VIDEO FACTORY
+        </div>
+
+        <h1 class="s5-headline">
+          COMMAND YOUR<br><span>YOUTUBE EMPIRE.</span>
+        </h1>
+
+        <p class="s5-sub">
+          Stop editing manually. Deploy the world's most powerful autonomous tutorial workstation.
+        </p>
+
+        <div class="s5-cta-btn">
+          LAUNCH WORKSTATION NOW
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </div>
+
+        <div class="s5-url">tutorials.schreinercontentsystems.com</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Master Continuous Kinetic GSAP Timeline -->
+  <script>
+    const tl = gsap.timeline({ paused: true });
+
+    // Global subtle camera drift across 32s (eliminates dead static frames)
+    tl.to("#root", { scale: 1.04, ease: "none", duration: 32 }, 0);
+
+    // =========================================================================
+    // ACT 1: THE MANUAL BOTTLENECK (0.0s - 6.5s)
+    // =========================================================================
+    tl.fromTo("#s1Badge", 
+      { opacity: 0, y: -20 }, 
+      { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 
+      0.1
+    );
+
+    tl.fromTo("#s1Title", 
+      { opacity: 0, y: 30, letterSpacing: "-4px" }, 
+      { opacity: 1, y: 0, letterSpacing: "-2px", duration: 0.8, ease: "power4.out" }, 
+      0.3
+    );
+
+    tl.fromTo("#s1Grid .s1-card", 
+      { opacity: 0, y: 40, rotationX: 10 }, 
+      { opacity: 1, y: 0, rotationX: 0, duration: 0.8, stagger: 0.15, ease: "power4.out" }, 
+      0.8
+    );
+
+    // Continuous camera pan in scene 1
+    tl.to("#s1Grid", { y: -10, duration: 5.0, ease: "sine.inOut" }, 1.0);
+
+    // Transition out of Scene 1 (Smooth cross-dissolve & zoom)
+    tl.to("#scene1", { opacity: 0, scale: 0.94, filter: "blur(8px)", duration: 0.6, ease: "power2.inOut" }, 6.2);
+
+    // =========================================================================
+    // ACT 2: STUDIO PIPELINE (REAL UI) (6.5s - 13.5s)
+    // =========================================================================
+    tl.fromTo("#scene2", 
+      { opacity: 0, scale: 1.06 }, 
+      { opacity: 1, scale: 1.0, duration: 0.6, ease: "power3.out" }, 
+      6.4
+    );
+
+    tl.fromTo("#s2Text", 
+      { opacity: 0, x: -50 }, 
+      { opacity: 1, x: 0, duration: 0.8, ease: "power4.out" }, 
+      6.6
+    );
+
+    tl.fromTo("#s2UI", 
+      { opacity: 0, y: 50, rotationX: 16, rotationY: -10, scale: 0.9 }, 
+      { opacity: 1, y: 0, rotationX: 8, rotationY: -5, scale: 1.0, duration: 1.0, ease: "back.out(1.2)" }, 
+      6.8
+    );
+
+    // Continuous 3D floating movement during narration
+    tl.to("#s2UI", { rotationY: 2, rotationX: 4, scale: 1.03, duration: 5.5, ease: "sine.inOut" }, 7.5);
+
+    // Transition out of Scene 2
+    tl.to("#scene2", { opacity: 0, scale: 0.95, filter: "blur(8px)", duration: 0.6, ease: "power2.inOut" }, 13.2);
+
+    // =========================================================================
+    // ACT 3: LOCALIZATION & SCALE (REAL UI) (13.5s - 20.5s)
+    // =========================================================================
+    tl.fromTo("#scene3", 
+      { opacity: 0, scale: 1.06 }, 
+      { opacity: 1, scale: 1.0, duration: 0.6, ease: "power3.out" }, 
+      13.4
+    );
+
+    tl.fromTo("#s3UI", 
+      { opacity: 0, x: -60, rotationX: 12, rotationY: 8, scale: 0.92 }, 
+      { opacity: 1, x: 0, rotationX: 6, rotationY: 4, scale: 1.0, duration: 1.0, ease: "back.out(1.2)" }, 
+      13.6
+    );
+
+    tl.fromTo("#s3Text", 
+      { opacity: 0, x: 50 }, 
+      { opacity: 1, x: 0, duration: 0.8, ease: "power4.out" }, 
+      13.8
+    );
+
+    // Continuous smooth camera drift
+    tl.to("#s3UI", { rotationY: -3, rotationX: 2, scale: 1.03, duration: 5.5, ease: "sine.inOut" }, 14.5);
+
+    // Transition out of Scene 3
+    tl.to("#scene3", { opacity: 0, scale: 0.95, filter: "blur(8px)", duration: 0.6, ease: "power2.inOut" }, 20.2);
+
+    // =========================================================================
+    // ACT 4: THUMBNAIL STUDIO (REAL UI) (20.5s - 27.0s)
+    // =========================================================================
+    tl.fromTo("#scene4", 
+      { opacity: 0, scale: 1.06 }, 
+      { opacity: 1, scale: 1.0, duration: 0.6, ease: "power3.out" }, 
+      20.4
+    );
+
+    tl.fromTo("#s4Text", 
+      { opacity: 0, x: -50 }, 
+      { opacity: 1, x: 0, duration: 0.8, ease: "power4.out" }, 
+      20.6
+    );
+
+    tl.fromTo("#s4UI", 
+      { opacity: 0, y: 50, rotationX: 14, rotationY: -10, scale: 0.92 }, 
+      { opacity: 1, y: 0, rotationX: 8, rotationY: -6, scale: 1.0, duration: 1.0, ease: "back.out(1.2)" }, 
+      20.8
+    );
+
+    // Continuous smooth camera drift
+    tl.to("#s4UI", { rotationY: 2, rotationX: 4, scale: 1.04, duration: 5.5, ease: "sine.inOut" }, 21.5);
+
+    // Transition out of Scene 4
+    tl.to("#scene4", { opacity: 0, scale: 0.95, filter: "blur(8px)", duration: 0.6, ease: "power2.inOut" }, 26.6);
+
+    // =========================================================================
+    // ACT 5: THE CLIMAX & CTA (27.0s - 32.0s)
+    // =========================================================================
+    tl.fromTo("#scene5", 
+      { opacity: 0, scale: 1.15 }, 
+      { opacity: 1, scale: 1.0, duration: 0.6, ease: "power3.out" }, 
+      26.8
+    );
+
+    tl.fromTo("#s5Content > *", 
+      { opacity: 0, y: 30 }, 
+      { opacity: 1, y: 0, duration: 0.7, stagger: 0.12, ease: "power4.out" }, 
+      27.0
+    );
+
+    tl.fromTo(".s5-cta-btn", 
+      { scale: 0.96 }, 
+      { scale: 1.04, duration: 1.2, yoyo: true, repeat: 2, ease: "sine.inOut" }, 
+      28.0
+    );
+
+    // Smooth final fade to master black at 31.5s
+    tl.to("#root", { opacity: 0, duration: 0.5, ease: "power2.in" }, 31.5);
+
+    // Register with HyperFrames
+    window.__timelines = window.__timelines || {};
+    window.__timelines.promo = tl;
+  </script>
+</body>
+</html>

@@ -32,6 +32,7 @@ import { AIService, ScriptStyle } from '../services/aiService';
 import { TTSService, AVAILABLE_VOICES } from '../services/ttsService';
 import { KeywordService } from '../services/keywordService';
 import { StorageService, DEFAULT_CHANNELS } from '../services/storageService';
+import { GoogleDriveService } from '../services/googleDriveService';
 import { uploadManager } from '../services/uploadManager';
 import { screenRecorder } from '../services/screenRecorder';
 import { Channel, KeywordItem, VAUser } from '../types';
@@ -296,11 +297,23 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
         });
       }
 
+      // Auto-dispatch to Google Drive if configured
+      const driveConfig = StorageService.getGoogleDriveConfig();
+      if (driveConfig.autoUploadOnRender) {
+        GoogleDriveService.dispatchUpload({
+          jobId,
+          title: videoTitle || topic,
+          topic,
+          channelName: activeChannel.name,
+          fileSize: videoFile ? videoFile.size : 45 * 1024 * 1024
+        });
+      }
+
       StorageService.addFinishedVideo({
         id: jobId,
         title: videoTitle || topic,
         channel: activeChannel.name,
-        status: 'Queued for Stealth Upload',
+        status: driveConfig.autoUploadOnRender ? 'Uploaded to Drive' : 'Queued for Stealth Upload',
         thumbnailUrl: thumbnailUrl || '/background/bg-gradient-1.png',
         duration: '3:45',
         script,

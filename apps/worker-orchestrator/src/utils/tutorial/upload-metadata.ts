@@ -150,7 +150,17 @@ export async function generateTutorialUploadMetadata(
       prompt: buildUploadMetadataPrompt(title, scriptText, language),
       ...(model !== undefined ? { model } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      maxTokens: 2000,
+      // 2000 was catastrophically low for a REASONING model (the default here is
+      // the job's own script model, e.g. deepseek reasoning). max_tokens caps
+      // completion_tokens INCLUDING reasoning tokens, and reasoning alone
+      // routinely spends the entire 2000 — measured live: completion_tokens=2000,
+      // reasoning_tokens=2000, chars_returned=0. So EVERY tutorial's description
+      // and tags came back null (finish_reason=length), and the guard in
+      // llm-registry correctly rejected the empty fragment. The actual metadata
+      // JSON is only a few hundred tokens; give the reasoning chain real headroom
+      // the same way the script call does (32768) without going that high for
+      // what is a small output.
+      maxTokens: 8192,
     });
     const result = parseUploadMetadataResponse(raw);
     if (result.description === null && result.tags === null) {

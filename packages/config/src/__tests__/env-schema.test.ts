@@ -208,16 +208,16 @@ describe("EnvSchema.safeParse", () => {
     }
   });
 
-  it("fails when DEFAULT_VOICE_DE is missing", () => {
+  it("defaults DEFAULT_VOICE_DE to empty string when absent", () => {
     const env = makeValidEnv();
     delete env.DEFAULT_VOICE_DE;
     const result = EnvSchema.safeParse(env);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const paths = result.error.errors.map((e) => e.path.join("."));
-      expect(paths).toContain("DEFAULT_VOICE_DE");
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.DEFAULT_VOICE_DE).toBe("");
     }
   });
+
 
   it("treats optional GOOGLE_IMAGEN_API_KEY as undefined when absent", () => {
     const env = makeValidEnv();

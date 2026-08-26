@@ -22,8 +22,8 @@ const comicNeue = Comic_Neue({
 });
 
 export const metadata: Metadata = {
-  title: "Content Forge Hub",
-  description: "YouTube Automation Engine - Control Plane",
+  title: "Tutorial Studio",
+  description: "Tutorial production console",
 };
 
 import { ThemeProvider } from "@/components/providers/theme-provider";

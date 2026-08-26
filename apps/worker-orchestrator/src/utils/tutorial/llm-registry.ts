@@ -88,6 +88,36 @@ function logKeySource(provider: string, source: string): void {
   );
 }
 
+/**
+ * Round-robin one key out of a comma-separated env value (e.g.
+ * `GROQ_API_KEYS="k1, k2, k3"`). A module-level counter per provider "siphons"
+ * calls evenly across several free-tier keys instead of hammering the first one
+ * until it hits its cap. Whitespace is trimmed and empty entries skipped; if no
+ * usable key is configured we throw a clear "no API key" error the same way
+ * deepseekChat does (never a silent no-op). This runs in normal worker runtime
+ * (not a restricted workflow script), so a plain module-level counter is fine.
+ */
+const keyRotationCounters = new Map<string, number>();
+function rotateKey(
+  envValue: string | undefined,
+  provider: string,
+  envVarName: string,
+): string {
+  const keys = (envValue ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+  if (keys.length === 0) {
+    throw new Error(
+      `${provider}: no API key — set ${envVarName} on the worker ` +
+        `(comma-separated to rotate across multiple free keys)`,
+    );
+  }
+  const n = keyRotationCounters.get(provider) ?? 0;
+  keyRotationCounters.set(provider, n + 1);
+  return keys[n % keys.length]!;
+}
+
 const CLAUDE_POOL_URL =
   process.env["CLAUDE_POOL_URL"] ?? "http://127.0.0.1:8092";
 const CLAUDE_POOL_API_KEY = process.env["CLAUDE_POOL_API_KEY"] ?? "";
@@ -391,6 +421,151 @@ async function deepseekChat(p: GenerateScriptParams): Promise<string> {
   return text;
 }
 
+/**
+ * Google Gemma via the public `generativelanguage` REST API. Same
+ * `generateContent` shape as googleGemini (key as a query param, NOT a bearer
+ * header), but points at the open Gemma models and rotates across the free keys
+ * in GEMMA_API_KEY. One-shot, stateless — no chat session, no context cache.
+ */
+async function gemmaGoogle(p: GenerateScriptParams): Promise<string> {
+  const key = rotateKey(process.env["GEMMA_API_KEY"], "gemma", "GEMMA_API_KEY");
+  logKeySource("gemma", "env:GEMMA_API_KEY");
+  const model = p.model ?? process.env["GEMMA_MODEL"] ?? "gemma-4-31b-it";
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: p.prompt }] }],
+        ...(p.maxTokens
+          ? { generationConfig: { maxOutputTokens: p.maxTokens } }
+          : {}),
+      }),
+      signal: AbortSignal.timeout(p.timeoutMs ?? 120_000),
+    },
+  );
+  // Gemma surfaces failures as {error:{message}} (quota/"spending cap"
+  // exhaustion in particular) — read the body once and let that message through
+  // instead of a bare status code, so a maxed-out free key is obvious.
+  const json = (await res.json().catch(() => ({}))) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    usageMetadata?: { candidatesTokenCount?: number };
+    error?: { message?: string };
+  };
+  if (!res.ok || json.error) {
+    throw new Error(
+      `gemma (Google) error ${res.status}: ${json.error?.message ?? "unknown error"}`,
+    );
+  }
+  const text =
+    json.candidates?.[0]?.content?.parts?.map((x) => x.text ?? "").join("") ??
+    "";
+  // Normalise Gemini/Gemma's "MAX_TOKENS" stop to the "length" the shared guard
+  // understands, so a script cut at the ceiling is rejected not recorded.
+  assertNotTruncated(
+    "gemma",
+    json.candidates?.[0]?.finishReason === "MAX_TOKENS" ? "length" : undefined,
+    { completion_tokens: json.usageMetadata?.candidatesTokenCount },
+    p.maxTokens,
+    text,
+  );
+  return text;
+}
+
+/**
+ * Shared OpenAI-compatible /chat/completions caller for providers whose key is
+ * rotated out of a worker env var (not a per-user key). `endpoint` is the full
+ * completions URL; `label` names the provider in errors and the truncation
+ * guard. Honours p.model / p.maxTokens / p.timeoutMs like the other paths.
+ */
+async function openAICompatibleKeyed(
+  p: GenerateScriptParams,
+  endpoint: string,
+  defaultModel: string,
+  key: string,
+  label: string,
+): Promise<string> {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: p.model ?? defaultModel,
+      messages: [{ role: "user", content: p.prompt }],
+      ...(p.maxTokens ? { max_tokens: p.maxTokens } : {}),
+    }),
+    signal: AbortSignal.timeout(p.timeoutMs ?? 120_000),
+  });
+  if (!res.ok)
+    throw new Error(`${label} error ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as {
+    choices: Array<ChatChoice>;
+    usage?: ChatUsage;
+  };
+  const text = json.choices[0]?.message?.content ?? "";
+  assertNotTruncated(
+    label,
+    json.choices[0]?.finish_reason,
+    json.usage,
+    p.maxTokens,
+    text,
+  );
+  return text;
+}
+
+/** OpenRouter (OpenAI-compatible), rotating keys from OPENROUTER_API_KEYS. */
+async function openRouterChat(p: GenerateScriptParams): Promise<string> {
+  const key = rotateKey(
+    process.env["OPENROUTER_API_KEYS"],
+    "openrouter",
+    "OPENROUTER_API_KEYS",
+  );
+  logKeySource("openrouter", "env:OPENROUTER_API_KEYS");
+  return openAICompatibleKeyed(
+    p,
+    "https://openrouter.ai/api/v1/chat/completions",
+    process.env["OPENROUTER_MODEL"] ?? "",
+    key,
+    "openrouter",
+  );
+}
+
+/** NVIDIA NIM (OpenAI-compatible), rotating keys from NVIDIA_NIM_API_KEYS. */
+async function nvidiaNimChat(p: GenerateScriptParams): Promise<string> {
+  const key = rotateKey(
+    process.env["NVIDIA_NIM_API_KEYS"],
+    "nvidia_nim",
+    "NVIDIA_NIM_API_KEYS",
+  );
+  logKeySource("nvidia_nim", "env:NVIDIA_NIM_API_KEYS");
+  return openAICompatibleKeyed(
+    p,
+    "https://integrate.api.nvidia.com/v1/chat/completions",
+    process.env["NVIDIA_NIM_MODEL"] ?? "",
+    key,
+    "nvidia_nim",
+  );
+}
+
+/** Groq (OpenAI-compatible), rotating keys from GROQ_API_KEYS. */
+async function groqChat(p: GenerateScriptParams): Promise<string> {
+  const key = rotateKey(process.env["GROQ_API_KEYS"], "groq", "GROQ_API_KEYS");
+  logKeySource("groq", "env:GROQ_API_KEYS");
+  return openAICompatibleKeyed(
+    p,
+    "https://api.groq.com/openai/v1/chat/completions",
+    process.env["GROQ_MODEL"] ?? "",
+    key,
+    "groq",
+  );
+}
+
 export async function generateScript(p: GenerateScriptParams): Promise<string> {
   switch (p.provider) {
     case "deepseek":
@@ -421,6 +596,16 @@ export async function generateScript(p: GenerateScriptParams): Promise<string> {
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         "qwen-plus",
       );
+    case "gemma":
+    case "gemma_google":
+      return gemmaGoogle(p);
+    case "openrouter":
+      return openRouterChat(p);
+    case "nvidia_nim":
+    case "nim":
+      return nvidiaNimChat(p);
+    case "groq":
+      return groqChat(p);
     case "ollama":
       return callOllama(p);
     case "qwen_local":

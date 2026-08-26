@@ -12,7 +12,10 @@ import {
 export const dynamic = "force-dynamic";
 
 /** The launch set of translation target languages (mirrors the translate payload). */
-const TARGET_LANGUAGES = ["de", "fr", "es", "ja", "ko"] as const;
+const TARGET_LANGUAGES = [
+  "de", "fr", "it", "es", "nl", "sv", "no", "da",
+  "pt", "pl", "cs", "ru", "ar", "zh", "ja", "ko", "id",
+] as const;
 type TargetLanguage = (typeof TARGET_LANGUAGES)[number];
 
 const EnqueueSchema = z.object({

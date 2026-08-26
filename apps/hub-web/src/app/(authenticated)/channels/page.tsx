@@ -142,10 +142,17 @@ export default async function V2ChannelsPage() {
                 style={{
                   fontSize: 11,
                   color: "rgba(205,195,215,0.5)",
-                  fontFamily: "monospace",
+                  fontFamily: channel.youtube_channel_id.startsWith("pending-")
+                    ? "inherit"
+                    : "monospace",
+                  fontStyle: channel.youtube_channel_id.startsWith("pending-")
+                    ? "italic"
+                    : "normal",
                 }}
               >
-                {channel.youtube_channel_id}
+                {channel.youtube_channel_id.startsWith("pending-")
+                  ? "Not linked"
+                  : channel.youtube_channel_id}
               </span>
 
               {/* Job count */}

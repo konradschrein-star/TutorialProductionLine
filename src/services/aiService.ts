@@ -8,28 +8,34 @@ interface LLMRequestOptions {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  timeoutMs?: number;
 }
 
 export class AIService {
   /**
    * Dispatches LLM calls with primary Groq LLaMA 3.3 and DeepSeek Flash (deepseek-chat) fallback.
    * Uses deepseek-chat (DeepSeek V3 Flash model) for fast sub-second inference.
-   * Returns null if neither provider succeeds, allowing offline deterministic fallback.
+   * Employs AbortController timeout guards and defensive error catching.
    */
   private static async callLLM({
     messages,
     temperature = 0.7,
     maxTokens = 1200,
-    jsonMode = false
+    jsonMode = false,
+    timeoutMs = 15000
   }: LLMRequestOptions): Promise<string | null> {
     const groqKey = StorageService.getApiKey('groq');
     const deepseekKey = StorageService.getApiKey('deepseek');
 
     // 1. Try Groq (LLaMA 3.3 70B)
     if (groqKey) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
+          signal: controller.signal,
           headers: {
             'Authorization': `Bearer ${groqKey}`,
             'Content-Type': 'application/json',
@@ -43,6 +49,8 @@ export class AIService {
           }),
         });
 
+        clearTimeout(timeoutId);
+
         if (response.ok) {
           const data = await response.json();
           const content = data.choices?.[0]?.message?.content?.trim();
@@ -51,27 +59,34 @@ export class AIService {
           console.warn(`Groq API returned HTTP ${response.status}, triggering DeepSeek Flash fallback.`);
         }
       } catch (err) {
-        console.warn('Groq API call failed:', err);
+        clearTimeout(timeoutId);
+        console.warn('Groq API call failed or timed out:', err);
       }
     }
 
     // 2. Fallback to DeepSeek Flash (deepseek-chat: DeepSeek-V3 non-reasoning high-throughput model)
     if (deepseekKey) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
         const response = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
+          signal: controller.signal,
           headers: {
             'Authorization': `Bearer ${deepseekKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'deepseek-chat', // DeepSeek Flash (Fast inference model, NOT deepseek-reasoner)
+            model: 'deepseek-chat',
             messages,
             temperature,
             max_tokens: maxTokens,
             ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
           }),
         });
+
+        clearTimeout(timeoutId);
 
         if (response.ok) {
           const data = await response.json();
@@ -81,7 +96,8 @@ export class AIService {
           console.warn(`DeepSeek Flash API returned HTTP ${response.status}`);
         }
       } catch (err) {
-        console.warn('DeepSeek Flash API call failed:', err);
+        clearTimeout(timeoutId);
+        console.warn('DeepSeek Flash API call failed or timed out:', err);
       }
     }
 
@@ -96,6 +112,8 @@ export class AIService {
     extraInstructions: string = '',
     style: ScriptStyle = 'standard'
   ): Promise<string> {
+    const safeTopic = (topic || 'Software Tutorial').trim();
+
     let styleInstructions = '';
     if (style === 'short_60s') {
       styleInstructions = `FORMAT: Rapid 60-Second Short/Reel. Under 130 words total. Ultra-fast hook, 3 rapid bullet-point actions, 5-second outro.`;
@@ -108,7 +126,7 @@ export class AIService {
     }
 
     const systemPrompt = `You are a world-class tutorial scriptwriter for a high-retention YouTube channel.
-Write a spoken narration script for a video titled "${topic}".
+Write a spoken narration script for a video titled "${safeTopic}".
 
 STRICT FORMATTING & PACING RULES:
 1. Spoken Audio Pacing: Use second person conversational tone ("Click on the top right menu...", "Next, select...").
@@ -119,25 +137,29 @@ STRICT FORMATTING & PACING RULES:
 
 ${extraInstructions ? `EXTRA CUSTOM INSTRUCTIONS: ${extraInstructions}` : ''}`;
 
-    const llmResult = await this.callLLM({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Generate the spoken script for "${topic}" now.` }
-      ],
-      temperature: 0.7,
-      maxTokens: 1200
-    });
+    try {
+      const llmResult = await this.callLLM({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Generate the spoken script for "${safeTopic}" now.` }
+        ],
+        temperature: 0.7,
+        maxTokens: 1200
+      });
 
-    if (llmResult) {
-      return llmResult;
+      if (llmResult && llmResult.trim().length > 20) {
+        return llmResult.trim();
+      }
+    } catch (e) {
+      console.warn('Script generation exception:', e);
     }
 
     // Deterministic Offline Fallback
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 400));
     if (style === 'short_60s') {
-      return `Here is how to ${topic} in under 60 seconds. Make sure to drop a like! First, open settings... click integrations, and hit connect. Next, pick your default preset... and click save. That is literally all it takes. Subscribe for more quick tricks!`;
+      return `Here is how to ${safeTopic} in under 60 seconds. Make sure to drop a like! First, open settings... click integrations, and hit connect. Next, pick your default preset... and click save. That is literally all it takes. Subscribe for more quick tricks!`;
     }
-    return `In this video, I will show you how to ${topic}. If you find this helpful, make sure to like the video and subscribe for more quick guides.
+    return `In this video, I will show you how to ${safeTopic}. If you find this helpful, make sure to like the video and subscribe for more quick guides.
 
 First, open up your dashboard and navigate to the top settings menu in the upper right corner... 
 Once you're in settings, scroll down to the integrations tab and click on connect...
@@ -153,46 +175,54 @@ If this helped you out, drop a like and subscribe to the channel. Let me know in
    * Refines or transforms an existing script (Add pauses, Punch Up Hook, Shorten Fluff)
    */
   static async refineScript(script: string, action: 'add_pauses' | 'punch_hook' | 'shorten_fluff'): Promise<string> {
+    const safeScript = (script || '').trim();
+    if (!safeScript) return '';
+
     const actionPrompts = {
       add_pauses: 'Insert natural spoken pause markers ("...") after every key click or instructional action so the pacing is natural for voiceover audio.',
       punch_hook: 'Rewrite ONLY the opening two sentences to make the hook dramatically punchier, high-stakes, and immediate.',
       shorten_fluff: 'Remove any remaining filler phrases, duplicate explanations, or wordy descriptions. Make the script razor-sharp and concise.'
     };
 
-    const llmResult = await this.callLLM({
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an elite tutorial editor. Output PLAIN SPOKEN SCRIPT ONLY. Do not add quotes or markdown.'
-        },
-        {
-          role: 'user',
-          content: `Original Script:\n${script}\n\nTask: ${actionPrompts[action]}`
-        }
-      ],
-      temperature: 0.5,
-      maxTokens: 1200
-    });
+    try {
+      const llmResult = await this.callLLM({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an elite tutorial editor. Output PLAIN SPOKEN SCRIPT ONLY. Do not add quotes or markdown.'
+          },
+          {
+            role: 'user',
+            content: `Original Script:\n${safeScript}\n\nTask: ${actionPrompts[action]}`
+          }
+        ],
+        temperature: 0.5,
+        maxTokens: 1200
+      });
 
-    if (llmResult) {
-      return llmResult;
+      if (llmResult && llmResult.trim().length > 10) {
+        return llmResult.trim();
+      }
+    } catch (e) {
+      console.warn('Script refinement exception:', e);
     }
 
     // Deterministic Offline Fallback
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 300));
     if (action === 'add_pauses') {
-      return script.replace(/(\. )/g, '... ');
+      return safeScript.replace(/(\. )/g, '... ');
     }
-    return script;
+    return safeScript;
   }
 
   /**
    * Generates YouTube metadata (SEO Title, Description, Tags)
    */
   static generateMetadata(topic: string, script: string, channelName: string) {
-    const cleanTopic = topic.replace(/^how to /i, '').trim();
+    const cleanTopic = (topic || 'Software Tutorial').replace(/^how to /i, '').trim();
     const title = `How to ${cleanTopic.charAt(0).toUpperCase() + cleanTopic.slice(1)} (Step-by-Step ${new Date().getFullYear()})`;
     
+    const safeScript = script || '';
     const description = `Learn how to ${cleanTopic.toLowerCase()} in this quick step-by-step tutorial for ${new Date().getFullYear()}.
 
 📌 What you will learn in this video:
@@ -200,9 +230,9 @@ If this helped you out, drop a like and subscribe to the channel. Let me know in
 - Common mistakes to avoid
 - Best practices and expert tips
 
-${script.slice(0, 240)}...
+${safeScript.slice(0, 240)}...
 
-🔔 Subscribe to ${channelName} for new daily software tutorials, tips, and automated workflow guides!
+🔔 Subscribe to ${channelName || 'this channel'} for new daily software tutorials, tips, and automated workflow guides!
 👍 Like this video if it helped you solve your problem!`;
 
     const baseWords = cleanTopic.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter(Boolean);
@@ -228,7 +258,9 @@ ${script.slice(0, 240)}...
    * Generates a structured thumbnail brief and 10-language translations
    */
   static async generateThumbnailBrief(topic: string): Promise<ThumbnailBrief> {
-    const prompt = `Given video topic: "${topic}", produce a JSON thumbnail brief.
+    const safeTopic = (topic || 'Tutorial').trim();
+
+    const prompt = `Given video topic: "${safeTopic}", produce a JSON thumbnail brief.
 Extract:
 1. software_name (the main software or 'generic')
 2. thumbnail_text_line1 (1-2 words ALL CAPS hook)
@@ -258,23 +290,30 @@ Output ONLY a JSON object formatted as:
   }
 }`;
 
-    const llmResult = await this.callLLM({
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.4,
-      jsonMode: true
-    });
+    try {
+      const llmResult = await this.callLLM({
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.4,
+        jsonMode: true
+      });
 
-    if (llmResult) {
-      try {
-        return JSON.parse(llmResult);
-      } catch (e) {
-        console.warn('Failed to parse thumbnail brief JSON:', e);
+      if (llmResult) {
+        // Robust JSON extraction using regex in case LLM outputs markdown block
+        const jsonMatch = llmResult.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed && parsed.thumbnail_text_line1) {
+            return parsed;
+          }
+        }
       }
+    } catch (e) {
+      console.warn('Failed to parse thumbnail brief JSON:', e);
     }
 
     // Deterministic Offline Fallback
-    await new Promise(r => setTimeout(r, 400));
-    const cleanSoftware = topic.split(' ')[0] || 'App';
+    await new Promise(r => setTimeout(r, 300));
+    const cleanSoftware = safeTopic.split(' ')[0] || 'App';
     return {
       software_name: cleanSoftware,
       thumbnail_text_line1: 'LEARN FAST',

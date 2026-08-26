@@ -40,13 +40,19 @@ export async function GET(
   return NextResponse.json({ job });
 }
 
-const PatchSchema = z.object({
-  playback_speed: z.number().min(0.1).max(5),
-});
+const PatchSchema = z
+  .object({
+    playback_speed: z.number().min(0.1).max(5).optional(),
+    // The VA-edited narration. Regenerating the audio afterwards re-voices it.
+    script_text: z.string().trim().min(1).optional(),
+  })
+  .refine((v) => v.playback_speed !== undefined || v.script_text !== undefined, {
+    message: "Nothing to update",
+  });
 
 /**
  * PATCH /api/production/jobs/[id]
- * Update mutable fields — currently only playback_speed.
+ * Update mutable fields — playback_speed and/or the edited script_text.
  */
 export async function PATCH(
   req: NextRequest,
@@ -78,9 +84,15 @@ export async function PATCH(
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
 
-  const updated = await updateTutorialJob(db, id, {
-    playback_speed: String(parsed.data.playback_speed),
-  });
+  const patch: { playback_speed?: string; script_text?: string } = {};
+  if (parsed.data.playback_speed !== undefined) {
+    patch.playback_speed = String(parsed.data.playback_speed);
+  }
+  if (parsed.data.script_text !== undefined) {
+    patch.script_text = parsed.data.script_text;
+  }
+
+  const updated = await updateTutorialJob(db, id, patch);
 
   return NextResponse.json({ job: updated });
 }

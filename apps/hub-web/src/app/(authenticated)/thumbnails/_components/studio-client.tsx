@@ -7,6 +7,7 @@ import { ArchetypeEditor } from "./archetype-editor";
 import { GeneratePanel } from "./generate-panel";
 import { LibraryPanel } from "./library-panel";
 import { BrandingForm, type ChannelBrandingData } from "./branding-form";
+import { Composer } from "./composer";
 import type { ThumbnailArchetype } from "@repo/db";
 import type { ActiveFormat } from "@/lib/formats";
 import type { ChannelOption } from "@/components/thumbnails/types";
@@ -21,11 +22,16 @@ import type { ChannelOption } from "@/components/thumbnails/types";
  */
 
 const TABS = [
+  { id: "composer", label: "Composer", icon: "dashboard_customize" },
   { id: "archetypes", label: "Archetypes", icon: "grid_view" },
   { id: "generate", label: "Generate", icon: "auto_awesome" },
   { id: "library", label: "Library", icon: "photo_library" },
   { id: "branding", label: "Channel Branding", icon: "palette" },
 ] as const;
+
+// Tabs that depend on the AI/media-gateway infra (image-provider keys, worker).
+// The Composer is the primary offline tool; these are the optional AI flow.
+const AI_TABS: readonly TabId[] = ["archetypes", "generate", "library", "branding"];
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -46,7 +52,7 @@ export function ThumbnailStudioClient({
   channelData,
 }: Props) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabId>("archetypes");
+  const [tab, setTab] = useState<TabId>("composer");
   const [editing, setEditing] = useState<ThumbnailArchetype | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [generateWith, setGenerateWith] = useState<string | null>(null);
@@ -177,6 +183,35 @@ export function ThumbnailStudioClient({
           );
         })}
       </div>
+
+      {tab === "composer" && <Composer />}
+
+      {/* AI generation depends on media-gateway infra that is not always
+          present. The Composer above is the primary, fully-offline tool; the
+          tabs below are the optional AI flow. */}
+      {AI_TABS.includes(tab) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "9px 12px",
+            marginBottom: 14,
+            borderRadius: 8,
+            background: "rgba(255,190,80,0.1)",
+            border: "1px solid rgba(255,190,80,0.28)",
+            color: "#ffc978",
+            fontSize: 11.5,
+            lineHeight: 1.4,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            info
+          </span>
+          AI generation is optional and requires image-provider keys. For a
+          fully-offline workflow use the <strong>Composer</strong> tab.
+        </div>
+      )}
 
       {tab === "archetypes" && (
         <ArchetypeGallery

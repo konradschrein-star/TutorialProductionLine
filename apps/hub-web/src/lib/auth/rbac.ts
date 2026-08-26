@@ -48,6 +48,13 @@ export type Permission =
   | "view:production"
   | "create:tutorial-job"
   | "manage:tutorial-settings"
+  // Narrower than manage:tutorial-settings: edit the WORKFLOW settings a
+  // producer VA tunes for their own output — voice defaults, playback speed,
+  // record hotkey, prompt library. Granted to PRODUCTION_VA. Deliberately does
+  // NOT carry the broad powers manage:tutorial-settings also gates (seeing
+  // every VA's review queue, editing anyone's job, credentials, storage,
+  // alerts) — those stay admin-only.
+  | "edit:tutorial-workflow"
   // Thumbnails-only grant: view a finished job's thumbnails, regenerate them,
   // and choose which one ships. Deliberately NARROWER than edit:job (no state
   // changes, no script/asset access) and narrower than view:settings (no
@@ -100,6 +107,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "view:production",
     "create:tutorial-job",
     "manage:tutorial-settings",
+    "edit:tutorial-workflow",
     "manage:thumbnails",
     "manage:credentials",
   ],
@@ -107,9 +115,19 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   // budget to create tutorial jobs, and can fix/select thumbnails on finished
   // videos. No settings/credentials/team access.
   PRODUCTION_VA: [
+    // The producing VA gets the full sidebar EXCEPT Channels and the sensitive
+    // System items (Settings→credentials, Accounts→user management), which stay
+    // admin-only. Dashboard + System Health are read-only overviews; Thumbnails
+    // (Thumbnail Studio) opens via manage:thumbnails, not view:settings, so the
+    // VA never reaches the credentials area.
+    "view:dashboard",
     "view:production",
     "create:tutorial-job",
     "manage:thumbnails",
+    "view:system-health",
+    // Tune their own production defaults (voice, speed, hotkey, prompts). Not
+    // credentials/storage/alerts — those need view:settings, which they lack.
+    "edit:tutorial-workflow",
   ],
   // Uploader. Fixes a bad thumbnail before publishing and selects which one
   // ships — and nothing else. The Tutorial Studio route opens for the
@@ -174,8 +192,14 @@ export function canAccessRoute(
   }
 
   // Thumbnail Studio: config surface for archetypes + channel persona/branding.
+  // Opened by admins (view:settings) AND producing VAs (manage:thumbnails) —
+  // the VA gets the full thumbnail surface WITHOUT the credentials area, which
+  // lives behind /settings on its own view:settings gate below.
   if (effectivePath.startsWith("/thumbnails")) {
-    return hasPermission(session, "view:settings");
+    return (
+      hasPermission(session, "view:settings") ||
+      hasPermission(session, "manage:thumbnails")
+    );
   }
 
   if (effectivePath.startsWith("/channels")) {
