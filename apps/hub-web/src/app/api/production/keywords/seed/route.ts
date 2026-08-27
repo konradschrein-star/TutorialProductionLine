@@ -15,23 +15,21 @@ let seededChecked = false;
 export async function ensure37KeywordsSeeded(force = false) {
   if (seededChecked && !force) return;
   try {
-    const allowed = Array.from(VERIFIED_37_SOFTWARES);
-    const check = (await db.execute<{ bad_count: number; total_count: number }>(sql`
-      SELECT 
-        COUNT(*) FILTER (WHERE software IS NULL OR software NOT IN (${sql.join(
-          allowed.map((a) => sql`${a}`),
-          sql`, `,
-        )}))::int AS bad_count,
-        COUNT(*)::int AS total_count
-      FROM seed_keywords
-    `)) as unknown as Array<{ bad_count: number; total_count: number }>;
+    const checkResult = await db.execute<{ total_count: number }>(sql`
+      SELECT COUNT(*)::int AS total_count FROM seed_keywords
+    `);
 
-    const badCount = Number(check[0]?.bad_count ?? 0);
-    const totalCount = Number(check[0]?.total_count ?? 0);
+    const rows = Array.isArray(checkResult)
+      ? checkResult
+      : Array.isArray((checkResult as any)?.rows)
+        ? ((checkResult as any).rows as Array<{ total_count: number }>)
+        : [];
 
-    if (badCount > 0 || totalCount === 0 || force) {
+    const totalCount = Number(rows[0]?.total_count ?? 0);
+
+    if (totalCount === 0 || force) {
       console.log(
-        `[SeedKeywords] Found ${badCount} outdated/non-37 software rows (total ${totalCount}). Re-seeding strictly with 37 business software topics...`,
+        `[SeedKeywords] Seeding ${seedData.length} business software keywords...`,
       );
       await db.execute(sql`TRUNCATE TABLE seed_keywords;`);
 
@@ -39,8 +37,8 @@ export async function ensure37KeywordsSeeded(force = false) {
       for (let i = 0; i < seedData.length; i += chunkSize) {
         const chunk = seedData.slice(i, i + chunkSize);
         const values = chunk.map(
-          (k) =>
-            sql`(${k.id}, ${k.title}, ${k.software}, ${k.content_type}, ${k.length_class}, ${k.duration_sec}, 'NEW', now())`,
+          (k: any) =>
+            sql`(${k.id}, ${k.title}, ${k.software}, ${k.content_type || "Tutorial"}, ${k.length_class || "<3min"}, ${k.duration_sec || 140}, 'NEW', now())`,
         );
         await db.execute(sql`
           INSERT INTO seed_keywords (id, title, software, content_type, length_class, duration_sec, status, created_at)
@@ -57,6 +55,7 @@ export async function ensure37KeywordsSeeded(force = false) {
     console.error("[SeedKeywords] Auto-reseed check failed:", err);
   }
 }
+
 
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await getSession();

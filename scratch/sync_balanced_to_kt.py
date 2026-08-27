@@ -9,6 +9,7 @@ cur = con.cursor()
 
 # Clean old keywords from KT
 cur.execute("DELETE FROM kt_keywords")
+cur.execute("DELETE FROM kt_software_state")
 con.commit()
 
 inserted = 0
@@ -18,11 +19,12 @@ for k in keywords:
     dur = k['duration_sec'] or 130
     cur.execute("""
         INSERT INTO kt_keywords (
-            keyword, canonical_key, topic, content_type, rpm_tier, rpm,
+            id, keyword, canonical_key, topic, content_type, rpm_tier, rpm,
             length_class, duration_sec, complexity, views, outlier, est_value,
-            win_score, saturation, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            win_score, saturation, status, screen_verdict, screened_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ALLOW', datetime('now'), datetime('now'))
     """, (
+        k['id'],
         title,
         title.lower().replace(' ', '-'),
         soft,
@@ -45,8 +47,8 @@ con.commit()
 total = cur.execute("SELECT COUNT(*) FROM kt_keywords").fetchone()[0]
 topics_cnt = cur.execute("SELECT topic, COUNT(*) FROM kt_keywords GROUP BY topic ORDER BY topic ASC").fetchall()
 
-print(f"Cleanly synced {total} tutorials into Keyword Tool data_lake.db evenly across {len(topics_cnt)} topics:")
-for t, c in topics_cnt[:10]:
+print(f"Cleanly synced {total} tutorials into Keyword Tool data_lake.db evenly across {len(topics_cnt)} topics with screen_verdict='ALLOW':")
+for t, c in topics_cnt:
     print(f"  {t}: {c}")
 
 con.close()
