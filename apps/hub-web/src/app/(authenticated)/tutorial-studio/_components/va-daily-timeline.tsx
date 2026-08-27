@@ -34,7 +34,8 @@ const EVENT: Record<EventType, { label: string; color: string; bg: string }> = {
 };
 
 const WINDOWS = [7, 14, 28] as const;
-const DAILY_TARGET = 40; // 40 videos / day target per VA
+const DAILY_VIDEO_TARGET = 40; // 40 videos / day target per VA
+const DAILY_SHIFT_TARGET_HOURS = 8.0; // 8.0 hours / day standard shift
 
 interface Ev {
   type: EventType;
@@ -44,6 +45,12 @@ interface Ev {
   jobId: string;
 }
 
+interface ShiftGap {
+  startHour: number;
+  endHour: number;
+  durationHours: number;
+}
+
 interface DaySummary {
   dateKey: string;
   dateLabel: string;
@@ -51,8 +58,12 @@ interface DaySummary {
   jobsCount: number;
   startHour: number | null;
   endHour: number | null;
-  shiftHours: number;
-  hourlyBuckets: number[]; // 24 numbers
+  grossShiftHours: number;
+  netActiveHours: number;
+  pauseHours: number;
+  gaps: ShiftGap[];
+  hourlyBuckets: number[]; // 24 numbers (velocity per hour)
+  hourlyLineSvg: string;
   avgMinPerVideo: number;
 }
 
@@ -65,7 +76,8 @@ interface VaSummary {
   dailyAvg: number;
   bestDayCount: number;
   todayCount: number;
-  todayShiftHours: number;
+  todayGrossHours: number;
+  todayActiveHours: number;
   todayStart: string | null;
   todayEnd: string | null;
   todayAvgSpeedMin: number;
@@ -87,7 +99,7 @@ export function VaDailyTimeline() {
   const [viewMode, setViewMode] = useState<"visual" | "table">("visual");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hoveredEv, setHoveredEv] = useState<{ ev: Ev; x: number; y: number } | null>(null);
+  const [hoveredInfo, setHoveredInfo] = useState<{ text: string; sub?: string; x: number; y: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -120,7 +132,7 @@ export function VaDailyTimeline() {
   const vaSummaries = useMemo<VaSummary[]>(() => {
     const map = new Map<string, { role: string; email: string; jobs: TimelineJob[] }>();
 
-    // Seed default expected VAs
+    // Seed default expected VAs so both always render
     map.set("VA 1", { role: "PRODUCTION_VA", email: "va1@tutorialstudio.app", jobs: [] });
     map.set("VA 2", { role: "PRODUCTION_VA", email: "va2@tutorialstudio.app", jobs: [] });
 
@@ -182,21 +194,46 @@ export function VaDailyTimeline() {
       const sortedKeys = Array.from(dayMap.keys()).sort((a, b) => b.localeCompare(a));
       for (const k of sortedKeys) {
         const evs = dayMap.get(k) ?? [];
-        const hours = evs.map((e) => e.hour);
-        const start = hours.length ? Math.min(...hours) : null;
-        const end = hours.length ? Math.max(...hours) : null;
-        const shift = start != null && end != null ? Math.max(0.5, end - start) : 0;
+        const distinctHours = [...evs.map((e) => e.hour)].sort((a, b) => a - b);
+        const start = distinctHours.length ? distinctHours[0] : null;
+        const end = distinctHours.length ? distinctHours[distinctHours.length - 1] : null;
+        const grossShift = start != null && end != null ? Math.max(0.2, end - start) : 0;
         
-        // Count completed or created
-        const vidsInDay = evs.filter(e => e.type === "completed" || e.type === "created").length / (evs.some(e => e.type === "completed") ? 1 : 1);
+        // Compute idle pauses / drop-offs (> 45 min gap with 0 events)
+        const gaps: ShiftGap[] = [];
+        let pauseTime = 0;
+        for (let i = 1; i < distinctHours.length; i++) {
+          const diff = distinctHours[i] - distinctHours[i - 1];
+          if (diff >= 0.75) { // 45+ minute pause
+            gaps.push({
+              startHour: distinctHours[i - 1],
+              endHour: distinctHours[i],
+              durationHours: diff,
+            });
+            pauseTime += diff;
+          }
+        }
+
+        const netActive = Math.max(0.1, grossShift - pauseTime);
         const distinctJobs = new Set(evs.map(e => e.jobId)).size;
         if (distinctJobs > bestDayCount) bestDayCount = distinctJobs;
 
+        // Hourly velocity histogram (0..23)
         const buckets = new Array(24).fill(0);
         for (const e of evs) {
           const h = Math.min(23, Math.max(0, Math.floor(e.hour)));
           buckets[h]++;
         }
+
+        // Build SVG sparkline polyline string for production rate
+        const maxBucket = Math.max(1, ...buckets);
+        const svgPoints = buckets
+          .map((cnt, h) => {
+            const x = ((h + 0.5) / 24) * 100;
+            const y = 36 - (cnt / maxBucket) * 30; // 0..36 height
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          })
+          .join(" ");
 
         const [y, m, d] = k.split("-").map(Number);
         const dateLabel = new Date(y, m - 1, d).toLocaleDateString(undefined, {
@@ -205,7 +242,7 @@ export function VaDailyTimeline() {
           day: "numeric",
         });
 
-        const avgSpeed = shift > 0 && distinctJobs > 0 ? (shift * 60) / distinctJobs : 0;
+        const avgSpeed = netActive > 0 && distinctJobs > 0 ? (netActive * 60) / distinctJobs : 0;
 
         days.push({
           dateKey: k,
@@ -214,8 +251,12 @@ export function VaDailyTimeline() {
           jobsCount: distinctJobs,
           startHour: start,
           endHour: end,
-          shiftHours: shift,
+          grossShiftHours: grossShift,
+          netActiveHours: netActive,
+          pauseHours: pauseTime,
+          gaps,
           hourlyBuckets: buckets,
+          hourlyLineSvg: svgPoints,
           avgMinPerVideo: avgSpeed,
         });
       }
@@ -226,7 +267,8 @@ export function VaDailyTimeline() {
       // Today stats
       const todaySummary = days.find((d) => d.dateKey === todayKey);
       const todayCount = todaySummary ? todaySummary.jobsCount : 0;
-      const todayShiftHours = todaySummary ? todaySummary.shiftHours : 0;
+      const todayGrossHours = todaySummary ? todaySummary.grossShiftHours : 0;
+      const todayActiveHours = todaySummary ? todaySummary.netActiveHours : 0;
       const todayStart = todaySummary && todaySummary.startHour != null ? fmtH(todaySummary.startHour) : null;
       const todayEnd = todaySummary && todaySummary.endHour != null ? fmtH(todaySummary.endHour) : null;
       const todayAvgSpeedMin = todaySummary ? todaySummary.avgMinPerVideo : 0;
@@ -244,7 +286,8 @@ export function VaDailyTimeline() {
         dailyAvg,
         bestDayCount,
         todayCount,
-        todayShiftHours,
+        todayGrossHours,
+        todayActiveHours,
         todayStart,
         todayEnd,
         todayAvgSpeedMin,
@@ -253,7 +296,7 @@ export function VaDailyTimeline() {
       });
     });
 
-    // Sort: VAs first (VA 1, VA 2), then others by total
+    // Sort: VAs first (VA 1, VA 2), then others
     return summaries.sort((a, b) => {
       const aIsVa = a.name.startsWith("VA ");
       const bIsVa = b.name.startsWith("VA ");
@@ -264,7 +307,6 @@ export function VaDailyTimeline() {
     });
   }, [data, todayKey]);
 
-  // Filtered list based on selector
   const displayedSummaries = useMemo(() => {
     if (selectedVa === "ALL_VAS") {
       return vaSummaries.filter((v) => v.name.startsWith("VA "));
@@ -317,11 +359,11 @@ export function VaDailyTimeline() {
                 color: "#fff",
               }}
             >
-              VA Production Intelligence &amp; Daily Rhythm
+              VA Production Intelligence · Shift Tracking &amp; Rate Graph
             </span>
           </div>
           <p style={{ fontSize: 11, color: "var(--v2-text-2, #888)", marginTop: 3 }}>
-            Real working shift tracking, hourly video velocity, output pace, and target completion for VAs.
+            Inspect full 8h shift compliance, hourly output curves, lunch drop-offs, and speed per video.
           </p>
         </div>
 
@@ -427,7 +469,7 @@ export function VaDailyTimeline() {
                 color: viewMode === "visual" ? "#fff" : "var(--v2-text-2, #888)",
               }}
             >
-              Visual Shift Board
+              Velocity Graph
             </button>
             <button
               onClick={() => setViewMode("table")}
@@ -442,13 +484,13 @@ export function VaDailyTimeline() {
                 color: viewMode === "table" ? "#fff" : "var(--v2-text-2, #888)",
               }}
             >
-              Shift Ledger Table
+              Shift Ledger
             </button>
           </div>
         </div>
       </div>
 
-      {/* Legend & Timezone indicator */}
+      {/* Legend & 8h Shift Guide */}
       <div
         style={{
           display: "flex",
@@ -463,24 +505,26 @@ export function VaDailyTimeline() {
         }}
       >
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11, color: "var(--v2-text-3, #666)", fontWeight: 600 }}>EVENT TYPES:</span>
-          {Object.entries(EVENT).map(([type, meta]) => (
-            <span key={type} style={{ fontSize: 11, color: "var(--v2-text-2, #bbb)", display: "flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: meta.color }} />
-              {meta.label}
-            </span>
-          ))}
+          <span style={{ fontSize: 11, color: "var(--v2-text-3, #666)", fontWeight: 600 }}>METRIC VISUALS:</span>
           <span style={{ fontSize: 11, color: "var(--v2-text-2, #bbb)", display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 12, height: 6, borderRadius: 2, background: "rgba(74,222,128,0.3)" }} />
-            Active Working Shift Band
+            <span style={{ width: 14, height: 10, borderRadius: 2, background: "rgba(74,222,128,0.4)" }} />
+            Hourly Rate Graph (vids/hr)
           </span>
           <span style={{ fontSize: 11, color: "var(--v2-text-2, #bbb)", display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 8, height: 10, borderRadius: 2, background: "var(--v2-accent, #4ade80)" }} />
-            Hourly Video Velocity Bars
+            <span style={{ width: 12, height: 6, borderRadius: 2, background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.4)" }} />
+            Active Shift Block
+          </span>
+          <span style={{ fontSize: 11, color: "var(--v2-text-2, #bbb)", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 6, borderRadius: 2, background: "rgba(248,113,113,0.15)", border: "1px dashed rgba(248,113,113,0.4)" }} />
+            Pause / Drop-off Valley
+          </span>
+          <span style={{ fontSize: 11, color: "var(--v2-text-2, #bbb)", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#4ade80" }} />
+            Micro Video Dot (Hover for Title)
           </span>
         </div>
         <span style={{ fontSize: 11, color: "var(--v2-text-3, #666)" }}>
-          Times local ({tz}) · Target: {DAILY_TARGET} vids/day
+          Times shown in {tz} · Standard Shift: {DAILY_SHIFT_TARGET_HOURS}h / {DAILY_VIDEO_TARGET} vids
         </span>
       </div>
 
@@ -496,18 +540,13 @@ export function VaDailyTimeline() {
         </div>
       )}
 
-      {!loading && !error && displayedSummaries.length === 0 && (
-        <div style={{ padding: 24, textAlign: "center", color: "var(--v2-text-3, #666)", fontSize: 13 }}>
-          No production activity found for selected filter.
-        </div>
-      )}
-
       {!loading && !error && displayedSummaries.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {displayedSummaries.map((va) => {
             const isOnline = va.lastActiveMinutesAgo !== null && va.lastActiveMinutesAgo < 45;
             const isIdleToday = va.lastActiveMinutesAgo !== null && va.lastActiveMinutesAgo >= 45 && va.todayCount > 0;
-            const quotaPct = Math.min(100, Math.round((va.todayCount / DAILY_TARGET) * 100));
+            const quotaPct = Math.min(100, Math.round((va.todayCount / DAILY_VIDEO_TARGET) * 100));
+            const shiftPct = Math.min(100, Math.round((va.todayActiveHours / DAILY_SHIFT_TARGET_HOURS) * 100));
 
             return (
               <div
@@ -522,7 +561,7 @@ export function VaDailyTimeline() {
                   gap: 16,
                 }}
               >
-                {/* VA Profile & Executive Metrics Header */}
+                {/* VA Header KPI Summary */}
                 <div
                   style={{
                     display: "grid",
@@ -533,14 +572,14 @@ export function VaDailyTimeline() {
                     borderBottom: "1px solid rgba(255,255,255,0.06)",
                   }}
                 >
-                  {/* Identity & Status */}
+                  {/* Identity */}
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <div
                       style={{
-                        width: 42,
-                        height: 42,
+                        width: 44,
+                        height: 44,
                         borderRadius: 10,
-                        background: "linear-gradient(135deg, #1f2937, #111827)",
+                        background: "linear-gradient(135deg, #1f2937, #0f172a)",
                         border: "1px solid rgba(255,255,255,0.15)",
                         display: "flex",
                         alignItems: "center",
@@ -556,86 +595,55 @@ export function VaDailyTimeline() {
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>{va.name}</span>
                         {isOnline ? (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 700,
-                              padding: "2px 7px",
-                              borderRadius: 12,
-                              background: "rgba(74,222,128,0.2)",
-                              color: "#4ade80",
-                              border: "1px solid rgba(74,222,128,0.4)",
-                            }}
-                          >
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 12, background: "rgba(74,222,128,0.2)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.4)" }}>
                             ● ACTIVE NOW
                           </span>
                         ) : isIdleToday ? (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 700,
-                              padding: "2px 7px",
-                              borderRadius: 12,
-                              background: "rgba(240,166,66,0.2)",
-                              color: "#f0a642",
-                              border: "1px solid rgba(240,166,66,0.4)",
-                            }}
-                          >
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 12, background: "rgba(240,166,66,0.2)", color: "#f0a642", border: "1px solid rgba(240,166,66,0.4)" }}>
                             ○ IDLE ({va.lastActiveMinutesAgo}m ago)
                           </span>
                         ) : (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 700,
-                              padding: "2px 7px",
-                              borderRadius: 12,
-                              background: "rgba(255,255,255,0.06)",
-                              color: "var(--v2-text-3, #666)",
-                              border: "1px solid rgba(255,255,255,0.1)",
-                            }}
-                          >
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 12, background: "rgba(255,255,255,0.06)", color: "var(--v2-text-3, #666)", border: "1px solid rgba(255,255,255,0.1)" }}>
                             STANDBY / OFFLINE
                           </span>
                         )}
                       </div>
                       <div style={{ fontSize: 11, color: "var(--v2-text-3, #666)", marginTop: 2 }}>
-                        {va.email || "Assigned Production Virtual Assistant"}
+                        {va.email || "Assigned Virtual Assistant"}
                       </div>
                     </div>
                   </div>
 
-                  {/* Today's Quota & Shift */}
+                  {/* Shift Hours Tracking */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                      <span style={{ color: "var(--v2-text-2, #888)" }}>Today's Output:</span>
-                      <span style={{ fontWeight: 800, color: va.todayCount >= DAILY_TARGET ? "#4ade80" : "#fff" }}>
-                        {va.todayCount} / {DAILY_TARGET} vids ({quotaPct}%)
+                      <span style={{ color: "var(--v2-text-2, #888)" }}>Today's 8h Shift:</span>
+                      <span style={{ fontWeight: 800, color: va.todayActiveHours >= 7.5 ? "#4ade80" : "#fff" }}>
+                        {va.todayActiveHours.toFixed(1)}h / {DAILY_SHIFT_TARGET_HOURS}h ({shiftPct}%)
                       </span>
                     </div>
-                    <div
-                      style={{
-                        height: 6,
-                        borderRadius: 3,
-                        background: "rgba(255,255,255,0.08)",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${quotaPct}%`,
-                          background: va.todayCount >= DAILY_TARGET ? "#4ade80" : "var(--v2-accent, #4ade80)",
-                          borderRadius: 3,
-                          transition: "width 0.3s ease",
-                        }}
-                      />
+                    <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${shiftPct}%`, background: va.todayActiveHours >= 7.5 ? "#4ade80" : "var(--v2-accent, #4ade80)", borderRadius: 3 }} />
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--v2-text-3, #666)", display: "flex", justifyContent: "space-between" }}>
-                      <span>Shift: {va.todayStart ? `${va.todayStart} – ${va.todayEnd} (${va.todayShiftHours.toFixed(1)}h)` : "Not started today"}</span>
-                      {va.todayAvgSpeedMin > 0 && (
-                        <span>~{va.todayAvgSpeedMin.toFixed(1)}m / vid</span>
-                      )}
+                    <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", display: "flex", justifyContent: "space-between" }}>
+                      <span>Window: {va.todayStart ? `${va.todayStart} – ${va.todayEnd} (${va.todayGrossHours.toFixed(1)}h)` : "No shift logged today"}</span>
+                      {va.todayAvgSpeedMin > 0 && <span>~{va.todayAvgSpeedMin.toFixed(1)}m / vid</span>}
+                    </div>
+                  </div>
+
+                  {/* Quota Progress */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                      <span style={{ color: "var(--v2-text-2, #888)" }}>Daily 40-Video Quota:</span>
+                      <span style={{ fontWeight: 800, color: va.todayCount >= DAILY_VIDEO_TARGET ? "#4ade80" : "#fff" }}>
+                        {va.todayCount} / {DAILY_VIDEO_TARGET} ({quotaPct}%)
+                      </span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${quotaPct}%`, background: va.todayCount >= DAILY_VIDEO_TARGET ? "#4ade80" : "#f0a642", borderRadius: 3 }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", textAlign: "right" }}>
+                      {va.todayCount >= DAILY_VIDEO_TARGET ? "✅ Quota Met" : `${DAILY_VIDEO_TARGET - va.todayCount} remaining`}
                     </div>
                   </div>
 
@@ -646,9 +654,7 @@ export function VaDailyTimeline() {
                       <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", textTransform: "uppercase" }}>{windowDays}d Total</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 18, fontWeight: 900, color: "var(--v2-accent, #4ade80)" }}>
-                        {va.dailyAvg.toFixed(1)}
-                      </div>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: "var(--v2-accent, #4ade80)" }}>{va.dailyAvg.toFixed(1)}</div>
                       <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", textTransform: "uppercase" }}>Avg / Day</div>
                     </div>
                     <div style={{ textAlign: "right" }}>
@@ -670,16 +676,16 @@ export function VaDailyTimeline() {
                     }}
                   >
                     <div style={{ fontSize: 14, fontWeight: 600, color: "var(--v2-text-2, #888)" }}>
-                      Awaiting First Production Shift
+                      Awaiting Production Shift
                     </div>
                     <div style={{ fontSize: 12, color: "var(--v2-text-3, #666)", marginTop: 4 }}>
-                      {va.name} is on standby with {DAILY_TARGET} videos/day target. Production activity will map here automatically as videos are recorded.
+                      {va.name} is on standby with 8h shift / {DAILY_VIDEO_TARGET} videos quota. Production curves and drop-offs will populate as videos are submitted.
                     </div>
                   </div>
                 ) : viewMode === "visual" ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {/* Hour Axis Header */}
-                    <div style={{ position: "relative", height: 16, borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {/* Hour Axis */}
+                    <div style={{ position: "relative", height: 16, borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 2 }}>
                       {[0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24].map((h) => (
                         <span
                           key={h}
@@ -699,8 +705,9 @@ export function VaDailyTimeline() {
 
                     {/* Day Rows */}
                     {va.days.map((d) => {
-                      const maxHourly = Math.max(1, ...d.hourlyBuckets);
                       const isToday = d.dateKey === todayKey;
+                      const maxRate = Math.max(1, ...d.hourlyBuckets);
+                      const is8hComplete = d.grossShiftHours >= 7.5;
 
                       return (
                         <div
@@ -715,8 +722,8 @@ export function VaDailyTimeline() {
                             border: isToday ? "1px solid rgba(74,222,128,0.15)" : "1px solid transparent",
                           }}
                         >
-                          {/* Date & Day Stats */}
-                          <div style={{ width: 170, flexShrink: 0 }}>
+                          {/* Date & Shift Info */}
+                          <div style={{ width: 190, flexShrink: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ fontSize: 12, fontWeight: 700, color: isToday ? "var(--v2-accent, #4ade80)" : "#fff" }}>
                                 {d.dateLabel}
@@ -727,29 +734,32 @@ export function VaDailyTimeline() {
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", marginTop: 2, display: "flex", gap: 6 }}>
-                              <span style={{ fontWeight: 700, color: d.jobsCount >= DAILY_TARGET ? "#4ade80" : "var(--v2-text-2, #bbb)" }}>
+                            <div style={{ fontSize: 10, color: "var(--v2-text-3, #666)", marginTop: 2 }}>
+                              <span style={{ fontWeight: 700, color: d.jobsCount >= DAILY_VIDEO_TARGET ? "#4ade80" : "var(--v2-text-2, #bbb)" }}>
                                 {d.jobsCount} vids
                               </span>
                               {d.startHour != null && d.endHour != null && (
-                                <span>· {fmtH(d.startHour)}–{fmtH(d.endHour)} ({d.shiftHours.toFixed(1)}h)</span>
+                                <span> · {fmtH(d.startHour)}–{fmtH(d.endHour)} ({d.grossShiftHours.toFixed(1)}h shift)</span>
                               )}
+                            </div>
+                            <div style={{ fontSize: 9, color: is8hComplete ? "#4ade80" : "#f0a642", marginTop: 1, fontWeight: 600 }}>
+                              {is8hComplete ? `✓ 8h Target Met (${d.netActiveHours.toFixed(1)}h active)` : `⚠ ${d.grossShiftHours.toFixed(1)}h / 8h (${d.pauseHours > 0.5 ? `${d.pauseHours.toFixed(1)}h pause` : "short shift"})`}
                             </div>
                           </div>
 
-                          {/* 24h Lane with Velocity Bars & Event Dots */}
+                          {/* 24h Interactive Graph & Shift Lane */}
                           <div
                             style={{
                               flex: 1,
                               position: "relative",
-                              height: 38,
-                              background: "rgba(0,0,0,0.3)",
+                              height: 42,
+                              background: "rgba(0,0,0,0.35)",
                               borderRadius: 6,
                               overflow: "hidden",
-                              border: "1px solid rgba(255,255,255,0.05)",
+                              border: "1px solid rgba(255,255,255,0.06)",
                             }}
                           >
-                            {/* Working shift band */}
+                            {/* Active working shift band */}
                             {d.startHour != null && d.endHour != null && (
                               <div
                                 style={{
@@ -758,14 +768,42 @@ export function VaDailyTimeline() {
                                   width: `${((d.endHour - d.startHour) / 24) * 100}%`,
                                   top: 0,
                                   bottom: 0,
-                                  background: "rgba(74,222,128,0.10)",
-                                  borderLeft: "2px solid rgba(74,222,128,0.4)",
-                                  borderRight: "2px solid rgba(74,222,128,0.4)",
+                                  background: "rgba(74,222,128,0.07)",
+                                  borderLeft: "2px solid rgba(74,222,128,0.5)",
+                                  borderRight: "2px solid rgba(74,222,128,0.5)",
                                 }}
                               />
                             )}
 
-                            {/* Hour gridlines */}
+                            {/* Drop-off / Lunch pause valleys */}
+                            {d.gaps.map((gap, gIdx) => (
+                              <div
+                                key={gIdx}
+                                onMouseEnter={(ev) => {
+                                  const rect = (ev.target as HTMLElement).getBoundingClientRect();
+                                  setHoveredInfo({
+                                    text: `Pause / Production Drop-off: ${gap.durationHours.toFixed(1)} hours`,
+                                    sub: `${fmtH(gap.startHour)} – ${fmtH(gap.endHour)} (No videos submitted)`,
+                                    x: rect.left + rect.width / 2,
+                                    y: rect.top - 10,
+                                  });
+                                }}
+                                onMouseLeave={() => setHoveredInfo(null)}
+                                style={{
+                                  position: "absolute",
+                                  left: `${(gap.startHour / 24) * 100}%`,
+                                  width: `${(gap.durationHours / 24) * 100}%`,
+                                  top: 0,
+                                  bottom: 0,
+                                  background: "rgba(248,113,113,0.12)",
+                                  borderLeft: "1px dashed rgba(248,113,113,0.4)",
+                                  borderRight: "1px dashed rgba(248,113,113,0.4)",
+                                  cursor: "help",
+                                }}
+                              />
+                            ))}
+
+                            {/* Gridlines */}
                             {[4, 8, 12, 16, 20].map((h) => (
                               <div
                                 key={h}
@@ -780,47 +818,83 @@ export function VaDailyTimeline() {
                               />
                             ))}
 
-                            {/* Hourly Velocity Bars in Background */}
+                            {/* Hourly Velocity Histogram Columns */}
                             {d.hourlyBuckets.map((count, h) => {
                               if (count === 0) return null;
-                              const barHeight = Math.max(4, (count / maxHourly) * 24);
+                              const barHeight = Math.max(4, (count / maxRate) * 26);
                               return (
                                 <div
                                   key={h}
-                                  title={`${h}:00 – ${h + 1}:00: ${count} videos completed`}
+                                  onMouseEnter={(ev) => {
+                                    const rect = (ev.target as HTMLElement).getBoundingClientRect();
+                                    setHoveredInfo({
+                                      text: `${h}:00 – ${h + 1}:00: ${count} videos produced`,
+                                      sub: `Rate: ${(count).toFixed(1)} vids/hour`,
+                                      x: rect.left + rect.width / 2,
+                                      y: rect.top - 10,
+                                    });
+                                  }}
+                                  onMouseLeave={() => setHoveredInfo(null)}
                                   style={{
                                     position: "absolute",
-                                    left: `${(h / 24) * 100 + 0.3}%`,
-                                    width: `${100 / 24 - 0.6}%`,
+                                    left: `${(h / 24) * 100 + 0.2}%`,
+                                    width: `${100 / 24 - 0.4}%`,
                                     bottom: 0,
                                     height: barHeight,
-                                    background: "rgba(74,222,128,0.35)",
+                                    background: "rgba(74,222,128,0.4)",
                                     borderRadius: "2px 2px 0 0",
+                                    cursor: "help",
                                   }}
                                 />
                               );
                             })}
 
-                            {/* Individual Event Step Dots */}
+                            {/* Hourly Rate Sparkline Wave */}
+                            <svg
+                              viewBox="0 0 100 36"
+                              preserveAspectRatio="none"
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                pointerEvents: "none",
+                              }}
+                            >
+                              <polyline
+                                points={d.hourlyLineSvg}
+                                fill="none"
+                                stroke="rgba(74,222,128,0.85)"
+                                strokeWidth="1"
+                                vectorEffect="non-scaling-stroke"
+                              />
+                            </svg>
+
+                            {/* Small Micro Event Dots */}
                             {d.events.map((e, j) => (
                               <span
                                 key={j}
                                 onMouseEnter={(ev) => {
                                   const rect = (ev.target as HTMLElement).getBoundingClientRect();
-                                  setHoveredEv({ ev: e, x: rect.left, y: rect.top - 40 });
+                                  setHoveredInfo({
+                                    text: `${EVENT[e.type].label} at ${e.time}`,
+                                    sub: e.title,
+                                    x: rect.left,
+                                    y: rect.top - 10,
+                                  });
                                 }}
-                                onMouseLeave={() => setHoveredEv(null)}
+                                onMouseLeave={() => setHoveredInfo(null)}
                                 style={{
                                   position: "absolute",
                                   left: `${(e.hour / 24) * 100}%`,
                                   top: "50%",
-                                  width: 8,
-                                  height: 8,
-                                  marginLeft: -4,
-                                  marginTop: -4,
+                                  width: 4,
+                                  height: 4,
+                                  marginLeft: -2,
+                                  marginTop: -2,
                                   borderRadius: "50%",
                                   background: EVENT[e.type].color,
-                                  boxShadow: `0 0 6px ${EVENT[e.type].color}`,
+                                  boxShadow: `0 0 4px ${EVENT[e.type].color}`,
                                   cursor: "pointer",
                                   zIndex: 2,
                                 }}
@@ -841,20 +915,23 @@ export function VaDailyTimeline() {
                             />
                           </div>
 
-                          {/* Day Metric Pill */}
-                          <div style={{ width: 80, textAlign: "right", flexShrink: 0 }}>
+                          {/* 8h Shift & Quota Badges */}
+                          <div style={{ width: 110, textAlign: "right", flexShrink: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                             <span
                               style={{
-                                fontSize: 11,
+                                fontSize: 10,
                                 fontWeight: 700,
-                                padding: "2px 7px",
-                                borderRadius: 6,
-                                background: d.jobsCount >= DAILY_TARGET ? "rgba(74,222,128,0.15)" : "rgba(255,255,255,0.05)",
-                                color: d.jobsCount >= DAILY_TARGET ? "#4ade80" : "var(--v2-text-2, #bbb)",
-                                border: d.jobsCount >= DAILY_TARGET ? "1px solid rgba(74,222,128,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: is8hComplete ? "rgba(74,222,128,0.15)" : "rgba(240,166,66,0.15)",
+                                color: is8hComplete ? "#4ade80" : "#f0a642",
+                                border: is8hComplete ? "1px solid rgba(74,222,128,0.3)" : "1px solid rgba(240,166,66,0.3)",
                               }}
                             >
-                              {d.jobsCount >= DAILY_TARGET ? "100% Target" : `${Math.round((d.jobsCount / DAILY_TARGET) * 100)}%`}
+                              {is8hComplete ? "8h Shift ✓" : `${d.grossShiftHours.toFixed(1)}h / 8h`}
+                            </span>
+                            <span style={{ fontSize: 9, color: "var(--v2-text-3, #666)" }}>
+                              {d.jobsCount >= DAILY_VIDEO_TARGET ? "40/40 Quota Hit" : `${d.jobsCount}/${DAILY_VIDEO_TARGET} vids`}
                             </span>
                           </div>
                         </div>
@@ -862,57 +939,75 @@ export function VaDailyTimeline() {
                     })}
                   </div>
                 ) : (
-                  /* Table Ledger View */
+                  /* Table Shift Ledger View */
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead>
                         <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", color: "var(--v2-text-3, #666)", textAlign: "left" }}>
                           <th style={{ padding: "8px 12px" }}>Date</th>
-                          <th style={{ padding: "8px 12px" }}>Videos Done</th>
                           <th style={{ padding: "8px 12px" }}>Shift Window</th>
-                          <th style={{ padding: "8px 12px" }}>Net Work Hours</th>
+                          <th style={{ padding: "8px 12px" }}>Gross Hours</th>
+                          <th style={{ padding: "8px 12px" }}>Pause / Lunch</th>
+                          <th style={{ padding: "8px 12px" }}>8h Compliance</th>
+                          <th style={{ padding: "8px 12px" }}>Videos Done</th>
                           <th style={{ padding: "8px 12px" }}>Avg Speed</th>
-                          <th style={{ padding: "8px 12px" }}>Hourly Velocity</th>
                           <th style={{ padding: "8px 12px", textAlign: "right" }}>Daily Quota</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {va.days.map((d) => (
-                          <tr key={d.dateKey} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                            <td style={{ padding: "10px 12px", fontWeight: 700, color: d.dateKey === todayKey ? "var(--v2-accent, #4ade80)" : "#fff" }}>
-                              {d.dateLabel}
-                            </td>
-                            <td style={{ padding: "10px 12px", fontWeight: 700, color: d.jobsCount >= DAILY_TARGET ? "#4ade80" : "#fff" }}>
-                              {d.jobsCount} videos
-                            </td>
-                            <td style={{ padding: "10px 12px", color: "var(--v2-text-2, #bbb)" }}>
-                              {d.startHour != null && d.endHour != null ? `${fmtH(d.startHour)} – ${fmtH(d.endHour)}` : "—"}
-                            </td>
-                            <td style={{ padding: "10px 12px", color: "var(--v2-text-2, #bbb)" }}>
-                              {d.shiftHours > 0 ? `${d.shiftHours.toFixed(1)} hours` : "—"}
-                            </td>
-                            <td style={{ padding: "10px 12px", color: "var(--v2-text-2, #bbb)" }}>
-                              {d.avgMinPerVideo > 0 ? `~${d.avgMinPerVideo.toFixed(1)} min / vid` : "—"}
-                            </td>
-                            <td style={{ padding: "10px 12px", color: "var(--v2-accent, #4ade80)", fontWeight: 600 }}>
-                              {d.shiftHours > 0 ? `${(d.jobsCount / d.shiftHours).toFixed(1)} vids / hour` : "—"}
-                            </td>
-                            <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  padding: "2px 8px",
-                                  borderRadius: 4,
-                                  background: d.jobsCount >= DAILY_TARGET ? "rgba(74,222,128,0.2)" : "rgba(240,166,66,0.15)",
-                                  color: d.jobsCount >= DAILY_TARGET ? "#4ade80" : "#f0a642",
-                                }}
-                              >
-                                {d.jobsCount >= DAILY_TARGET ? "40/40 Hit (100%)" : `${d.jobsCount}/${DAILY_TARGET} (${Math.round((d.jobsCount / DAILY_TARGET) * 100)}%)`}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                        {va.days.map((d) => {
+                          const is8h = d.grossShiftHours >= 7.5;
+                          return (
+                            <tr key={d.dateKey} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                              <td style={{ padding: "10px 12px", fontWeight: 700, color: d.dateKey === todayKey ? "var(--v2-accent, #4ade80)" : "#fff" }}>
+                                {d.dateLabel}
+                              </td>
+                              <td style={{ padding: "10px 12px", color: "var(--v2-text-2, #bbb)" }}>
+                                {d.startHour != null && d.endHour != null ? `${fmtH(d.startHour)} – ${fmtH(d.endHour)}` : "—"}
+                              </td>
+                              <td style={{ padding: "10px 12px", fontWeight: 600, color: is8h ? "#4ade80" : "#fff" }}>
+                                {d.grossShiftHours > 0 ? `${d.grossShiftHours.toFixed(1)}h` : "—"}
+                              </td>
+                              <td style={{ padding: "10px 12px", color: d.pauseHours > 0.5 ? "#f0a642" : "var(--v2-text-3, #666)" }}>
+                                {d.pauseHours > 0.5 ? `${d.pauseHours.toFixed(1)}h pause` : "Continuous"}
+                              </td>
+                              <td style={{ padding: "10px 12px" }}>
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    padding: "2px 6px",
+                                    borderRadius: 4,
+                                    background: is8h ? "rgba(74,222,128,0.2)" : "rgba(240,166,66,0.15)",
+                                    color: is8h ? "#4ade80" : "#f0a642",
+                                  }}
+                                >
+                                  {is8h ? "FULL 8H SHIFT" : "SHORT SHIFT"}
+                                </span>
+                              </td>
+                              <td style={{ padding: "10px 12px", fontWeight: 700, color: d.jobsCount >= DAILY_VIDEO_TARGET ? "#4ade80" : "#fff" }}>
+                                {d.jobsCount} videos
+                              </td>
+                              <td style={{ padding: "10px 12px", color: "var(--v2-text-2, #bbb)" }}>
+                                {d.avgMinPerVideo > 0 ? `~${d.avgMinPerVideo.toFixed(1)}m / vid` : "—"}
+                              </td>
+                              <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    background: d.jobsCount >= DAILY_VIDEO_TARGET ? "rgba(74,222,128,0.2)" : "rgba(255,255,255,0.05)",
+                                    color: d.jobsCount >= DAILY_VIDEO_TARGET ? "#4ade80" : "var(--v2-text-2, #bbb)",
+                                  }}
+                                >
+                                  {d.jobsCount >= DAILY_VIDEO_TARGET ? "40/40 Hit" : `${d.jobsCount}/${DAILY_VIDEO_TARGET}`}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -924,29 +1019,33 @@ export function VaDailyTimeline() {
       )}
 
       {/* Floating Hover Tooltip */}
-      {hoveredEv && (
+      {hoveredInfo && (
         <div
           style={{
             position: "fixed",
-            left: hoveredEv.x,
-            top: hoveredEv.y,
+            left: hoveredInfo.x,
+            top: hoveredInfo.y,
             transform: "translate(-50%, -100%)",
-            background: "#1e293b",
+            background: "#0f172a",
             color: "#fff",
-            border: "1px solid rgba(255,255,255,0.2)",
+            border: "1px solid rgba(74,222,128,0.4)",
             borderRadius: 8,
-            padding: "6px 10px",
+            padding: "8px 12px",
             fontSize: 11,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.8)",
             pointerEvents: "none",
             zIndex: 9999,
             whiteSpace: "nowrap",
           }}
         >
-          <div style={{ fontWeight: 700, color: EVENT[hoveredEv.ev.type].color }}>
-            {EVENT[hoveredEv.ev.type].label} · {hoveredEv.ev.time}
+          <div style={{ fontWeight: 800, color: "var(--v2-accent, #4ade80)" }}>
+            {hoveredInfo.text}
           </div>
-          <div style={{ color: "#e2e8f0", marginTop: 2 }}>{hoveredEv.ev.title}</div>
+          {hoveredInfo.sub && (
+            <div style={{ color: "#cbd5e1", marginTop: 3, fontSize: 10 }}>
+              {hoveredInfo.sub}
+            </div>
+          )}
         </div>
       )}
     </div>

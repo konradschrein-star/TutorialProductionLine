@@ -219,3 +219,27 @@ export async function getKnownVAs(): Promise<Array<{ id: string; name: string; e
   }));
 }
 
+/**
+ * Intraday production rhythm — every produced video mapped to its HOUR OF DAY
+ * (0..24) of completion, per VA.
+ */
+export async function getIntradayProduction(
+  windowDays = 28,
+): Promise<IntradayPoint[]> {
+  const rows = await db
+    .select({
+      va: users.name,
+      hour: sql<string>`extract(hour from ${tutorialJobs.completed_at}) + extract(minute from ${tutorialJobs.completed_at}) / 60.0`,
+    })
+    .from(tutorialJobs)
+    .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
+    .where(
+      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.completed_at} >= now() - (${windowDays} || ' days')::interval`,
+    )
+    .orderBy(sql`${tutorialJobs.completed_at} asc`)
+    .limit(3000);
+
+  return rows.map((r) => ({ va: r.va, hour: Number(r.hour) }));
+}
+
+

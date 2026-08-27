@@ -1,0 +1,29 @@
+﻿[hook] [source: primary sba.gov/business-guide/plan-your-business/write-your-business-plan] Writing a business plan for a bakery follows the SBA's structured sequence. This sequence includes the Executive Summary, Company Description, Market Analysis, Organization and Management, Product Line, Marketing and Sales, Funding Request, Financial Projections, and Appendix.
+
+The Executive Summary, written last but appearing first, summarizes your plan. Start by naming your bakery and its core mission.
+
+For a bakery, specify square footage, seating, and daily loaf capacity. Begin by stating your bakery's legal name and primary business.
+
+For a bakery, detail customer demographics and local competitor analysis. Start by naming your bakery's target market.
+
+Outline your bakery's legal structure, management, and key personnel qualifications. Start by naming the legal form of your bakery's ownership.
+
+Detail signature items, pricing, and unique selling points like organic ingredients or custom designs. Start by listing your bakery's core products.
+
+Explain your bakery's branding, advertising channels, and sales processes. Start by stating your primary marketing objective.
+
+[source: primary sba.gov/document/sop-50-10-business-loan-program] For an SBA 7(a) loan, the Funding Request is mandatory. Omitting it results in rejection under SOP 50 10. Specify the amount needed, its use, and repayment. The plan builder we run flags this section before a lender does. Start by stating the total funding sought.
+
+Overview your bakery's expected financial performance. Include income statements and cash flow for three to five years. Start by stating the period these projections cover.
+
+The Appendix holds supporting documents: resumes, permits, and leases. Start by listing the types of supplementary materials included.
+
+[chapter: Break-Even and Repayment: The Bakery Financial Section an SBA Lender Reads First] The financial section turns on one split. Put every bakery cost into fixed or variable before projecting revenue. Fixed means unchanged by loaves or tickets: rent, insurance, equipment leases, salaried management, base utilities. Variable means it moves with volume: flour, butter, sugar, yeast, packaging, hourly counter labor, card fees. Split mixed costs.
+
+[fig: bakery-breakeven] [source: primary sba.gov/business-guide/plan-your-business/calculate-your-break-even-point] The break-even formula is fixed costs divided by price per unit minus variable cost per unit. This is the calculation the SBA break-even calculator asks you to enter. Use a unit the lender can verify: loaves for wholesale, tickets or dozen items for retail. If monthly fixed costs are forty-two thousand dollars, price per unit is six dollars, and variable cost per unit is two dollars and forty cents, the denominator is three dollars and sixty cents, and break-even is eleven thousand six hundred sixty-seven units per month. State the sentence in the plan as: the bakery reaches break-even at eleven thousand six hundred sixty-seven units per month, or seventy thousand dollars in net sales at the planned average unit price of six dollars.
+
+[source: primary sba.gov/document/sop-50-10-7-lender-development-company-loan-programs] Then show repayment ability. Under the repayment analysis in SBA SOP 50 10 7, projected cash flow must show the loan can be repaid from operations. Present the debt service coverage calculation as net operating income plus depreciation and amortization divided by total debt service, shown for each of the three years.
+
+Build three years of monthly projections. SBA lenders read the working capital reserve and seasonality before they read the income statement. Do not smooth a bakery into flat monthly revenue. State January, summer, and holiday swings separately. Never present revenue without the operating assumption behind it: loaves per day for wholesale or seat turns for a cafe. And include a working capital reserve line after operating expenses, not a missing cell.
+
+[close] You can now build the financial section an SBA lender reads first. Run the draft through the free business plan checker to catch the errors before a lender does.
