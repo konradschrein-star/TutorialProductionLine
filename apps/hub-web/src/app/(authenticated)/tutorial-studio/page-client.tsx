@@ -13,6 +13,7 @@ import { ProductionKeywords } from "./_components/keywords";
 import { ProductionThumbnails } from "./_components/thumbnails";
 import { ProductionRanking } from "./_components/ranking";
 import { TtsHealthBadge } from "./_components/tts-health-badge";
+import { UploadsTable } from "./_components/uploads";
 // Mounted at the page root, OUTSIDE the tab switch below: recording uploads run
 // in a module-level manager and must stay visible while the VA leaves the
 // Studio tab to start the next job.
@@ -25,6 +26,8 @@ const TABS = [
   { id: "dashboard", label: "Dashboard" },
   { id: "create", label: "Create" },
   { id: "studio", label: "Studio" },
+  // Master video delivery & upload tracking table for manual uploaders
+  { id: "uploads", label: "Uploads" },
   // RANKING lane. Tier-list videos are a separate content format with their
   // own worker pipeline, but the VA who runs them is this VA, so the entry
   // point belongs here rather than in a second tool they would have to learn.
@@ -38,6 +41,7 @@ const TABS = [
   { id: "keywords", label: "Keywords" },
   { id: "settings", label: "Settings" },
 ] as const;
+
 
 /** Tabs an uploader VA (manage:thumbnails, no view:production) may see. */
 const THUMBNAIL_ONLY_TABS = new Set<TabId>(["thumbnails"]);
@@ -416,7 +420,9 @@ export function ProductionClient({
           onChange={refresh}
         />
       )}
+      {tab === "uploads" && <UploadsTable />}
       {/* Ranking / tier-list is an optional add-on the client has not enabled
+
           for this deployment. The tab stays visible so the capability is
           discoverable, but ProductionRanking is withheld behind a friendly
           notice rather than exposing an unconfigured pipeline. Flip

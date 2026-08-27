@@ -134,6 +134,12 @@ export const tutorialJobs = pgTable(
     description: text("description"),
     tags: jsonb("tags").$type<string[]>(),
 
+    // Manual YouTube upload tracking (migration 0069)
+    is_uploaded: boolean("is_uploaded").notNull().default(false),
+    uploaded_at: timestamp("uploaded_at", { withTimezone: true }),
+    uploaded_by: text("uploaded_by"),
+    youtube_upload_url: text("youtube_upload_url"),
+
     // VA end-of-day review (migration 0066). NULL = not reviewed, and that is
     // a valid, permanent outcome: the gate is non-blocking, so NULL and
     // 'approved' behave identically. Only 'disapproved' destroys anything, and
@@ -141,6 +147,7 @@ export const tutorialJobs = pgTable(
     va_review_status: text("va_review_status"),
     va_reviewed_at: timestamp("va_reviewed_at", { withTimezone: true }),
     va_reviewed_by: uuid("va_reviewed_by"),
+
 
     // Output QA verdict (migration 0064). NULL = never checked, which is the
     // correct state for every tutorial that completed before the gate existed —
