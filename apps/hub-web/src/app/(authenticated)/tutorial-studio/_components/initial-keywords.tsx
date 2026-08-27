@@ -76,6 +76,15 @@ export interface InitialKeywordsProps {
   onUseSeed: (seed: { id: number; title: string }) => void;
 }
 
+const DEFAULT_APP_SUMMARIES: SoftwareAppSummary[] = VERIFIED_37_SOFTWARES.map((s) => ({
+  software: s,
+  total: 0,
+  toDo: 0,
+  inProgress: 0,
+  done: 0,
+  claimedBy: null,
+}));
+
 export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("APPS");
   const [search, setSearch] = useState("");
@@ -85,11 +94,12 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
   const [statusTab, setStatusTab] = useState<StatusTab>("NEW");
 
   // App Sections state
-  const [apps, setApps] = useState<SoftwareAppSummary[]>([]);
+  const [apps, setApps] = useState<SoftwareAppSummary[]>(DEFAULT_APP_SUMMARIES);
   const [appsLoading, setAppsLoading] = useState(false);
   const [expandedApp, setExpandedApp] = useState<string | null>(null);
   const [appKeywords, setAppKeywords] = useState<Record<string, SeedKeyword[]>>({});
   const [claimingApp, setClaimingApp] = useState<string | null>(null);
+
 
   // List view state
   const [rows, setRows] = useState<SeedKeyword[]>([]);

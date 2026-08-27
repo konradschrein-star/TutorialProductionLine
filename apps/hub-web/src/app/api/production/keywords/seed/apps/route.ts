@@ -32,8 +32,7 @@ export async function GET(): Promise<NextResponse> {
   await ensure37KeywordsSeeded();
 
   try {
-
-    const rows = (await db.execute<{
+    const queryResult = await db.execute<{
       software: string;
       status: string;
       claimed_by: string | null;
@@ -46,14 +45,21 @@ export async function GET(): Promise<NextResponse> {
         GROUP BY software, status, claimed_by
         ORDER BY software ASC
       `,
-    )) as unknown as Array<{
+    );
+
+    const rows: Array<{
       software: string;
       status: string;
       claimed_by: string | null;
       n: number;
-    }>;
+    }> = Array.isArray(queryResult)
+      ? queryResult
+      : Array.isArray((queryResult as { rows?: unknown[] })?.rows)
+        ? ((queryResult as { rows: Array<{ software: string; status: string; claimed_by: string | null; n: number }> }).rows)
+        : [];
 
     const map = new Map<string, SoftwareAppSummary>();
+
 
     // Initialize all 37 softwares
     for (const soft of VERIFIED_37_SOFTWARES) {
