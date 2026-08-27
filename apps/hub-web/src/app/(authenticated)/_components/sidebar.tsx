@@ -40,6 +40,11 @@ const NAV_SECTIONS: NavSection[] = [
         label: "Tutorial Studio",
         icon: "smart_display",
       },
+      {
+        href: "/tutorial-studio?tab=uploads",
+        label: "Delivery & Uploads",
+        icon: "cloud_upload",
+      },
       // Deep-links to the Keywords tab inside Tutorial Studio (an in-page tab,
       // not its own route). The query string is stripped by canAccessRoute's
       // startsWith("/tutorial-studio") check, and never matches the active-state
@@ -72,6 +77,10 @@ export function AppSidebar({ session }: Props) {
   const pathname = usePathname();
   const router = useRouter();
 
+  const currentTab = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("tab")
+    : null;
+
   useRegisterKeybind(
     { key: "g+d", description: "Go to Dashboard", category: "Navigation" },
     () => router.push("/dashboard"),
@@ -92,6 +101,11 @@ export function AppSidebar({ session }: Props) {
     [],
   );
   useRegisterKeybind(
+    { key: "g+u", description: "Go to Delivery & Uploads", category: "Navigation" },
+    () => router.push("/tutorial-studio?tab=uploads"),
+    [],
+  );
+  useRegisterKeybind(
     { key: "g+h", description: "Go to System Health", category: "Navigation" },
     () => router.push("/system-health"),
     [],
@@ -99,6 +113,11 @@ export function AppSidebar({ session }: Props) {
   useRegisterKeybind(
     { key: "g+m", description: "Go to Accounts", category: "Navigation" },
     () => router.push("/team"),
+    [],
+  );
+  useRegisterKeybind(
+    { key: "g+s", description: "Go to Settings", category: "Navigation" },
+    () => router.push("/settings"),
     [],
   );
 
@@ -113,14 +132,18 @@ export function AppSidebar({ session }: Props) {
     ),
   })).filter((section) => section.items.length > 0);
 
-  // Exactly one item is active: the longest internal href that prefixes the
-  // current path. Without the longest-match rule /settings would light up on
-  // /settings/music, and /tutorial-studio on /tutorial-studio/video-stitcher.
+  // Match active item considering tab query params for tutorial-studio
   const activeHref = visibleSections
     .flatMap((s) => s.items)
     .filter((i) => !i.external)
-    .filter((i) => pathname === i.href || pathname.startsWith(i.href + "/"))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+    .find((i) => {
+      if (pathname === "/tutorial-studio") {
+        if (i.href === "/tutorial-studio?tab=uploads") return currentTab === "uploads";
+        if (i.href === "/tutorial-studio?tab=keywords") return currentTab === "keywords";
+        if (i.href === "/tutorial-studio") return !currentTab || (currentTab !== "uploads" && currentTab !== "keywords");
+      }
+      return pathname === i.href || (i.href !== "/dashboard" && pathname.startsWith(i.href + "/"));
+    })?.href;
 
   return (
     <aside

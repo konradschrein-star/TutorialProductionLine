@@ -3,57 +3,17 @@
 import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import { V2Button } from "../../_components";
-import { InitialKeywords } from "./initial-keywords";
 
 /**
- * Keywords tab. Two sub-views:
- *
- *   • "Keyword Tool" — the live board (Video ERP), embedded by iframe over a
- *     short-lived SSO handoff. The rich, authoritative tool with Admin controls.
- *   • "Initial Keywords" — a hub-web-native fallback list of 1,713 keywords
- *     across all 37 Verified Software Tools, stored in this app's own DB.
+ * Keywords tab: Directly embeds the authoritative Keyword Tool board (Video ERP)
+ * with complete Admin iframe controls.
  */
-
-type SubTab = "tool" | "initial";
 
 export interface ProductionKeywordsProps {
-  /** Load a seed keyword into Create and switch to that tab. */
-  onUseSeed: (seed: { id: number; title: string }) => void;
+  onUseSeed?: (seed: { id: number; title: string }) => void;
 }
 
-export function ProductionKeywords({ onUseSeed }: ProductionKeywordsProps) {
-  const [sub, setSub] = useState<SubTab>("tool");
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <V2Button
-          variant={sub === "tool" ? "accent" : "outline"}
-          onClick={() => setSub("tool")}
-        >
-          Keyword Tool (Live ERP)
-        </V2Button>
-        <V2Button
-          variant={sub === "initial" ? "accent" : "outline"}
-          onClick={() => setSub("initial")}
-        >
-          Initial Keywords (37 Softwares)
-        </V2Button>
-      </div>
-
-      {sub === "tool" ? (
-        <KeywordToolFrame onUseFallback={() => setSub("initial")} />
-      ) : (
-        <InitialKeywords onUseSeed={onUseSeed} />
-      )}
-    </div>
-  );
-}
-
-/**
- * The embedded Keyword Tool board with Admin control bar.
- */
-function KeywordToolFrame({ onUseFallback }: { onUseFallback: () => void }) {
+export function ProductionKeywords(_props: ProductionKeywordsProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -109,14 +69,10 @@ function KeywordToolFrame({ onUseFallback }: { onUseFallback: () => void }) {
           Keyword Tool unavailable — {err}
         </div>
         <div style={{ fontSize: 12, color: "var(--v2-text-2)", marginTop: 8 }}>
-          You can still work from the saved starter set — it lives inside this
-          app and contains all 1,713 keywords across the 37 softwares.
+          Could not establish single sign-on connection with the Keyword Tool backend.
         </div>
-        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          <V2Button variant="accent" onClick={onUseFallback}>
-            Use Initial Keywords (37 Softwares)
-          </V2Button>
-          <V2Button variant="outline" onClick={fetchUrl}>
+        <div style={{ marginTop: 12 }}>
+          <V2Button variant="accent" onClick={fetchUrl}>
             Retry Connection
           </V2Button>
         </div>
@@ -133,7 +89,7 @@ function KeywordToolFrame({ onUseFallback }: { onUseFallback: () => void }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {/* Admin Control Bar for iframe */}
       <div
         style={{
@@ -158,11 +114,11 @@ function KeywordToolFrame({ onUseFallback }: { onUseFallback: () => void }) {
               boxShadow: "0 0 8px #4ade80",
             }}
           />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>
-            Keyword Tool Live Console
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+            Keyword Tool (Video ERP)
           </span>
           <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>
-            (Port 3100 / Embedded ERP)
+            · 38 Software Packets Active
           </span>
         </div>
 

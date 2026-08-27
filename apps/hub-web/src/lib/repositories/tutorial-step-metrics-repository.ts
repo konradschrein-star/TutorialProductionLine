@@ -197,28 +197,25 @@ export async function getVaEventTimeline(
   }));
 }
 
-/**
- * Intraday production rhythm — every produced video mapped to its HOUR OF DAY
- * (0..24) of completion, per VA. This is the "clock" view: it reveals the VA's
- * ACTUAL working window regardless of what they claim — e.g. 120 videos all made
- * between 09:00 and 14:00 (5h), not the 8h logged. Only original (non-translated)
- * jobs count as hands-on VA production (`source_job_id IS NULL`).
- */
-export async function getIntradayProduction(
-  windowDays = 28,
-): Promise<IntradayPoint[]> {
+export async function getKnownVAs(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
   const rows = await db
     .select({
-      va: users.name,
-      hour: sql<string>`extract(hour from ${tutorialJobs.completed_at}) + extract(minute from ${tutorialJobs.completed_at}) / 60.0`,
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
     })
-    .from(tutorialJobs)
-    .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
+    .from(users)
     .where(
-      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.completed_at} >= now() - (${windowDays} || ' days')::interval`,
+      sql`${users.role} IN ('PRODUCTION_VA', 'TUTORIAL_VA') OR ${users.name} ILIKE '%VA%'`,
     )
-    .orderBy(sql`${tutorialJobs.completed_at} asc`)
-    .limit(3000);
+    .orderBy(users.name);
 
-  return rows.map((r) => ({ va: r.va, hour: Number(r.hour) }));
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    role: r.role,
+  }));
 }
+
