@@ -48,6 +48,46 @@ interface SeedResponse {
   keywords: SeedKeyword[];
 }
 
+export const VERIFIED_37_SOFTWARES = [
+  "Xero",
+  "Dext",
+  "Pipedrive",
+  "Deel",
+  "Remote.com",
+  "Rippling",
+  "TradingView",
+  "Notion",
+  "ClickUp",
+  "Monday.com",
+  "Zapier",
+  "Make",
+  "HubSpot",
+  "Airtable",
+  "Webflow",
+  "Framer",
+  "Canva",
+  "Figma",
+  "Miro",
+  "Loom",
+  "Slack",
+  "Zoom",
+  "Calendly",
+  "Typeform",
+  "n8n",
+  "Hotjar",
+  "Looker Studio",
+  "Semrush",
+  "Klaviyo",
+  "Brevo",
+  "DocuSign",
+  "PandaDoc",
+  "Gusto",
+  "BambooHR",
+  "Zendesk",
+  "Intercom",
+  "Webex",
+];
+
 const LENGTH_CLASSES = [
   "<3min",
   "3-6min",
@@ -82,6 +122,7 @@ export interface InitialKeywordsProps {
 export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
   const [search, setSearch] = useState("");
   const [dSearch, setDSearch] = useState("");
+  const [selectedSoftware, setSelectedSoftware] = useState("");
   // Standard filter: default to "under 3 minutes" — tutorials are short-form.
   const [lengths, setLengths] = useState<string[]>(["<3min"]);
   const [statusTab, setStatusTab] = useState<StatusTab>("NEW");
@@ -113,12 +154,14 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
         limit: String(PAGE),
       });
       if (dSearch) q.set("search", dSearch);
+      if (selectedSoftware) q.set("software", selectedSoftware);
       if (lengths.length) q.set("length", lengths.join(","));
       if (statusTab !== "ALL") q.set("status", statusTab);
       return q.toString();
     },
-    [dSearch, lengths, statusTab],
+    [dSearch, selectedSoftware, lengths, statusTab],
   );
+
 
   const loadFirst = useCallback(async () => {
     const my = ++reqId.current;
@@ -250,10 +293,7 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.6 }}>
-        The starter keyword set carried over from the previous tutorial tool,
-        stored inside this app. It stays available even if the live Keyword Tool
-        is down. Track each one To&nbsp;do → In&nbsp;progress → Done, delete the
-        ones you don&apos;t want, and press Create to send it to production.
+        Curated starter keywords for the <strong>37 Verified High-Demand Business Software Tools</strong> (e.g. Xero, Pipedrive, Zapier, Make, Notion, Airtable, Framer, Klaviyo, Hotjar). Track each one To&nbsp;do → In&nbsp;progress → Done, or click &quot;Create tutorial&quot; to send it directly into production.
       </div>
 
       {/* Status tabs */}
@@ -290,18 +330,47 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
         })}
       </div>
 
-      {/* Search + length filters */}
+      {/* Search + Software Selector + length filters */}
       <div
         style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}
       >
-        <div style={{ flex: "1 1 240px", minWidth: 200 }}>
+        <div style={{ flex: "1 1 200px", minWidth: 180 }}>
           <V2Input
-            placeholder="Search title or software…"
+            placeholder="Search keywords or topics…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             fullWidth
           />
         </div>
+
+        <div style={{ minWidth: 160 }}>
+          <select
+            value={selectedSoftware}
+            onChange={(e) => setSelectedSoftware(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "7px 12px",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 500,
+              background: "var(--v2-surface-2, rgba(255,255,255,0.06))",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "var(--v2-text-1, #fff)",
+              cursor: "pointer",
+              outline: "none",
+            }}
+          >
+            <option value="" style={{ background: "#18181b", color: "#fff" }}>
+              All 37 Softwares
+            </option>
+            {VERIFIED_37_SOFTWARES.map((s) => (
+              <option key={s} value={s} style={{ background: "#18181b", color: "#fff" }}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {LENGTH_CLASSES.map((lc) => {
             const on = lengths.includes(lc);
@@ -331,6 +400,7 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
           })}
         </div>
       </div>
+
 
       {error && (
         <GlassCard style={{ padding: 16 }}>
@@ -414,12 +484,33 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
                   {k.title}
                 </div>
                 <div
-                  style={{ fontSize: 10, color: "var(--v2-text-2)", marginTop: 2 }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    color: "var(--v2-text-2)",
+                    marginTop: 3,
+                  }}
                 >
-                  {k.software ?? "no software"}
-                  {k.lengthClass ? ` · ${k.lengthClass}` : ""}
-                  {k.contentType ? ` · ${k.contentType}` : ""}
+                  {k.software && (
+                    <span
+                      style={{
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        background: "rgba(var(--v2-accent-rgb), 0.15)",
+                        color: "var(--v2-accent)",
+                      }}
+                    >
+                      {k.software}
+                    </span>
+                  )}
+                  {k.lengthClass && <span>{k.lengthClass}</span>}
+                  {k.contentType && <span>· {k.contentType}</span>}
                 </div>
+
               </div>
 
               {k.referenceUrl && (

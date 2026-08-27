@@ -37,6 +37,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const url = new URL(request.url);
   const search = (url.searchParams.get("search") ?? "").trim();
+  const software = (url.searchParams.get("software") ?? "").trim();
   const under3 = url.searchParams.get("under3") === "1";
   const lengths = (url.searchParams.get("length") ?? "")
     .split(",")
@@ -52,11 +53,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 40));
 
   // Shared filters that DON'T depend on the status tab — the per-status counts
-  // must reflect search/length, but not the currently-selected status.
+  // must reflect search/length/software, but not the currently-selected status.
   const baseConds = [sql`sk.deleted_at IS NULL`];
   if (search) {
     const like = `%${search}%`;
     baseConds.push(sql`(sk.title ILIKE ${like} OR sk.software ILIKE ${like})`);
+  }
+  if (software) {
+    baseConds.push(sql`sk.software = ${software}`);
   }
   if (under3) {
     baseConds.push(sql`sk.duration_sec < 180`);
@@ -70,6 +74,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
   const baseWhere = sql.join(baseConds, sql` AND `);
+
 
   // Per-status counts (independent of the selected status tab).
   const countRows = (await db.execute<{ status: string; n: number }>(
