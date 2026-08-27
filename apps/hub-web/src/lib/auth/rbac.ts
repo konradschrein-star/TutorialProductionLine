@@ -129,11 +129,20 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     // credentials/storage/alerts — those need view:settings, which they lack.
     "edit:tutorial-workflow",
   ],
+  // Scoped operator: Tutorial Studio VA
+  TUTORIAL_VA: [
+    "view:dashboard",
+    "view:production",
+    "create:tutorial-job",
+    "edit:tutorial-workflow",
+    "manage:thumbnails",
+  ],
   // Uploader. Fixes a bad thumbnail before publishing and selects which one
   // ships — and nothing else. The Tutorial Studio route opens for the
   // Thumbnails tab only; every production API still checks view:production.
   UPLOADER_VA: ["manage:thumbnails"],
 };
+
 
 /**
  * Check if a user has a specific permission

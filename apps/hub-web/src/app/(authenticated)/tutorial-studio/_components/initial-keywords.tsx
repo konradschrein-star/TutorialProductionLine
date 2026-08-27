@@ -128,10 +128,9 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
   }, []);
 
   useEffect(() => {
-    if (viewMode === "APPS") {
-      void loadApps();
-    }
-  }, [viewMode, loadApps]);
+    void loadApps();
+  }, [loadApps]);
+
 
   // Load keywords for an expanded app
   const loadAppKeywords = useCallback(async (soft: string) => {
