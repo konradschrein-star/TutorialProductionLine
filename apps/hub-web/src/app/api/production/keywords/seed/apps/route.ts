@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
 import { VERIFIED_37_SOFTWARES } from "@/lib/tutorial/seed-softwares";
+import { ensure37KeywordsSeeded } from "../route";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,11 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Ensure DB contains strictly the 37 business software keywords and zero phone/gaming items
+  await ensure37KeywordsSeeded();
+
   try {
+
     const rows = (await db.execute<{
       software: string;
       status: string;

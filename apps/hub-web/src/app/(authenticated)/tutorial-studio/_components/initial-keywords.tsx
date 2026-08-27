@@ -337,6 +337,26 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
     DONE: "NEW",
   };
 
+  const [syncing, setSyncing] = useState(false);
+
+  const handleForceResync = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/production/keywords/seed", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      toast.success(
+        `Purged outdated topics & synced ${data.totalSeeded} keywords across 37 software tools!`,
+      );
+      void loadApps();
+      void loadFirst();
+    } catch (e) {
+      toast.error(`Sync failed: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header & Mode Switcher */}
@@ -353,16 +373,28 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
           Curated starter keywords for the <strong>37 Verified High-Demand Business Software Tools</strong>. Claim entire app sections or individual tutorials to record and produce.
         </div>
 
-        {/* View Mode Switch */}
-        <div
-          style={{
-            display: "inline-flex",
-            background: "rgba(255,255,255,0.06)",
-            padding: 3,
-            borderRadius: 8,
-            border: "1px solid rgba(255,255,255,0.12)",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <V2Button
+            variant="outline"
+            size="sm"
+            disabled={syncing}
+            onClick={handleForceResync}
+            title="Purge all old non-business keywords and re-sync the 37 business software topics"
+          >
+            {syncing ? "Syncing…" : "Re-Sync 37 Softwares"}
+          </V2Button>
+
+          {/* View Mode Switch */}
+          <div
+            style={{
+              display: "inline-flex",
+              background: "rgba(255,255,255,0.06)",
+              padding: 3,
+              borderRadius: 8,
+              border: "1px solid rgba(255,255,255,0.12)",
+            }}
+          >
+
           <button
             type="button"
             onClick={() => setViewMode("APPS")}
@@ -415,8 +447,10 @@ export function InitialKeywords({ onUseSeed }: InitialKeywordsProps) {
           </button>
         </div>
       </div>
+    </div>
 
       {/* ─── APP SECTIONS VIEW ─── */}
+
       {viewMode === "APPS" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* App search filter */}

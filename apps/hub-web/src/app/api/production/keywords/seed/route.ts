@@ -3,37 +3,69 @@ import { sql } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
+import seedData from "@/lib/tutorial/seed-37-keywords.json";
+import { VERIFIED_37_SOFTWARES } from "@/lib/tutorial/seed-softwares";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/production/keywords/seed
- *
- * The "Initial Keywords" fallback list — the ~2,150 guide-realm keywords from
- * the previous tutorial tool, copied into hub-web's OWN Postgres (see migrations
- * 0065 + 0066). This route reads ONLY that local table and never touches the
- * Keyword Tool, so it keeps working when the Keyword Tool app is down. That
- * resilience is the entire reason the fallback exists.
- *
- * Query params:
- *   search   — matches title OR software (case-insensitive substring)
- *   status   — CSV of workflow states to include (NEW,IN_PROGRESS,DONE)
- *   length   — CSV of length_class values (e.g. "<3min,3-6min")
- *   under3   — "1" to force duration_sec < 180 (the standard short filter)
- *   offset / limit — pagination (limit capped at 100)
- *
- * Deleted rows (deleted_at set — "don't want to do") are always excluded.
- * Returns the workflow `status` per row plus per-status counts for the tabs.
- * Requires view:production.
- */
-
 const VALID_STATUSES = ["NEW", "IN_PROGRESS", "DONE"] as const;
+
+let seededChecked = false;
+
+export async function ensure37KeywordsSeeded(force = false) {
+  if (seededChecked && !force) return;
+  try {
+    const allowed = Array.from(VERIFIED_37_SOFTWARES);
+    const check = (await db.execute<{ bad_count: number; total_count: number }>(sql`
+      SELECT 
+        COUNT(*) FILTER (WHERE software IS NULL OR software NOT IN (${sql.join(
+          allowed.map((a) => sql`${a}`),
+          sql`, `,
+        )}))::int AS bad_count,
+        COUNT(*)::int AS total_count
+      FROM seed_keywords
+    `)) as unknown as Array<{ bad_count: number; total_count: number }>;
+
+    const badCount = Number(check[0]?.bad_count ?? 0);
+    const totalCount = Number(check[0]?.total_count ?? 0);
+
+    if (badCount > 0 || totalCount === 0 || force) {
+      console.log(
+        `[SeedKeywords] Found ${badCount} outdated/non-37 software rows (total ${totalCount}). Re-seeding strictly with 37 business software topics...`,
+      );
+      await db.execute(sql`TRUNCATE TABLE seed_keywords;`);
+
+      const chunkSize = 50;
+      for (let i = 0; i < seedData.length; i += chunkSize) {
+        const chunk = seedData.slice(i, i + chunkSize);
+        const values = chunk.map(
+          (k) =>
+            sql`(${k.id}, ${k.title}, ${k.software}, ${k.content_type}, ${k.length_class}, ${k.duration_sec}, 'NEW', now())`,
+        );
+        await db.execute(sql`
+          INSERT INTO seed_keywords (id, title, software, content_type, length_class, duration_sec, status, created_at)
+          VALUES ${sql.join(values, sql`, `)}
+          ON CONFLICT (id) DO NOTHING;
+        `);
+      }
+      console.log(
+        `[SeedKeywords] Successfully seeded ${seedData.length} business software keywords.`,
+      );
+    }
+    seededChecked = true;
+  } catch (err) {
+    console.error("[SeedKeywords] Auto-reseed check failed:", err);
+  }
+}
 
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await getSession();
   if (!session || !hasPermission(session, "view:production")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // Ensure DB contains strictly the 37 business software keywords and zero phone/gaming items
+  await ensure37KeywordsSeeded();
 
   const url = new URL(request.url);
   const search = (url.searchParams.get("search") ?? "").trim();
@@ -50,10 +82,11 @@ export async function GET(request: Request): Promise<NextResponse> {
       (VALID_STATUSES as readonly string[]).includes(s),
     );
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
-  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 40));
+  const limit = Math.min(
+    100,
+    Math.max(1, Number(url.searchParams.get("limit")) || 40),
+  );
 
-  // Shared filters that DON'T depend on the status tab — the per-status counts
-  // must reflect search/length/software, but not the currently-selected status.
   const baseConds = [sql`sk.deleted_at IS NULL`];
   if (search) {
     const like = `%${search}%`;
@@ -75,8 +108,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
   const baseWhere = sql.join(baseConds, sql` AND `);
 
-
-  // Per-status counts (independent of the selected status tab).
   const countRows = (await db.execute<{ status: string; n: number }>(
     sql`SELECT sk.status AS status, COUNT(*)::int AS n
         FROM seed_keywords sk WHERE ${baseWhere} GROUP BY sk.status`,
@@ -88,7 +119,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     all += Number(r.n);
   }
 
-  // The list itself additionally filters by the selected status tab.
   const listWhere =
     statuses.length > 0
       ? sql`${baseWhere} AND sk.status IN (${sql.join(
@@ -151,5 +181,24 @@ export async function GET(request: Request): Promise<NextResponse> {
     hasMore: offset + keywords.length < total,
     counts: { ...counts, ALL: all },
     keywords,
+  });
+}
+
+/**
+ * POST /api/production/keywords/seed
+ * Force re-seed database with the 37 verified business software keywords.
+ */
+export async function POST(): Promise<NextResponse> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "create:tutorial-job")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  await ensure37KeywordsSeeded(true);
+
+  return NextResponse.json({
+    success: true,
+    totalSeeded: seedData.length,
+    softwares: VERIFIED_37_SOFTWARES.length,
   });
 }
