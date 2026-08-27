@@ -73,12 +73,11 @@ export const DEFAULT_CHANNELS: Channel[] = [
 // accounts via Settings → Team. Deliberately free of any real names/emails so the
 // product ships clean to any client.
 export const DEFAULT_USERS: VAUser[] = [
-  { id: '1', name: 'Administrator', email: 'admin@example.com', role: 'admin', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
-  { id: '2', name: 'Production Manager', email: 'manager@example.com', role: 'manager', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
-  { id: '3', name: 'Operator One', email: 'operator1@example.com', role: 'va', assignedChannels: ['skool'] },
-  { id: '4', name: 'Operator Two', email: 'operator2@example.com', role: 'va', assignedChannels: ['virtualfd'] },
-  { id: '5', name: 'Operator Three', email: 'operator3@example.com', role: 'va', assignedChannels: ['blueprint'] }
+  { id: '1', name: 'Virtual Assistant 1', email: 'va1@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
+  { id: '2', name: 'Virtual Assistant 2', email: 'va2@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
+  { id: '3', name: 'Administrator', email: 'admin@tutorialstudio.com', role: 'admin', assignedChannels: ['virtualfd', 'skool', 'blueprint'] }
 ];
+
 
 export const DEFAULT_GOOGLE_DRIVE_CONFIG: GoogleDriveConfig = {
   enabled: true,

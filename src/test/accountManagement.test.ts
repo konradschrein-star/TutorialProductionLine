@@ -10,8 +10,9 @@ describe('Account & Team Management Unit Tests', () => {
   it('should list default admin and VA users', () => {
     const users = StorageService.getUsers();
     expect(users.length).toBe(DEFAULT_USERS.length);
-    expect(users[0].role).toBe('admin');
+    expect(users.some(u => u.role === 'admin')).toBe(true);
   });
+
 
   it('should create, update, and persist a new VA operator account', () => {
     const newUser: VAUser = {
