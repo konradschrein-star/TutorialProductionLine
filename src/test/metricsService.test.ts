@@ -16,8 +16,11 @@ describe('MetricsService Unit Tests', () => {
     expect(metrics.dailyVelocity[0]).toHaveProperty('count');
   });
 
-  it('should reflect new finished video additions in metrics', () => {
+  it('should reflect new finished video additions in metrics and calculate VA productivity', () => {
     const initial = MetricsService.getMetrics();
+    expect(initial.vaProductivityList).toBeDefined();
+    expect(initial.vaProductivityList!.length).toBeGreaterThan(0);
+    expect(initial.vaProductivityList![0]).toHaveProperty('efficiencyRating');
 
     StorageService.addFinishedVideo({
       id: 'metric_test_vid',

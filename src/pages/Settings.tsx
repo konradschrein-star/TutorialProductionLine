@@ -28,6 +28,7 @@ import { Channel, GoogleDriveConfig, VAUser } from '../types';
 
 export const Settings: React.FC = () => {
   // API Keys
+  const [geminiKey, setGeminiKey] = useState<string>(() => StorageService.getApiKey('gemini'));
   const [groqKey, setGroqKey] = useState<string>(() => StorageService.getApiKey('groq'));
   const [deepseekKey, setDeepseekKey] = useState<string>(() => StorageService.getApiKey('deepseek'));
   const [elevenKey, setElevenKey] = useState<string>(() => StorageService.getApiKey('elevenlabs'));
@@ -58,6 +59,7 @@ export const Settings: React.FC = () => {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const handleSaveAll = () => {
+    StorageService.setApiKey('gemini', geminiKey);
     StorageService.setApiKey('groq', groqKey);
     StorageService.setApiKey('deepseek', deepseekKey);
     StorageService.setApiKey('elevenlabs', elevenKey);
@@ -69,6 +71,42 @@ export const Settings: React.FC = () => {
 
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
+  };
+
+  const handleTestGemini = async () => {
+    setTestingService('gemini');
+    if (!geminiKey.trim()) {
+      setTestResults(prev => ({ ...prev, gemini: { ok: false, message: 'No API Key Entered' } }));
+      setTestingService(null);
+      return;
+    }
+
+    try {
+      const start = Date.now();
+      const isVertexExpress = geminiKey.trim().startsWith('AQ.');
+      const testUrl = isVertexExpress
+        ? `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:countTokens?key=${encodeURIComponent(geminiKey.trim())}`
+        : `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(geminiKey.trim())}`;
+
+      const res = await fetch(testUrl, {
+        method: isVertexExpress ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        ...(isVertexExpress ? { body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] }) } : {})
+      });
+      const latency = Date.now() - start;
+      if (res.ok) {
+        setTestResults(prev => ({
+          ...prev,
+          gemini: { ok: true, message: `Connected (${isVertexExpress ? 'Vertex Express' : 'AI Studio'} ${latency}ms)` }
+        }));
+      } else {
+        setTestResults(prev => ({ ...prev, gemini: { ok: false, message: `Auth Failed (${res.status})` } }));
+      }
+    } catch (e: any) {
+      setTestResults(prev => ({ ...prev, gemini: { ok: false, message: e.message } }));
+    } finally {
+      setTestingService(null);
+    }
   };
 
   const handleTestGroq = async () => {
@@ -135,6 +173,47 @@ export const Settings: React.FC = () => {
       setTestResults(prev => ({ ...prev, drive: { ok: false, message: e.message } }));
     } finally {
       setTestingService(null);
+    }
+  };
+
+  const handleExportBackup = () => {
+    const backup = StorageService.exportFullBackup();
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const dateStr = new Date().toISOString().split('T')[0];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tpl_workstation_backup_${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        const ok = StorageService.importFullBackup(json);
+        if (ok) {
+          alert('Backup successfully restored! Reloading workstation...');
+          window.location.reload();
+        } else {
+          alert('Invalid backup file format.');
+        }
+      } catch (err: any) {
+        alert('Failed to parse backup JSON: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleResetFactoryData = () => {
+    if (window.confirm('Are you sure you want to reset all workstation data to factory defaults? This will clear custom channels, users, finished videos, and local configs.')) {
+      StorageService.resetFactoryData();
+      alert('Workstation reset to defaults. Reloading...');
+      window.location.reload();
     }
   };
 
@@ -668,10 +747,52 @@ export const Settings: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           
+          {/* Google AI Studio (Gemini 2.0 Flash) */}
+          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border md:col-span-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-foreground">Google AI Studio API Key (Gemini 2.0 Flash / Pro)</label>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-mono text-blue-400 hover:underline flex items-center gap-0.5"
+                >
+                  Get Key <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {testResults.gemini && (
+                  <span className={`text-[10px] font-mono font-bold ${testResults.gemini.ok ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {testResults.gemini.message}
+                  </span>
+                )}
+                <button
+                  onClick={handleTestGemini}
+                  disabled={testingService === 'gemini'}
+                  className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
+                >
+                  {testingService === 'gemini' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                  Test Ping
+                </button>
+              </div>
+            </div>
+            <input
+              type="password"
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              placeholder="AIzaSy..."
+              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+            />
+            <p className="text-[10px] text-muted font-mono">
+              Primary high-speed LLM engine for spoken tutorial scripts, metadata generation, and multilingual translations.
+            </p>
+          </div>
+
           {/* Groq LLaMA 3.3 70B */}
           <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-foreground">Groq API Key (Primary LLaMA 3.3 70B)</label>
+              <label className="text-xs font-bold text-foreground">Groq API Key (LLaMA 3.3 70B Failover)</label>
               <div className="flex items-center gap-1.5">
                 {testResults.groq && (
                   <span className={`text-[10px] font-mono font-bold ${testResults.groq.ok ? 'text-emerald-500' : 'text-red-500'}`}>
@@ -820,6 +941,48 @@ export const Settings: React.FC = () => {
             Point this at your <strong>own</strong> keyword tool to pull live topics into the
             "My Keywords" pool. Leave blank to run self-contained on the Starter List + CSV imports.
           </p>
+        </div>
+      </div>
+
+      {/* Database Backup, Migration & Factory Reset */}
+      <div className="pro-panel p-4 rounded-xl space-y-3">
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-foreground" />
+          <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
+            Workstation Data Backup &amp; Migration
+          </h3>
+        </div>
+        <p className="text-xs text-muted">
+          Export your entire workstation database (channels, finished video records, team profiles, drive configs, and active settings) to transfer between machines or backup locally.
+        </p>
+
+        <div className="flex items-center gap-3 flex-wrap pt-1">
+          <button
+            onClick={handleExportBackup}
+            className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export Backup (.json)
+          </button>
+
+          <label className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Import &amp; Restore (.json)</span>
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleImportBackup}
+              className="hidden"
+            />
+          </label>
+
+          <button
+            onClick={handleResetFactoryData}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 flex items-center gap-1.5 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Reset to Factory Defaults
+          </button>
         </div>
       </div>
 

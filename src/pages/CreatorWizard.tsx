@@ -100,6 +100,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [videoDesc, setVideoDesc] = useState<string>('');
   const [videoTags, setVideoTags] = useState<string>('');
   const [thumbnailUrl, setThumbnailUrl] = useState<string>('/background/bg-gradient-1.png');
+  const [isGeneratingAiThumb, setIsGeneratingAiThumb] = useState<boolean>(false);
   const [isDispatching, setIsDispatching] = useState<boolean>(false);
   const [dispatchedSuccess, setDispatchedSuccess] = useState<boolean>(false);
   const [isStep5ScriptOpen, setIsStep5ScriptOpen] = useState<boolean>(false);
@@ -392,6 +393,31 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     } finally {
       setIsBatchProcessing(false);
     }
+  };
+
+  const handleGenerateAiThumbnail = async () => {
+    const prompt = `High-CTR YouTube thumbnail background for tutorial on ${videoTitle || topic || 'Software Tutorial'}, dramatic lighting, clean modern 3D composition, bold style, 16:9`;
+    setIsGeneratingAiThumb(true);
+    try {
+      const dataUri = await AIService.generateThumbnailImage(prompt, { aspectRatio: '16:9' });
+      setThumbnailUrl(dataUri);
+    } catch (e: any) {
+      console.error('AI thumbnail generation failed:', e);
+      alert('AI thumbnail generation failed: ' + e.message);
+    } finally {
+      setIsGeneratingAiThumb(false);
+    }
+  };
+
+  const handleManualThumbnailUpload = (file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (e.target?.result) {
+        setThumbnailUrl(e.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleReset = () => {
@@ -1141,19 +1167,60 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   <div className="text-[11px] text-muted">{activeChannel.niche}</div>
                 </div>
 
-                <div className="p-3 rounded-lg bg-surface-200 border border-border space-y-2">
+                <div className="p-3 rounded-lg bg-surface-200 border border-border space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">Thumbnail</span>
+                    <span className="text-xs font-bold text-foreground">Thumbnail Delivery</span>
                     <button
-                      onClick={() => navigate('/thumbnails', { state: { title: topic } })}
+                      onClick={() => navigate('/thumbnails', { state: { title: videoTitle || topic } })}
                       className="text-[11px] text-foreground font-bold hover:underline flex items-center gap-1"
                     >
                       Studio <ExternalLink className="w-3 h-3" />
                     </button>
                   </div>
 
-                  <div className="aspect-video rounded-lg overflow-hidden bg-black border border-border">
+                  <div className="aspect-video rounded-lg overflow-hidden bg-black border border-border relative group">
                     <img src={thumbnailUrl} alt="Preview" className="w-full h-full object-cover" />
+                    <label className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity text-white text-xs font-bold gap-1">
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Manual Image</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => e.target.files?.[0] && handleManualThumbnailUpload(e.target.files[0])}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                    <button
+                      onClick={handleGenerateAiThumbnail}
+                      disabled={isGeneratingAiThumb}
+                      className="btn-solid py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                    >
+                      {isGeneratingAiThumb ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>Generating...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3 h-3 text-blue-300" />
+                          <span>AI Auto</span>
+                        </>
+                      )}
+                    </button>
+
+                    <label className="btn-outline py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer text-center">
+                      <Upload className="w-3 h-3" />
+                      <span>Manual File</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => e.target.files?.[0] && handleManualThumbnailUpload(e.target.files[0])}
+                      />
+                    </label>
                   </div>
                 </div>
               </div>

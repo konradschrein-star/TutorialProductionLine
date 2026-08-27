@@ -27,10 +27,9 @@ import {
   RotateCw,
   Sun,
   Maximize2,
-  ZoomIn,
-  ZoomOut,
   Bold,
-  Italic
+  Italic,
+  Wand2
 } from 'lucide-react';
 import { AIService } from '../services/aiService';
 import { StorageService } from '../services/storageService';
@@ -122,6 +121,65 @@ const ALL_SYMBOLS = [
   'video.png', 'wand-sparkles.png', 'zap.png'
 ];
 
+const REFERENCE_ARCHETYPES = [
+  { id: 'tut-1', name: 'Tutorial Archetype (Best CTR)', category: 'Tutorials', url: '/reference-thumbnails/tutorial-1-best-archetype.png' },
+  { id: 'tut-3', name: 'Tutorial Modern Slate', category: 'Tutorials', url: '/reference-thumbnails/tutorial-3.png' },
+  { id: 'tut-4', name: 'Tutorial Punchy Grid', category: 'Tutorials', url: '/reference-thumbnails/tutorial-4.png' },
+  { id: 'tut-5', name: 'Tutorial Floating Dashboard', category: 'Tutorials', url: '/reference-thumbnails/tutorial-5.png' },
+  { id: 'tut-6', name: 'Tutorial Step-by-Step 6', category: 'Tutorials', url: '/reference-thumbnails/tutorial-6.jpeg' },
+  { id: 'tut-7', name: 'Tutorial Step-by-Step 7', category: 'Tutorials', url: '/reference-thumbnails/tutorial-7.jpeg' },
+  { id: 'tut-8', name: 'Tutorial Clean Minimal 8', category: 'Tutorials', url: '/reference-thumbnails/tutorial-8.png' },
+  { id: 'tut-9', name: 'Tutorial Highlight 9', category: 'Tutorials', url: '/reference-thumbnails/tutorial-9.png' },
+  { id: 'tut-10', name: 'Tutorial Dark Focus 10', category: 'Tutorials', url: '/reference-thumbnails/tutorial-10.jpeg' },
+  { id: 'tut-11', name: 'Tutorial Master 11', category: 'Tutorials', url: '/reference-thumbnails/tutorial-11.jpeg' },
+  { id: 'tut-12', name: 'Tutorial Simple 12', category: 'Tutorials', url: '/reference-thumbnails/tutorial-12-simple.jpeg' },
+  { id: 'tut-13', name: 'Tutorial Pro 13', category: 'Tutorials', url: '/reference-thumbnails/tutorial-13.jpeg' },
+  { id: 'walk-1', name: 'Walkthrough Detailed 1', category: 'Tutorials', url: '/reference-thumbnails/walktrough-1.jpeg' },
+  { id: 'walk-2', name: 'Walkthrough Detailed 2', category: 'Tutorials', url: '/reference-thumbnails/walktrough-2.jpeg' },
+  { id: 'gfin-1', name: 'Google Finance Excel', category: 'Tutorials', url: '/reference-thumbnails/google-finance-excel.jpg' },
+  { id: 'norm-1', name: 'Normal Tutorial Style', category: 'Tutorials', url: '/reference-thumbnails/normal-tutorial-style.jpeg' },
+  { id: 'tipps-1', name: 'Tips & Tricks Lifehacks', category: 'Tutorials', url: '/reference-thumbnails/tipps-tricks-lifehacks-1.jpeg' },
+  { id: 'cool-1', name: 'Cool Feature Highlight', category: 'Tutorials', url: '/reference-thumbnails/cool-feature-1.jpeg' },
+  { id: 'bad-1', name: 'Software Fix & Troubleshoot', category: 'Tutorials', url: '/reference-thumbnails/bad-software-walktrough-for-hard.jpeg' },
+
+  { id: 'cmp-bat', name: 'Admin Comparison Battle', category: 'Comparisons', url: '/reference-thumbnails/admin-comparison-battle-style.jpeg' },
+  { id: 'cmp-2-1', name: 'Comparison Split 2-1', category: 'Comparisons', url: '/reference-thumbnails/admin-comparison-2-1.jpeg' },
+  { id: 'cmp-ph', name: 'Comparison 3 Phones', category: 'Comparisons', url: '/reference-thumbnails/comparison-1-3-phones.jpeg' },
+  { id: 'cmp-cln', name: 'Comparison Really Clean', category: 'Comparisons', url: '/reference-thumbnails/comparison-2-really-clean.jpeg' },
+  { id: 'cmp-alt', name: 'Comparison Alternatives', category: 'Comparisons', url: '/reference-thumbnails/comparison-3-alternatives.jpeg' },
+  { id: 'comb-1', name: 'Combination Connection', category: 'Comparisons', url: '/reference-thumbnails/combination-connection-1.jpeg' },
+
+  { id: 'adm-dram', name: 'Admin Dramatic Bold', category: 'Modern Tech', url: '/reference-thumbnails/admin-dramatic-bold-style.jpeg' },
+  { id: 'adm-edu', name: 'Admin Educational Friendly', category: 'Modern Tech', url: '/reference-thumbnails/admin-educational-friendly-style.jpeg' },
+  { id: 'adm-nrg', name: 'Admin Energetic Tech', category: 'Modern Tech', url: '/reference-thumbnails/admin-energetic-tech-style.jpeg' },
+  { id: 'adm-prod', name: 'Admin Modern Productivity', category: 'Modern Tech', url: '/reference-thumbnails/admin-modern-productivity-style.jpeg' },
+  { id: 'adm-warn', name: 'Admin Striking Warning', category: 'Modern Tech', url: '/reference-thumbnails/admin-striking-warning-style.jpg' },
+  { id: 'cas-tech', name: 'Casual Tech Style', category: 'Modern Tech', url: '/reference-thumbnails/casual-tech-style.jpeg' },
+  { id: 'news-1', name: 'Breaking News & Updates', category: 'Modern Tech', url: '/reference-thumbnails/news-1.jpeg' },
+  { id: 'nano-gen', name: 'Nano Banana AI Plate', category: 'Modern Tech', url: '/background/nano_banana_key1.png' },
+
+  { id: 'des-1', name: 'Design Minimal 1', category: 'Design & Mobile', url: '/reference-thumbnails/design-1.png' },
+  { id: 'des-2', name: 'Design Card 2', category: 'Design & Mobile', url: '/reference-thumbnails/design-2.png' },
+  { id: 'des-3', name: 'Design Gradient 3', category: 'Design & Mobile', url: '/reference-thumbnails/design-3.png' },
+  { id: 'des-4', name: 'Design Modern 4', category: 'Design & Mobile', url: '/reference-thumbnails/design-4.png' },
+  { id: 'des-5', name: 'Design Sleek 5', category: 'Design & Mobile', url: '/reference-thumbnails/design-5.png' },
+  { id: 'ph-1', name: 'Phone Screen 1', category: 'Design & Mobile', url: '/reference-thumbnails/phone-1.png' },
+  { id: 'ph-2', name: 'Phone Screen 2', category: 'Design & Mobile', url: '/reference-thumbnails/phone-2.png' },
+  { id: 'ph-3', name: 'Phone Screen 3', category: 'Design & Mobile', url: '/reference-thumbnails/phone-3.jpeg' },
+  { id: 'lay-auto', name: 'Layout Automated Grid', category: 'Design & Mobile', url: '/reference-thumbnails/layout-automated.png' },
+  { id: 'lay-edit', name: 'Layout Editorial High-CTR', category: 'Design & Mobile', url: '/reference-thumbnails/layout-editorial.png' },
+
+  { id: 'arch-1', name: 'Classic Archetype 1', category: 'Classics', url: '/reference-thumbnails/Archetype.png' },
+  { id: 'arch-2', name: 'Classic Archetype 2', category: 'Classics', url: '/reference-thumbnails/archetype2.jpg' },
+  { id: 'arch-3', name: 'Classic Archetype 3', category: 'Classics', url: '/reference-thumbnails/archetype3.jpeg' },
+  { id: 'arch-4', name: 'Classic Archetype 4', category: 'Classics', url: '/reference-thumbnails/archetype4.jpeg' },
+  { id: 'arch-5', name: 'Classic Archetype 5', category: 'Classics', url: '/reference-thumbnails/archetype5.jpeg' },
+  { id: 'arch-6', name: 'Classic Archetype 6', category: 'Classics', url: '/reference-thumbnails/archetype6.jpeg' },
+  { id: 'arch-7', name: 'Classic Archetype 7', category: 'Classics', url: '/reference-thumbnails/archetype7.jpeg' },
+  { id: 'hum-1', name: 'Humor & Expressive Face', category: 'Classics', url: '/reference-thumbnails/humor-1.jpg' },
+  { id: 'fh-1', name: 'Forehead Reaction Style', category: 'Classics', url: '/reference-thumbnails/forehead-funny.jpeg' }
+];
+
 export const ThumbnailStudio: React.FC = () => {
   const location = useLocation();
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -129,7 +187,8 @@ export const ThumbnailStudio: React.FC = () => {
   const channels = StorageService.getChannels();
   const [selectedChannelId, setSelectedChannelId] = useState<string>(channels[0]?.id || 'virtualfd');
 
-  const [activeTab, setActiveTab] = useState<'CUSTOM' | 'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS' | 'LAYERS'>('CUSTOM');
+  const [activeTab, setActiveTab] = useState<'AI_GEN' | 'ARCHETYPES' | 'CUSTOM' | 'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS' | 'LAYERS'>('AI_GEN');
+  const [archetypeFilter, setArchetypeFilter] = useState<'ALL' | 'Tutorials' | 'Comparisons' | 'Modern Tech' | 'Design & Mobile' | 'Classics'>('ALL');
   const [activeLang, setActiveLang] = useState<string>('English');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
@@ -137,6 +196,16 @@ export const ThumbnailStudio: React.FC = () => {
 
   // Custom User Uploads State
   const [customAssets, setCustomAssets] = useState<CustomThumbnailAsset[]>(() => StorageService.getCustomThumbnailAssets());
+
+  // AI Nano Banana 2 Generator State
+  const [aiPrompt, setAiPrompt] = useState<string>('High-CTR YouTube thumbnail background for a software tutorial, vibrant gradient lighting, modern 3D UI elements, clean cinematic composition, 16:9');
+  const [selectedRefArchetype, setSelectedRefArchetype] = useState<string>('/reference-thumbnails/tutorial-1-best-archetype.png');
+  const [selectedPersonaUrl, setSelectedPersonaUrl] = useState<string>('/English/English.png');
+  const [aiModel, setAiModel] = useState<'gemini-2.5-flash-image' | 'gemini-3-pro-image'>('gemini-2.5-flash-image');
+  const [aiImageSize, setAiImageSize] = useState<'1K' | '2K'>('1K');
+  const [isGeneratingAI, setIsGeneratingAI] = useState<boolean>(false);
+  const [aiGenError, setAiGenError] = useState<string | null>(null);
+  const [generatedAiImages, setGeneratedAiImages] = useState<string[]>([]);
 
   // Canvas elements state
   const [elements, setElements] = useState<ThumbnailElement[]>([
@@ -496,6 +565,241 @@ export const ThumbnailStudio: React.FC = () => {
     }
   };
 
+  // AI Image Generation Handlers
+  const handleGenerateAIImage = async () => {
+    if (!aiPrompt.trim()) return;
+    setIsGeneratingAI(true);
+    setAiGenError(null);
+
+    try {
+      const dataUri = await AIService.generateThumbnailImage(aiPrompt, {
+        aspectRatio,
+        model: aiModel,
+        imageSize: aiImageSize
+      });
+
+      setGeneratedAiImages(prev => [dataUri, ...prev]);
+
+      // Automatically set as background
+      setElements(prev => {
+        const bgIdx = prev.findIndex(e => e.type === 'BACKGROUND');
+        if (bgIdx >= 0) {
+          const updated = [...prev];
+          updated[bgIdx] = { ...updated[bgIdx], url: dataUri };
+          return updated;
+        } else {
+          return [
+            {
+              id: `bg-${Date.now()}`,
+              type: 'BACKGROUND',
+              url: dataUri,
+              x: 0,
+              y: 0,
+              width: aspectRatio === '16:9' ? 800 : 450,
+              height: aspectRatio === '16:9' ? 450 : 800,
+              zIndex: 1
+            },
+            ...prev
+          ];
+        }
+      });
+    } catch (err: any) {
+      console.error('AI image generation error:', err);
+      setAiGenError(err.message || 'Image generation failed');
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  const handleSetAiAsBg = (url: string) => {
+    setElements(prev => {
+      const bgIdx = prev.findIndex(e => e.type === 'BACKGROUND');
+      if (bgIdx >= 0) {
+        const updated = [...prev];
+        updated[bgIdx] = { ...updated[bgIdx], url };
+        return updated;
+      }
+      return [
+        {
+          id: `bg-${Date.now()}`,
+          type: 'BACKGROUND',
+          url,
+          x: 0,
+          y: 0,
+          width: aspectRatio === '16:9' ? 800 : 450,
+          height: aspectRatio === '16:9' ? 450 : 800,
+          zIndex: 1
+        },
+        ...prev
+      ];
+    });
+  };
+
+  const handleAddAiAsLayer = (url: string) => {
+    const newEl: ThumbnailElement = {
+      id: `ai-img-${Date.now()}`,
+      type: 'LOGO',
+      url,
+      x: 100,
+      y: 100,
+      width: 250,
+      height: 250,
+      zIndex: Math.max(...elements.map(e => e.zIndex), 0) + 1
+    };
+    setElements(prev => [...prev, newEl]);
+    setSelectedId(newEl.id);
+  };
+
+  // Helper to fetch image as base64
+  const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  // Automated 1-Click Composition: Reference Archetype + Persona Cutout + AI Prompt + Hook Text
+  const handleAutoComposeThumbnail = async (
+    customTopic?: string,
+    refUrl?: string,
+    personaUrl?: string
+  ) => {
+    const topic = (customTopic || autoGenTitle || aiPrompt || 'Software Tutorial').trim();
+    const reference = refUrl || selectedRefArchetype;
+    const persona = personaUrl || selectedPersonaUrl;
+
+    setIsGeneratingAI(true);
+    setAiGenError(null);
+
+    try {
+      // 1. Generate brief for hook text and logo detection
+      const brief = await AIService.generateThumbnailBrief(topic);
+      setCurrentBrief(brief);
+
+      // 2. Fetch reference image base64 if selected
+      let refB64: string | undefined = undefined;
+      if (reference) {
+        const b64 = await fetchImageAsBase64(reference);
+        if (b64) refB64 = b64;
+      }
+
+      // 3. Generate background plate via Nano Banana 2
+      const fullPrompt = `High-CTR YouTube thumbnail background plate for "${topic}", styled with dramatic volumetric lighting, cinematic color contrast, clean 3D graphic elements, matching visual style of reference archetype, 16:9 composition`;
+
+      const generatedPlateUrl = await AIService.generateThumbnailImage(fullPrompt, {
+        aspectRatio,
+        model: aiModel,
+        imageSize: aiImageSize,
+        referenceImageBase64: refB64
+      });
+
+      setGeneratedAiImages(prev => [generatedPlateUrl, ...prev]);
+
+      // 4. Find matched software logo if available
+      const cleanSoftware = (brief.software_name || topic.split(' ')[0] || '').toLowerCase();
+      const matchedLogo = ALL_APP_LOGOS.find(l => l.toLowerCase().includes(cleanSoftware)) || 'ChatGPT-Logo.png';
+
+      // 5. Compose full canvas element tree
+      const composedElements: ThumbnailElement[] = [
+        {
+          id: `bg-${Date.now()}`,
+          type: 'BACKGROUND',
+          url: generatedPlateUrl,
+          x: 0,
+          y: 0,
+          width: aspectRatio === '16:9' ? 800 : 450,
+          height: aspectRatio === '16:9' ? 450 : 800,
+          zIndex: 1
+        },
+        {
+          id: `person-${Date.now()}`,
+          type: 'PERSON',
+          url: persona || '/English/English.png',
+          x: 20,
+          y: 40,
+          width: 320,
+          height: 410,
+          zIndex: 2
+        },
+        {
+          id: 'text-top',
+          type: 'TEXT',
+          text: brief.thumbnail_text_line1 || 'LEARN FAST',
+          x: 370,
+          y: 45,
+          width: 400,
+          height: 80,
+          zIndex: 4,
+          fontFamily: 'Impact',
+          fontSize: 64,
+          color: '#ffffff',
+          strokeColor: '#000000',
+          strokeWidth: 8,
+          fontWeight: 'bold',
+          fontStyle: 'italic',
+          rotation: 0
+        },
+        {
+          id: 'text-bottom',
+          type: 'TEXT',
+          text: brief.thumbnail_text_line2 || 'STEP BY STEP',
+          x: 370,
+          y: 125,
+          width: 400,
+          height: 80,
+          zIndex: 5,
+          fontFamily: 'Impact',
+          fontSize: 64,
+          color: '#ffffff',
+          strokeColor: '#000000',
+          strokeWidth: 8,
+          fontWeight: 'bold',
+          fontStyle: 'italic',
+          rotation: 0
+        },
+        {
+          id: `logo-${Date.now()}`,
+          type: 'LOGO',
+          url: `/logos/${matchedLogo}`,
+          x: 620,
+          y: 220,
+          width: 140,
+          height: 140,
+          zIndex: 3
+        }
+      ];
+
+      setElements(composedElements);
+      setSelectedId('text-top');
+    } catch (err: any) {
+      console.error('Auto-compose thumbnail failed:', err);
+      setAiGenError(err.message || 'Auto-composition failed');
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  const handleSaveAiToAssets = (url: string) => {
+    const asset: CustomThumbnailAsset = {
+      id: `ai_${Date.now()}`,
+      name: `AI Plate ${generatedAiImages.length}`,
+      category: 'BGS',
+      url,
+      createdAt: new Date().toISOString()
+    };
+    StorageService.addCustomThumbnailAsset(asset);
+    setCustomAssets(StorageService.getCustomThumbnailAssets());
+    alert('Saved to Custom Assets library!');
+  };
+
   const canvasWidth = aspectRatio === '16:9' ? 800 : 450;
   const canvasHeight = aspectRatio === '16:9' ? 450 : 800;
 
@@ -599,21 +903,222 @@ export const ThumbnailStudio: React.FC = () => {
         <div className="lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[650px]">
           
           {/* Category Tabs */}
-          <div className="grid grid-cols-6 gap-0.5 p-1 bg-surface-200 rounded-lg border border-border">
-            {(['CUSTOM', 'PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS', 'LAYERS'] as const).map(tab => (
+          <div className="grid grid-cols-8 gap-0.5 p-1 bg-surface-200 rounded-lg border border-border">
+            {(['AI_GEN', 'ARCHETYPES', 'CUSTOM', 'PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS', 'LAYERS'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`py-1.5 text-[9px] font-mono font-bold uppercase rounded-md transition-all ${
+                className={`py-1.5 text-[8px] font-mono font-bold uppercase rounded-md transition-all truncate flex items-center justify-center gap-0.5 ${
                   activeTab === tab
                     ? 'bg-surface-100 text-foreground shadow-subtle'
                     : 'text-muted hover:text-foreground'
                 }`}
+                title={tab === 'AI_GEN' ? 'AI Nano Banana 2 Generator' : tab === 'ARCHETYPES' ? 'Reference Archetypes' : tab}
               >
-                {tab}
+                {tab === 'AI_GEN' ? (
+                  <>
+                    <Sparkles className="w-2.5 h-2.5 text-blue-400" />
+                    <span>AI AUTO</span>
+                  </>
+                ) : tab === 'ARCHETYPES' ? (
+                  <>
+                    <Layers className="w-2.5 h-2.5 text-purple-400" />
+                    <span>REFS (56)</span>
+                  </>
+                ) : tab}
               </button>
             ))}
           </div>
+
+          {/* AI Nano Banana 2 Automated Generator Panel */}
+          {activeTab === 'AI_GEN' && (
+            <div className="p-3 rounded-lg bg-surface-200/80 border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Wand2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-[10px] font-mono font-bold uppercase text-foreground">
+                    1-Click Auto Thumbnail Factory
+                  </span>
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  Nano Banana 2
+                </span>
+              </div>
+
+              {/* 1. Pick Reference Archetype */}
+              <div className="space-y-1">
+                <label className="block text-[9px] font-mono text-muted flex items-center justify-between">
+                  <span>1. Reference Visual Style:</span>
+                  <span className="text-[8.5px] text-blue-400 font-bold">{REFERENCE_ARCHETYPES.find(a => a.url === selectedRefArchetype)?.name || 'Default Style'}</span>
+                </label>
+                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  {REFERENCE_ARCHETYPES.slice(0, 12).map(arch => (
+                    <button
+                      key={arch.id}
+                      onClick={() => setSelectedRefArchetype(arch.url)}
+                      className={`relative flex-shrink-0 w-16 aspect-video rounded-md overflow-hidden border transition-all ${
+                        selectedRefArchetype === arch.url
+                          ? 'border-blue-500 ring-2 ring-blue-500/30'
+                          : 'border-border opacity-70 hover:opacity-100'
+                      }`}
+                      title={arch.name}
+                    >
+                      <img src={arch.url} alt={arch.name} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Pick Persona Face */}
+              <div className="space-y-1">
+                <label className="block text-[9px] font-mono text-muted flex items-center justify-between">
+                  <span>2. Host Persona Cutout:</span>
+                  <span className="text-[8.5px] text-foreground font-bold">{activeLang} Persona</span>
+                </label>
+                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  {(DEFAULT_PERSONAS[activeLang] || DEFAULT_PERSONAS['English']).map((p, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedPersonaUrl(p.url)}
+                      className={`relative flex-shrink-0 w-10 h-10 rounded-lg bg-surface-300 border flex items-center justify-center p-0.5 transition-all ${
+                        selectedPersonaUrl === p.url
+                          ? 'border-emerald-500 ring-2 ring-emerald-500/30'
+                          : 'border-border opacity-70 hover:opacity-100'
+                      }`}
+                      title={p.name}
+                    >
+                      <img src={p.url} alt={p.name} className="max-h-full object-contain" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Prompt Description */}
+              <div>
+                <label className="block text-[9px] font-mono text-muted mb-1">
+                  3. Topic / Prompt:
+                </label>
+                <textarea
+                  rows={2}
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g. Advanced Excel VLOOKUP automation tutorial..."
+                  className="pro-input w-full rounded-md p-2 text-xs font-mono resize-y"
+                />
+              </div>
+
+              {/* Prompt Suggestions */}
+              <div className="space-y-1">
+                <div className="flex gap-1 flex-wrap">
+                  {[
+                    'Excel Dashboard Neon',
+                    'Notion Minimal 3D',
+                    'SaaS Automation Studio',
+                    'Clean Dark Slate'
+                  ].map(style => (
+                    <button
+                      key={style}
+                      onClick={() => setAiPrompt(`High-CTR YouTube thumbnail background for ${style}, dramatic volumetric lighting, ultra-clean 3D composition, 16:9`)}
+                      className="px-1.5 py-0.5 rounded bg-surface-300 text-[8.5px] font-mono text-muted hover:text-foreground hover:bg-surface-100 transition-colors"
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Model & Size Selector */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[8.5px] font-mono text-muted mb-0.5">Model Engine:</label>
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value as any)}
+                    className="pro-input w-full text-[9.5px] rounded p-1 font-mono"
+                  >
+                    <option value="gemini-2.5-flash-image">Nano Banana Flash (Fast)</option>
+                    <option value="gemini-3-pro-image">Nano Banana Pro (2K)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[8.5px] font-mono text-muted mb-0.5">Resolution Floor:</label>
+                  <select
+                    value={aiImageSize}
+                    onChange={(e) => setAiImageSize(e.target.value as any)}
+                    className="pro-input w-full text-[9.5px] rounded p-1 font-mono"
+                  >
+                    <option value="1K">1K (1344x768)</option>
+                    <option value="2K">2K (2752x1536 Pro)</option>
+                  </select>
+                </div>
+              </div>
+
+              {aiGenError && (
+                <div className="p-2 rounded bg-red-500/10 border border-red-500/20 text-[10px] font-mono text-red-400">
+                  {aiGenError}
+                </div>
+              )}
+
+              {/* Action Buttons: Auto-Compose Full Thumbnail vs Background Only */}
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => handleAutoComposeThumbnail()}
+                  disabled={isGeneratingAI || !aiPrompt.trim()}
+                  className="btn-solid w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-elevation"
+                >
+                  {isGeneratingAI ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Composing AI Thumbnail (~15s)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-blue-300" />
+                      <span>Auto-Compose Complete Thumbnail</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleGenerateAIImage}
+                  disabled={isGeneratingAI || !aiPrompt.trim()}
+                  className="btn-outline w-full py-1.5 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1 text-muted hover:text-foreground disabled:opacity-50"
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>Generate Background Plate Only</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Reference Archetypes Browser Panel */}
+          {activeTab === 'ARCHETYPES' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono font-bold uppercase text-foreground">
+                  High-CTR Reference Library ({REFERENCE_ARCHETYPES.length})
+                </span>
+                <span className="text-[9px] font-mono text-muted">From Content Forge</span>
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex gap-1 flex-wrap">
+                {(['ALL', 'Tutorials', 'Comparisons', 'Modern Tech', 'Design & Mobile', 'Classics'] as const).map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setArchetypeFilter(cat)}
+                    className={`px-2 py-0.5 rounded text-[9px] font-mono font-semibold transition-colors ${
+                      archetypeFilter === cat
+                        ? 'bg-surface-100 text-foreground border border-border-strong'
+                        : 'bg-surface-200 text-muted hover:text-foreground'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Custom Assets Upload Panel */}
           {activeTab === 'CUSTOM' && (
@@ -688,6 +1193,103 @@ export const ThumbnailStudio: React.FC = () => {
           {/* Content Area */}
           <div className="flex-1 overflow-y-auto p-0.5 space-y-2">
             
+            {/* AI Generated Images Gallery */}
+            {activeTab === 'AI_GEN' && (
+              <div className="space-y-2">
+                {generatedAiImages.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-muted space-y-1">
+                    <Sparkles className="w-5 h-5 mx-auto text-muted/50 mb-1" />
+                    <p className="font-semibold text-foreground">No AI thumbnails generated yet.</p>
+                    <p className="text-[11px]">Type a prompt above and click "Generate AI Thumbnail" to produce high-CTR 16:9 plates.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="text-[10px] font-mono uppercase font-bold text-muted">
+                      Generated AI Plates ({generatedAiImages.length}):
+                    </div>
+                    <div className="grid grid-cols-1 gap-2.5">
+                      {generatedAiImages.map((imgUri, idx) => (
+                        <div key={idx} className="p-2 rounded-lg bg-surface-200 border border-border space-y-2 group">
+                          <div className="aspect-video relative rounded-md overflow-hidden bg-black border border-border">
+                            <img src={imgUri} alt={`AI Gen ${idx + 1}`} className="w-full h-full object-cover" />
+                            <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-md text-[9px] font-mono text-white">
+                              Plate #{generatedAiImages.length - idx}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 pt-1">
+                            <button
+                              onClick={() => handleSetAiAsBg(imgUri)}
+                              className="btn-solid py-1 px-1 rounded text-[9px] font-bold text-center"
+                              title="Set as Canvas Background"
+                            >
+                              Set BG
+                            </button>
+                            <button
+                              onClick={() => handleAddAiAsLayer(imgUri)}
+                              className="btn-outline py-1 px-1 rounded text-[9px] font-bold text-center"
+                              title="Add as Layer"
+                            >
+                              + Layer
+                            </button>
+                            <button
+                              onClick={() => handleSaveAiToAssets(imgUri)}
+                              className="btn-outline py-1 px-1 rounded text-[9px] font-bold text-center"
+                              title="Save to Custom Assets Library"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Reference Archetypes Library (56 Templates) */}
+            {activeTab === 'ARCHETYPES' && (
+              <div className="space-y-3">
+                <div className="text-[10px] font-mono uppercase font-bold text-muted">
+                  Showing {REFERENCE_ARCHETYPES.filter(a => (archetypeFilter === 'ALL' || a.category === archetypeFilter) && a.name.toLowerCase().includes(searchQuery.toLowerCase())).length} Archetypes:
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {REFERENCE_ARCHETYPES
+                    .filter(a => (archetypeFilter === 'ALL' || a.category === archetypeFilter) && a.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map(arch => (
+                      <div key={arch.id} className="p-1.5 rounded-lg bg-surface-200 border border-border hover:border-border-strong space-y-1.5 group">
+                        <div className="aspect-video relative rounded overflow-hidden bg-black border border-border/50">
+                          <img src={arch.url} alt={arch.name} className="w-full h-full object-cover" />
+                          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1">
+                            <p className="text-[8.5px] font-bold text-white truncate">{arch.name}</p>
+                            <span className="text-[7.5px] font-mono text-muted uppercase">{arch.category}</span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          <button
+                            onClick={() => handleAddAsset('BACKGROUND', arch.url)}
+                            className="btn-solid py-1 px-1 rounded text-[8.5px] font-bold text-center"
+                            title="Set as Canvas Background"
+                          >
+                            Use BG
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedRefArchetype(arch.url);
+                              setActiveTab('AI_GEN');
+                            }}
+                            className="btn-outline py-1 px-1 rounded text-[8.5px] font-bold text-center text-blue-400 border-blue-500/30"
+                            title="Use as Style Reference in AI Studio"
+                          >
+                            AI Auto
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
             {/* Custom References */}
             {activeTab === 'CUSTOM' && (
               <div className="space-y-2">

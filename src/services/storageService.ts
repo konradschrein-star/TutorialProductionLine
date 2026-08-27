@@ -214,11 +214,11 @@ export class StorageService {
   }
 
   // API Keys
-  static getApiKey(service: 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai'): string {
+  static getApiKey(service: 'gemini' | 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai'): string {
     return this.get<string>(`api_key_${service}`, '').trim();
   }
 
-  static setApiKey(service: 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai', key: string): void {
+  static setApiKey(service: 'gemini' | 'groq' | 'deepseek' | 'elevenlabs' | 'fishaudio' | 'openai', key: string): void {
     this.set(`api_key_${service}`, (key || '').trim());
   }
 
@@ -319,6 +319,72 @@ export class StorageService {
     const list = this.getFinishedVideos();
     const updated = list.map(v => v.id === id ? { ...v, ...updates } : v);
     this.set('finished_videos', updated);
+  }
+
+  static deleteFinishedVideo(id: string): void {
+    if (!id) return;
+    const list = this.getFinishedVideos().filter(v => v.id !== id);
+    this.set('finished_videos', list);
+  }
+
+  static clearFinishedVideos(): void {
+    this.set('finished_videos', []);
+  }
+
+  // Workstation Backup & Migration
+  static exportFullBackup(): Record<string, any> {
+    const keys = [
+      'custom_channels',
+      'active_channel',
+      'users',
+      'active_user',
+      'google_drive_config',
+      'drive_deliveries',
+      'finished_videos',
+      'custom_thumbnail_assets',
+      'studio_jobs',
+      'external_keyword_api',
+      'onboarding_state'
+    ];
+    const backup: Record<string, any> = {
+      version: '1.0',
+      exportedAt: new Date().toISOString()
+    };
+    keys.forEach(k => {
+      backup[k] = this.get(k, null);
+    });
+    return backup;
+  }
+
+  static importFullBackup(data: Record<string, any>): boolean {
+    if (!data || typeof data !== 'object') return false;
+    Object.keys(data).forEach(k => {
+      if (k !== 'version' && k !== 'exportedAt' && data[k] !== null && data[k] !== undefined) {
+        this.set(k, data[k]);
+      }
+    });
+    return true;
+  }
+
+  static resetFactoryData(): void {
+    const keysToRemove = [
+      'custom_channels',
+      'active_channel',
+      'users',
+      'active_user',
+      'google_drive_config',
+      'drive_deliveries',
+      'finished_videos',
+      'custom_thumbnail_assets',
+      'studio_jobs',
+      'onboarding_state'
+    ];
+    keysToRemove.forEach(k => {
+      this.memoryCache.delete(`${this.prefix}${k}`);
+      try {
+        localStorage.removeItem(`${this.prefix}${k}`);
+      } catch {}
+    });
   }
 
   // Studio Jobs

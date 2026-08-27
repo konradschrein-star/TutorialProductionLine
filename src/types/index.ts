@@ -235,6 +235,18 @@ export interface StudioJob {
 /**
  * Production Metrics & Reporting
  */
+export interface VAProductivityStat {
+  userId: string;
+  name: string;
+  role: 'admin' | 'manager' | 'va' | 'viewer';
+  email: string;
+  assignedChannels: string[];
+  completedCount: number;
+  inProductionCount: number;
+  watchTimeMinutes: number;
+  efficiencyRating: number;
+}
+
 export interface ProductionMetrics {
   totalProduced: number;
   totalDurationMinutes: number;
@@ -243,6 +255,7 @@ export interface ProductionMetrics {
   deliveredToDriveCount: number;
   channelCounts: Record<string, number>;
   vaActivityCounts: Record<string, number>;
+  vaProductivityList?: VAProductivityStat[];
   dailyVelocity: { date: string; count: number }[];
 }
 

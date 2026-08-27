@@ -13,8 +13,8 @@ interface LLMRequestOptions {
 
 export class AIService {
   /**
-   * Dispatches LLM calls with primary Groq LLaMA 3.3 and DeepSeek Flash (deepseek-chat) fallback.
-   * Uses deepseek-chat (DeepSeek V3 Flash model) for fast sub-second inference.
+   * Dispatches LLM calls with Google AI Studio (Gemini 2.0 Flash), Groq LLaMA 3.3,
+   * and DeepSeek Flash (deepseek-chat) failover.
    * Employs AbortController timeout guards and defensive error catching.
    */
   private static async callLLM({
@@ -24,10 +24,69 @@ export class AIService {
     jsonMode = false,
     timeoutMs = 15000
   }: LLMRequestOptions): Promise<string | null> {
+    const geminiKey = StorageService.getApiKey('gemini');
     const groqKey = StorageService.getApiKey('groq');
     const deepseekKey = StorageService.getApiKey('deepseek');
 
-    // 1. Try Groq (LLaMA 3.3 70B)
+    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+    const nonSystemMsgs = messages.filter(m => m.role !== 'system');
+
+    // 1. Try Google AI Studio (Gemini 2.0 Flash)
+    if (geminiKey) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const contents = nonSystemMsgs.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        }));
+
+        const body: Record<string, any> = {
+          contents,
+          generationConfig: {
+            temperature,
+            maxOutputTokens: maxTokens,
+            ...(jsonMode ? { responseMimeType: 'application/json' } : {})
+          }
+        };
+
+        if (systemMsg) {
+          body.systemInstruction = {
+            parts: [{ text: systemMsg }]
+          };
+        }
+
+        const isVertexExpress = geminiKey.startsWith('AQ.');
+        const endpointUrl = isVertexExpress
+          ? `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiKey)}`
+          : `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiKey)}`;
+
+        const response = await fetch(endpointUrl, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data = await response.json();
+          const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (content) return content;
+        } else {
+          console.warn(`Google Gemini API returned HTTP ${response.status}, triggering failover.`);
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        console.warn('Google Gemini API call failed or timed out:', err);
+      }
+    }
+
+    // 2. Try Groq (LLaMA 3.3 70B)
     if (groqKey) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -64,7 +123,7 @@ export class AIService {
       }
     }
 
-    // 2. Fallback to DeepSeek Flash (deepseek-chat: DeepSeek-V3 non-reasoning high-throughput model)
+    // 3. Fallback to DeepSeek Flash (deepseek-chat: DeepSeek-V3 non-reasoning high-throughput model)
     if (deepseekKey) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -207,11 +266,45 @@ If this helped you out, drop a like and subscribe to the channel. Let me know in
       console.warn('Script refinement exception:', e);
     }
 
-    // Deterministic Offline Fallback
     await new Promise(r => setTimeout(r, 300));
     if (action === 'add_pauses') {
       return safeScript.replace(/(\. )/g, '... ');
     }
+    return safeScript;
+  }
+
+  /**
+   * Translates a spoken tutorial script into a target language using Google Gemini / Gemma.
+   * Preserves natural voiceover pacing, pause markers ('...'), and software names.
+   */
+  static async translateScript(script: string, targetLanguage: string): Promise<string> {
+    const safeScript = (script || '').trim();
+    if (!safeScript) return '';
+
+    const systemPrompt = `You are an expert multilingual video translator.
+Translate the tutorial narration script into ${targetLanguage}.
+CRITICAL RULES:
+1. Preserve natural spoken pauses ("...") and second-person conversational pacing.
+2. DO NOT translate software brand names, UI menu paths, keyboard shortcuts, or formulas (e.g. Excel, Notion, VLOOKUP, Settings, Ctrl+C).
+3. Output PLAIN SPOKEN SCRIPT ONLY. No markdown, no quotes, no extra commentary.`;
+
+    try {
+      const result = await this.callLLM({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: safeScript }
+        ],
+        temperature: 0.3,
+        maxTokens: 1200
+      });
+
+      if (result && result.trim().length > 10) {
+        return result.trim();
+      }
+    } catch (e) {
+      console.warn(`Translation to ${targetLanguage} failed:`, e);
+    }
+
     return safeScript;
   }
 
@@ -333,5 +426,136 @@ Output ONLY a JSON object formatted as:
         Swedish: { top: 'LÄR DIG SNABBT', bottom: 'STEG FÖR STEG' }
       }
     };
+  }
+
+  /**
+   * Generates a high-CTR YouTube thumbnail image plate using Google Vertex AI Express Mode
+   * (Nano Banana 2 / gemini-2.5-flash-image / gemini-3-pro-image) or Google AI Studio.
+   * Returns a base64 data URI: data:image/png;base64,...
+   */
+  static async generateThumbnailImage(
+    prompt: string,
+    options?: {
+      aspectRatio?: '16:9' | '1:1' | '9:16';
+      model?: 'gemini-2.5-flash-image' | 'gemini-3-pro-image';
+      imageSize?: '1K' | '2K';
+      referenceImageBase64?: string;
+      referenceMimeType?: string;
+      timeoutMs?: number;
+    }
+  ): Promise<string> {
+    const geminiKey = StorageService.getApiKey('gemini');
+    if (!geminiKey) {
+      throw new Error('Google AI Studio / Vertex Express API key is not configured in Settings.');
+    }
+
+    const isVertexExpress = geminiKey.startsWith('AQ.');
+    const model = options?.model || 'gemini-2.5-flash-image';
+    const aspectRatio = options?.aspectRatio || '16:9';
+    const imageSize = options?.imageSize || (model === 'gemini-3-pro-image' ? '2K' : '1K');
+    const timeoutMs = options?.timeoutMs || 45000;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      if (isVertexExpress) {
+        // Vertex AI Express Mode endpoint (supports Nano Banana 2 models with imageConfig + Multimodal Reference)
+        const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+        
+        const parts: any[] = [];
+        if (options?.referenceImageBase64) {
+          const cleanB64 = options.referenceImageBase64.replace(/^data:[^;]+;base64,/, '');
+          parts.push({
+            inlineData: {
+              mimeType: options.referenceMimeType || 'image/png',
+              data: cleanB64
+            }
+          });
+        }
+        parts.push({ text: prompt });
+
+        const body = {
+          contents: [
+            {
+              role: 'user',
+              parts
+            }
+          ],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+            imageConfig: {
+              aspectRatio,
+              imageSize
+            }
+          }
+        };
+
+        const res = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error(`Google Image API HTTP ${res.status}: ${errText.slice(0, 200)}`);
+        }
+
+        const json = await res.json();
+        const imgPart = json.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+
+        if (!imgPart?.inlineData?.data) {
+          const reason = json.candidates?.[0]?.finishReason || json.promptFeedback?.blockReason;
+          throw new Error(`Google Image API returned no image data (Finish Reason: ${reason || 'UNKNOWN'})`);
+        }
+
+        const mime = imgPart.inlineData.mimeType || 'image/png';
+        return `data:${mime};base64,${imgPart.inlineData.data}`;
+      } else {
+        // AI Studio fallback / Imagen 3 endpoint
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${encodeURIComponent(geminiKey)}`;
+        const body = {
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+            outputOptions: { mimeType: 'image/png' }
+          }
+        };
+
+        const res = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error(`Google AI Studio Imagen API HTTP ${res.status}: ${errText.slice(0, 200)}`);
+        }
+
+        const json = await res.json();
+        const b64 = json.predictions?.[0]?.bytesBase64Encoded;
+        if (!b64) {
+          throw new Error('Google AI Studio returned no image prediction.');
+        }
+
+        return `data:image/png;base64,${b64}`;
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      throw new Error(`Thumbnail Image Generation failed: ${err.message}`);
+    }
   }
 }

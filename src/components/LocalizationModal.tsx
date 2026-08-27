@@ -82,11 +82,10 @@ export const LocalizationModal: React.FC<LocalizationModalProps> = ({
         const brief = await AIService.generateThumbnailBrief(topic || 'Software Tutorial');
         const translatedBrief = brief.translations?.[langObj.name] || { top: 'LEARN FAST', bottom: 'STEP BY STEP' };
 
-        // Generate full script in target language via AI or fallback
-        const translatedScript = await AIService.generateScript(
-          `Translate the following tutorial into ${langObj.name}:\n\n${originalScript || topic}`,
-          `Target Language: ${langObj.name}. Retain technical names (Excel, Notion, QuickBooks, etc.).`,
-          'standard'
+        // Generate full script in target language via AI (Gemma/Gemini)
+        const translatedScript = await AIService.translateScript(
+          originalScript || topic,
+          langObj.name
         );
 
         // 2. Synthesize audio

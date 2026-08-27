@@ -38,6 +38,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   const [selectedVoice, setSelectedVoice] = useState<string>('fish-paul-neutral');
 
   // Keys
+  const [geminiKey, setGeminiKey] = useState<string>(() => StorageService.getApiKey('gemini'));
   const [groqKey, setGroqKey] = useState<string>(() => StorageService.getApiKey('groq'));
   const [deepseekKey, setDeepseekKey] = useState<string>(() => StorageService.getApiKey('deepseek'));
 
@@ -86,6 +87,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
     StorageService.setActiveChannel(channel);
 
     // Save Keys & Drive
+    if (geminiKey) StorageService.setApiKey('gemini', geminiKey);
     if (groqKey) StorageService.setApiKey('groq', groqKey);
     if (deepseekKey) StorageService.setApiKey('deepseek', deepseekKey);
     StorageService.setGoogleDriveConfig(driveConfig);
@@ -216,7 +218,23 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-foreground mb-1">
-                Groq API Key (Primary LLaMA 3.3 70B Engine)
+                Google AI Studio API Key (Gemini 2.0 Flash / Pro)
+              </label>
+              <input
+                type="password"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted mt-1 font-mono">
+                Get free API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline text-blue-400">aistudio.google.com</a>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">
+                Groq API Key (LLaMA 3.3 70B Failover)
               </label>
               <input
                 type="password"
@@ -225,9 +243,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
                 placeholder="gsk_..."
                 className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
               />
-              <p className="text-[10px] text-muted mt-1 font-mono">
-                Leave empty to run in instant local template fallback mode.
-              </p>
             </div>
 
             <div>

@@ -14,9 +14,11 @@ describe('StorageService Unit Tests', () => {
     expect(user.name).toBe(DEFAULT_USERS[1].name);
   });
 
-  it('should set and get API keys including DeepSeek from vault', () => {
+  it('should set and get API keys including Gemini and DeepSeek from vault', () => {
+    StorageService.setApiKey('gemini', 'AIzaSy_test_gemini_key');
     StorageService.setApiKey('groq', 'gsk_test_key_123');
     StorageService.setApiKey('deepseek', 'sk_deepseek_flash_key');
+    expect(StorageService.getApiKey('gemini')).toBe('AIzaSy_test_gemini_key');
     expect(StorageService.getApiKey('groq')).toBe('gsk_test_key_123');
     expect(StorageService.getApiKey('deepseek')).toBe('sk_deepseek_flash_key');
   });

@@ -172,15 +172,20 @@ export const MetricsDashboard: React.FC = () => {
             ))}
           </div>
 
-          <div className="pt-2 border-t border-border">
-            <div className="text-[10px] font-mono uppercase text-muted font-bold mb-1.5">
-              VA Leaderboard
+          <div className="pt-2 border-t border-border space-y-2">
+            <div className="text-[10px] font-mono uppercase text-muted font-bold">
+              VA Leaderboard Output
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {Object.entries(metrics.vaActivityCounts).map(([name, count]) => (
-                <div key={name} className="p-2 rounded bg-surface-200 text-xs flex items-center justify-between">
-                  <span className="text-muted truncate text-[11px]">{name}</span>
-                  <span className="font-mono font-bold text-foreground text-[11px]">{count}</span>
+                <div key={name} className="p-2.5 rounded-lg bg-surface-200 text-xs flex items-center justify-between border border-border">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <Users className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+                    <span className="text-foreground font-semibold truncate text-[11px]">{name}</span>
+                  </div>
+                  <span className="font-mono font-bold text-foreground text-[11px] px-1.5 py-0.5 rounded bg-surface-100 border border-border">
+                    {count} vids
+                  </span>
                 </div>
               ))}
             </div>
@@ -188,6 +193,88 @@ export const MetricsDashboard: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Virtual Assistant Productivity & Efficiency Suite */}
+      {metrics.vaProductivityList && metrics.vaProductivityList.length > 0 && (
+        <div className="pro-panel rounded-xl overflow-hidden shadow-card space-y-3 p-4">
+          <div className="flex items-center justify-between border-b border-border pb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-foreground" />
+              <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
+                Virtual Assistant &amp; Operator Productivity Audit
+              </h3>
+            </div>
+            <span className="text-[10px] font-mono text-muted">
+              {metrics.vaProductivityList.length} Active Operators
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-foreground">
+              <thead className="bg-surface-200/50 text-[10px] uppercase font-mono font-bold text-muted border-b border-border">
+                <tr>
+                  <th className="py-2.5 px-3">Operator</th>
+                  <th className="py-2.5 px-3">Role</th>
+                  <th className="py-2.5 px-3">Assigned Channels</th>
+                  <th className="py-2.5 px-3 text-center">Completed</th>
+                  <th className="py-2.5 px-3 text-center">In Production</th>
+                  <th className="py-2.5 px-3">Watch Time</th>
+                  <th className="py-2.5 px-3 text-right">Throughput Rate</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border font-mono text-[11px]">
+                {metrics.vaProductivityList.map(va => (
+                  <tr key={va.userId} className="hover:bg-surface-200/40 transition-colors">
+                    <td className="py-3 px-3">
+                      <div className="font-bold font-sans text-foreground">{va.name}</div>
+                      <div className="text-[10px] text-muted">{va.email}</div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded border font-bold ${
+                        va.role === 'admin' 
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                          : va.role === 'manager'
+                            ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      }`}>
+                        {va.role}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-muted">
+                      {va.assignedChannels.length > 0 ? (
+                        <div className="flex gap-1 flex-wrap">
+                          {va.assignedChannels.map(ch => (
+                            <span key={ch} className="px-1 py-0.2 rounded bg-surface-200 text-[10px] text-foreground">
+                              {ch}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span>All Channels</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 text-center font-bold text-foreground">
+                      {va.completedCount}
+                    </td>
+                    <td className="py-3 px-3 text-center text-amber-500 font-bold">
+                      {va.inProductionCount}
+                    </td>
+                    <td className="py-3 px-3 text-muted">
+                      {va.watchTimeMinutes}m (~{(va.watchTimeMinutes / 60).toFixed(1)}h)
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
+                        <TrendingUp className="w-3 h-3" />
+                        {va.efficiencyRating}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Google Drive Delivery Log Table */}
       <div className="pro-panel rounded-xl overflow-hidden shadow-card">

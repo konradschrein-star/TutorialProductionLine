@@ -2,6 +2,7 @@
   "name": "youtube-automation-engine",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Modular 24/7 procedural YouTube content automation engine",
   "engines": {
     "node": ">=22.0.0",
