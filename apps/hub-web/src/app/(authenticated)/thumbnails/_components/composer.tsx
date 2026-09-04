@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Rnd } from "react-rnd";
 import { toBlob } from "html-to-image";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { GlassCard } from "@/app/(authenticated)/_components";
 import { FlagIcon } from "@/lib/tutorial/flag-icon";
+import { THUMBNAIL_PACK_LANGUAGES } from "@/lib/tutorial/thumbnail-pack";
 
 /**
  * Manual Thumbnail Composer — the PRIMARY, fully-offline thumbnail tool.
@@ -14,9 +16,9 @@ import { FlagIcon } from "@/lib/tutorial/flag-icon";
  * Ported from the standalone facade tool (repo-root src/pages/ThumbnailStudio.tsx)
  * and reskinned to the V2 design system. Everything here runs 100% client-side:
  * drag/resize layers on a fixed canvas, a static offline asset catalog served
- * from /public, custom PNG uploads persisted to localStorage as base64, PNG
- * export (html-to-image), and a 10-language ZIP export that swaps the two
- * headline layers using a STATIC offline translation map — NO API calls.
+ * from /public, custom PNG uploads persisted to localStorage as base64, and
+ * deterministic PNG export (html-to-image). When opened from Tutorial Studio,
+ * it renders and attaches the five real localized publication variants.
  *
  * The AI-generation flow (Generate/Archetypes tabs) depends on media-gateway
  * infra the target box does not have; this composer is the real tool + fallback.
@@ -29,35 +31,6 @@ const TEXT_1 = "#e5e2e1";
 const TEXT_2 = "#cdc3d7";
 
 const CUSTOM_ASSETS_KEY = "ts_custom_assets";
-
-// The 10 languages of the batch pack, in export order.
-const LANGUAGES = [
-  "English",
-  "German",
-  "Spanish",
-  "Portuguese",
-  "Italian",
-  "French",
-  "Dutch",
-  "Japanese",
-  "Korean",
-  "Swedish",
-] as const;
-
-// STATIC offline translation map — copied verbatim from the facade's
-// hardcoded thumbnail-translation fallback. NEVER call an API for this.
-const STATIC_TRANSLATIONS: Record<string, { top: string; bottom: string }> = {
-  English: { top: "LEARN FAST", bottom: "STEP BY STEP" },
-  German: { top: "SCHNELL LERNEN", bottom: "SCHRITT FÜR SCHRITT" },
-  Spanish: { top: "APRENDE FÁCIL", bottom: "PASO A PASO" },
-  Portuguese: { top: "APRENDA RÁPIDO", bottom: "PASSO A PASSO" },
-  Italian: { top: "IMPARA SUBITO", bottom: "PASSO DOPO PASSO" },
-  French: { top: "GUIDE RAPIDE", bottom: "ÉTAPE PAR ÉTAPE" },
-  Dutch: { top: "SNEL LEREN", bottom: "STAP VOOR STAP" },
-  Japanese: { top: "簡単マスター", bottom: "ステップ解説" },
-  Korean: { top: "빠른 가이드", bottom: "완벽 정리" },
-  Swedish: { top: "LÄR DIG SNABBT", bottom: "STEG FÖR STEG" },
-};
 
 const FONT_OPTIONS = [
   { label: "Impact (Standard Bold)", value: "Impact" },
@@ -84,12 +57,30 @@ const DEFAULT_BGS: BgOption[] = [
   { name: "Neon Glow Studio", url: "/background/bg_6_322338.jpg" },
   { name: "Modern Minimal Tech", url: "/background/bg_9_5717314.jpg" },
   // Built-in CSS studio gradients — no assets required.
-  { name: "Dark Slate", css: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)" },
-  { name: "Soft Blue", css: "linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%)" },
-  { name: "Warm Sunset", css: "linear-gradient(135deg, #f97316 0%, #b91c1c 100%)" },
-  { name: "Fresh Green", css: "linear-gradient(135deg, #10b981 0%, #065f46 100%)" },
-  { name: "Royal Purple", css: "linear-gradient(135deg, #8b5cf6 0%, #3b0764 100%)" },
-  { name: "Neutral Gray", css: "linear-gradient(135deg, #9ca3af 0%, #374151 100%)" },
+  {
+    name: "Dark Slate",
+    css: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
+  },
+  {
+    name: "Soft Blue",
+    css: "linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%)",
+  },
+  {
+    name: "Warm Sunset",
+    css: "linear-gradient(135deg, #f97316 0%, #b91c1c 100%)",
+  },
+  {
+    name: "Fresh Green",
+    css: "linear-gradient(135deg, #10b981 0%, #065f46 100%)",
+  },
+  {
+    name: "Royal Purple",
+    css: "linear-gradient(135deg, #8b5cf6 0%, #3b0764 100%)",
+  },
+  {
+    name: "Neutral Gray",
+    css: "linear-gradient(135deg, #9ca3af 0%, #374151 100%)",
+  },
 ];
 
 // Per-language display order + flag emoji for the grouped PERSONAS library.
@@ -329,41 +320,124 @@ const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
 };
 
 const ALL_APP_LOGOS = [
-  "asana.png", "blender.png", "calendly.png", "cashapp.png", "ChatGPT-Logo.png",
-  "clickup.png", "cloudflare.png", "davinciresolve.png", "discord.png", "dropbox.png",
-  "ebay.png", "epicgames.png", "etsy.png", "facebook.png", "figma.png",
-  "gimp.png", "github.png", "gmail.png", "googlecalendar.png", "googlechrome.png",
-  "googledocs.png", "googledrive.png", "googlemaps.png", "googlemeet.png", "googlephotos.png",
-  "googlesheets.png", "gumroad.png", "icloud.png", "imessage.png", "inkscape.png",
-  "instagram.png", "krita.png", "macos.png", "mailchimp.png", "namecheap.png",
-  "netflix.png", "netlify.png", "notion.png", "obsidian.png", "obsstudio.png",
-  "paypal.png", "pinterest.png", "playstation.png", "reddit.png", "replit.png",
-  "roblox.png", "safari.png", "shopify.png", "snapchat.png", "spotify.png",
-  "steam.png", "streamlabs.png", "stripe.png", "telegram.png", "tiktok.png",
-  "todoist.png", "trello.png", "twitch.png", "venmo.png", "vercel.png",
-  "whatsapp.png", "wix.png", "woocommerce.png", "wordpress.png", "youtube.png",
-  "youtubestudio.png", "zapier.png", "zelle.png", "zoom.png",
+  "asana.png",
+  "blender.png",
+  "calendly.png",
+  "cashapp.png",
+  "ChatGPT-Logo.png",
+  "clickup.png",
+  "cloudflare.png",
+  "davinciresolve.png",
+  "discord.png",
+  "dropbox.png",
+  "ebay.png",
+  "epicgames.png",
+  "etsy.png",
+  "facebook.png",
+  "figma.png",
+  "gimp.png",
+  "github.png",
+  "gmail.png",
+  "googlecalendar.png",
+  "googlechrome.png",
+  "googledocs.png",
+  "googledrive.png",
+  "googlemaps.png",
+  "googlemeet.png",
+  "googlephotos.png",
+  "googlesheets.png",
+  "gumroad.png",
+  "icloud.png",
+  "imessage.png",
+  "inkscape.png",
+  "instagram.png",
+  "krita.png",
+  "macos.png",
+  "mailchimp.png",
+  "namecheap.png",
+  "netflix.png",
+  "netlify.png",
+  "notion.png",
+  "obsidian.png",
+  "obsstudio.png",
+  "paypal.png",
+  "pinterest.png",
+  "playstation.png",
+  "reddit.png",
+  "replit.png",
+  "roblox.png",
+  "safari.png",
+  "shopify.png",
+  "snapchat.png",
+  "spotify.png",
+  "steam.png",
+  "streamlabs.png",
+  "stripe.png",
+  "telegram.png",
+  "tiktok.png",
+  "todoist.png",
+  "trello.png",
+  "twitch.png",
+  "venmo.png",
+  "vercel.png",
+  "whatsapp.png",
+  "wix.png",
+  "woocommerce.png",
+  "wordpress.png",
+  "youtube.png",
+  "youtubestudio.png",
+  "zapier.png",
+  "zelle.png",
+  "zoom.png",
 ];
 
 const ALL_SYMBOLS = [
-  "curved-arrow.png", "alert-circle.png", "alert-triangle.png", "badge-check.png",
-  "badge.png", "bell-ring.png", "bell.png", "camera.png", "check-circle.png",
-  "clock.png", "cloud.png", "code.png", "crown.png", "database.png",
-  "diamond.png", "dollar-sign.png", "eye.png", "file-text.png", "flame.png",
-  "gift.png", "globe.png", "heart.png", "key.png", "laptop.png",
-  "lightbulb.png", "lock.png", "megaphone.png", "mic.png", "play.png",
-  "rocket.png", "shield.png", "sparkle.png", "sparkles.png", "star.png",
-  "target.png", "thumbs-up.png", "trending-up.png", "trophy.png", "tv.png",
-  "video.png", "wand-sparkles.png", "zap.png",
+  "curved-arrow.png",
+  "alert-circle.png",
+  "alert-triangle.png",
+  "badge-check.png",
+  "badge.png",
+  "bell-ring.png",
+  "bell.png",
+  "camera.png",
+  "check-circle.png",
+  "clock.png",
+  "cloud.png",
+  "code.png",
+  "crown.png",
+  "database.png",
+  "diamond.png",
+  "dollar-sign.png",
+  "eye.png",
+  "file-text.png",
+  "flame.png",
+  "gift.png",
+  "globe.png",
+  "heart.png",
+  "key.png",
+  "laptop.png",
+  "lightbulb.png",
+  "lock.png",
+  "megaphone.png",
+  "mic.png",
+  "play.png",
+  "rocket.png",
+  "shield.png",
+  "sparkle.png",
+  "sparkles.png",
+  "star.png",
+  "target.png",
+  "thumbs-up.png",
+  "trending-up.png",
+  "trophy.png",
+  "tv.png",
+  "video.png",
+  "wand-sparkles.png",
+  "zap.png",
 ];
 
 type ElementType =
-  | "TEXT"
-  | "PERSON"
-  | "LOGO"
-  | "SYMBOL"
-  | "BACKGROUND"
-  | "UPLOAD";
+  "TEXT" | "PERSON" | "LOGO" | "SYMBOL" | "BACKGROUND" | "UPLOAD";
 
 interface ThumbnailElement {
   id: string;
@@ -400,7 +474,33 @@ interface CustomThumbnailAsset {
   createdAt: string;
 }
 
-type LibraryTab = "CUSTOM" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "LAYERS";
+interface PublicationPackVariant {
+  jobId: string | null;
+  language: string;
+  title: string | null;
+  thumbnailTextTop: string | null;
+  thumbnailTextBottom: string | null;
+  thumbnailId: string | null;
+  ready: boolean;
+  reasons: string[];
+}
+
+interface PublicationPack {
+  source: { id: string; title: string };
+  expected: number;
+  readyCount: number;
+  ready: boolean;
+  variants: PublicationPackVariant[];
+}
+
+interface RenderedVariant {
+  variant: PublicationPackVariant & { jobId: string };
+  blob: Blob;
+  layout: string;
+}
+
+type LibraryTab =
+  "CUSTOM" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "LAYERS";
 
 // ── localStorage helpers (replicate facade StorageService, plain localStorage) ──
 function readCustomAssets(): CustomThumbnailAsset[] {
@@ -507,6 +607,58 @@ function initialElements(): ThumbnailElement[] {
   ];
 }
 
+const LANGUAGE_CODE_TO_NAME = Object.fromEntries(
+  Object.entries(LANG_NAME_TO_CODE).map(([name, code]) => [code, name]),
+) as Record<string, string>;
+
+function fitLocalizedText(
+  element: ThumbnailElement,
+  text: string,
+): ThumbnailElement {
+  const baseSize = element.fontSize ?? 64;
+  if (typeof document === "undefined") return { ...element, text };
+  const measure = document.createElement("canvas").getContext("2d");
+  if (!measure) return { ...element, text };
+  measure.font = `${element.fontStyle ?? "normal"} ${element.fontWeight ?? "bold"} ${baseSize}px ${element.fontFamily ?? "Impact"}`;
+  const measured = Math.max(1, measure.measureText(text).width);
+  const available = Math.max(1, element.width - 12);
+  const fontSize = Math.max(
+    28,
+    Math.min(baseSize, Math.floor(baseSize * (available / measured))),
+  );
+  return { ...element, text, fontSize };
+}
+
+async function waitForCanvasAssets(canvas: HTMLElement): Promise<void> {
+  if (document.fonts) await document.fonts.ready;
+  await Promise.all(
+    Array.from(canvas.querySelectorAll("img")).map(async (image) => {
+      if (image.complete && image.naturalWidth > 0) return;
+      await image.decode();
+    }),
+  );
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+}
+
+function auditLayout(
+  elements: readonly ThumbnailElement[],
+  language: string,
+): string {
+  return JSON.stringify({
+    renderer: "manual-layout-v1",
+    language,
+    canvas: { width: 800, height: 450 },
+    elements: elements.map((element) => ({
+      ...element,
+      // Keep multi-megabyte custom data URLs out of the database. The rendered
+      // JPEG is the durable publication artifact.
+      url: element.url?.startsWith("data:") ? "custom-upload" : element.url,
+    })),
+  });
+}
+
 export function Composer() {
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
@@ -524,7 +676,44 @@ export function Composer() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
+  const [isAttachingPack, setIsAttachingPack] = useState(false);
+  const [publicationPack, setPublicationPack] =
+    useState<PublicationPack | null>(null);
+  const [packError, setPackError] = useState<string | null>(null);
+  const [packResult, setPackResult] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+
+  useEffect(() => {
+    const sourceJobId = new URLSearchParams(window.location.search).get(
+      "tutorialJobId",
+    );
+    if (!sourceJobId) return;
+
+    const controller = new AbortController();
+    void fetch(`/api/production/jobs/${sourceJobId}/publication-pack`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as
+          PublicationPack | { error?: string };
+        if (!response.ok) {
+          throw new Error(
+            "error" in body && body.error
+              ? body.error
+              : `HTTP ${response.status}`,
+          );
+        }
+        const pack = body as PublicationPack;
+        setPublicationPack(pack);
+        setTitle(pack.source.title);
+        setPackError(null);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setPackError(error instanceof Error ? error.message : String(error));
+      });
+    return () => controller.abort();
+  }, []);
 
   const selectedElement = elements.find((el) => el.id === selectedId);
 
@@ -532,7 +721,8 @@ export function Composer() {
     () =>
       ALL_APP_LOGOS.filter(
         (name) =>
-          !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase()),
+          !searchQuery ||
+          name.toLowerCase().includes(searchQuery.toLowerCase()),
       ),
     [searchQuery],
   );
@@ -584,9 +774,7 @@ export function Composer() {
   function applyBackground(bg: BgOption) {
     setElements((prev) =>
       prev.map((el) =>
-        el.type === "BACKGROUND"
-          ? { ...el, url: bg.url, css: bg.css }
-          : el,
+        el.type === "BACKGROUND" ? { ...el, url: bg.url, css: bg.css } : el,
       ),
     );
   }
@@ -708,59 +896,161 @@ export function Composer() {
     }
   }
 
-  async function handleBatchExportZip() {
-    if (!canvasRef.current) return;
-    setIsBatchExporting(true);
-    setSelectedId(null);
-    // Snapshot the current headline text so we can restore it afterwards.
-    const originalTop = elements.find((el) => el.id === "text-top")?.text;
-    const originalBottom = elements.find((el) => el.id === "text-bottom")?.text;
+  async function renderPublicationPack(): Promise<RenderedVariant[]> {
+    const canvas = canvasRef.current;
+    const pack = publicationPack;
+    if (!canvas || !pack) {
+      throw new Error(
+        "Open the composer from a Tutorial Studio translation row first.",
+      );
+    }
+    if (aspectRatio !== "16:9") {
+      throw new Error("Publication thumbnails must use the 16:9 canvas.");
+    }
+    if (
+      !pack.ready ||
+      pack.variants.length !== THUMBNAIL_PACK_LANGUAGES.length
+    ) {
+      throw new Error(
+        `Publication pack is incomplete (${pack.readyCount}/${pack.expected} languages ready).`,
+      );
+    }
+
+    const baseElements = elements.map((element) => ({ ...element }));
+    const rendered: RenderedVariant[] = [];
+    flushSync(() => setSelectedId(null));
     try {
-      const zip = new JSZip();
-      for (const lang of LANGUAGES) {
-        const trans =
-          STATIC_TRANSLATIONS[lang] ?? {
-            top: "LEARN FAST",
-            bottom: "STEP BY STEP",
-          };
-        setElements((prev) =>
-          prev.map((el) => {
-            if (el.id === "text-top") return { ...el, text: trans.top };
-            if (el.id === "text-bottom") return { ...el, text: trans.bottom };
-            return el;
-          }),
-        );
-        // let React flush the text swap before capturing
-        await new Promise((r) => setTimeout(r, 250));
-        const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
-        if (blob) {
-          const folder = zip.folder(lang.toLowerCase());
-          folder?.file(`thumbnail_${lang.toLowerCase()}.png`, blob);
+      for (const variant of pack.variants) {
+        if (
+          !variant.jobId ||
+          !variant.thumbnailTextTop?.trim() ||
+          !variant.thumbnailTextBottom?.trim()
+        ) {
+          throw new Error(
+            `${variant.language.toUpperCase()} is missing localized thumbnail copy.`,
+          );
         }
+        const languageName = LANGUAGE_CODE_TO_NAME[variant.language];
+        const persona = languageName
+          ? DEFAULT_PERSONAS[languageName]?.[0]?.url
+          : undefined;
+        if (!persona) {
+          throw new Error(
+            `${variant.language.toUpperCase()} has no configured presenter asset.`,
+          );
+        }
+
+        const localized = baseElements.map((element) => {
+          if (element.id === "text-top") {
+            return fitLocalizedText(element, variant.thumbnailTextTop!);
+          }
+          if (element.id === "text-bottom") {
+            return fitLocalizedText(element, variant.thumbnailTextBottom!);
+          }
+          if (element.id === "person-1") return { ...element, url: persona };
+          return { ...element };
+        });
+        flushSync(() => setElements(localized));
+        await waitForCanvasAssets(canvas);
+        const blob = await toBlob(canvas, { pixelRatio: 1.6 });
+        if (!blob) {
+          throw new Error(
+            `${variant.language.toUpperCase()} did not render an image.`,
+          );
+        }
+        rendered.push({
+          variant: { ...variant, jobId: variant.jobId },
+          blob,
+          layout: auditLayout(localized, variant.language),
+        });
+      }
+      return rendered;
+    } finally {
+      flushSync(() => setElements(baseElements));
+    }
+  }
+
+  async function handleBatchExportZip() {
+    setIsBatchExporting(true);
+    setPackError(null);
+    try {
+      const rendered = await renderPublicationPack();
+      const zip = new JSZip();
+      for (const item of rendered) {
+        zip
+          .folder(item.variant.language)
+          ?.file(`thumbnail_${item.variant.language}.png`, item.blob);
       }
       const zipContent = await zip.generateAsync({ type: "blob" });
       saveAs(
         zipContent,
-        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_10langs.zip`,
+        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_5langs.zip`,
       );
-    } catch (err) {
-      console.error("Batch export failed:", err);
-      alert(
-        "Batch export failed: " +
-          (err instanceof Error ? err.message : String(err)),
-      );
+    } catch (error) {
+      setPackError(error instanceof Error ? error.message : String(error));
     } finally {
-      // restore the pre-batch headline text
-      setElements((prev) =>
-        prev.map((el) => {
-          if (el.id === "text-top" && originalTop !== undefined)
-            return { ...el, text: originalTop };
-          if (el.id === "text-bottom" && originalBottom !== undefined)
-            return { ...el, text: originalBottom };
-          return el;
-        }),
-      );
       setIsBatchExporting(false);
+    }
+  }
+
+  async function handleAttachPublicationPack() {
+    setIsAttachingPack(true);
+    setPackError(null);
+    setPackResult(null);
+    try {
+      // Render every language before the first upload. A broken font, image or
+      // localized field therefore cannot leave a half-rendered pack behind.
+      const rendered = await renderPublicationPack();
+      const attached: string[] = [];
+      for (const item of rendered) {
+        if (item.variant.thumbnailId) {
+          attached.push(item.variant.language.toUpperCase());
+          continue;
+        }
+        const form = new FormData();
+        form.set(
+          "file",
+          new File([item.blob], `thumbnail_${item.variant.language}.png`, {
+            type: "image/png",
+          }),
+        );
+        form.set("layout", item.layout);
+        const response = await fetch(
+          `/api/production/jobs/${item.variant.jobId}/thumbnail/manual`,
+          { method: "POST", body: form },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          thumbnailId?: string;
+        };
+        if (!response.ok) {
+          throw new Error(
+            `${item.variant.language.toUpperCase()}: ${body.error ?? `HTTP ${response.status}`}`,
+          );
+        }
+        attached.push(item.variant.language.toUpperCase());
+        if (body.thumbnailId) {
+          setPublicationPack((current) =>
+            current
+              ? {
+                  ...current,
+                  variants: current.variants.map((variant) =>
+                    variant.language === item.variant.language
+                      ? { ...variant, thumbnailId: body.thumbnailId! }
+                      : variant,
+                  ),
+                }
+              : current,
+          );
+        }
+      }
+      setPackResult(
+        `Attached and selected ${attached.length}/5 thumbnails: ${attached.join(", ")}.`,
+      );
+    } catch (error) {
+      setPackError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsAttachingPack(false);
     }
   }
 
@@ -803,7 +1093,14 @@ export function Composer() {
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
           {/* Aspect toggle */}
           <div
             style={{
@@ -843,12 +1140,20 @@ export function Composer() {
               Manual Composer
             </div>
             <div style={{ fontSize: 10.5, color: TEXT_2 }}>
-              Fully offline. Compose, then export PNG or a 10-language ZIP pack.
+              Compose once, then render the five translated publication
+              variants.
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
           <input
             type="text"
             value={title}
@@ -858,7 +1163,7 @@ export function Composer() {
           />
           <button
             type="button"
-            disabled={isExporting || isBatchExporting}
+            disabled={isExporting || isBatchExporting || isAttachingPack}
             onClick={handleExportPNG}
             style={{
               display: "inline-flex",
@@ -871,18 +1176,27 @@ export function Composer() {
               color: "var(--v2-accent)",
               fontSize: 11.5,
               fontWeight: 700,
-              cursor: isExporting || isBatchExporting ? "not-allowed" : "pointer",
+              cursor:
+                isExporting || isBatchExporting ? "not-allowed" : "pointer",
               opacity: isExporting || isBatchExporting ? 0.5 : 1,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 16 }}
+            >
               download
             </span>
             {isExporting ? "Exporting…" : "Export PNG"}
           </button>
           <button
             type="button"
-            disabled={isBatchExporting || isExporting}
+            disabled={
+              isBatchExporting ||
+              isExporting ||
+              isAttachingPack ||
+              !publicationPack?.ready
+            }
             onClick={handleBatchExportZip}
             style={{
               display: "inline-flex",
@@ -895,16 +1209,146 @@ export function Composer() {
               color: "#0b0b0f",
               fontSize: 11.5,
               fontWeight: 800,
-              cursor: isBatchExporting || isExporting ? "not-allowed" : "pointer",
-              opacity: isBatchExporting || isExporting ? 0.6 : 1,
+              cursor:
+                isBatchExporting || isExporting || !publicationPack?.ready
+                  ? "not-allowed"
+                  : "pointer",
+              opacity:
+                isBatchExporting || isExporting || !publicationPack?.ready
+                  ? 0.6
+                  : 1,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 16 }}
+            >
               folder_zip
             </span>
-            {isBatchExporting ? "Packaging ZIP…" : "10-Lang ZIP"}
+            {isBatchExporting ? "Packaging ZIP…" : "5-Lang ZIP"}
           </button>
         </div>
+      </GlassCard>
+
+      <GlassCard
+        style={{
+          padding: 14,
+          marginBottom: 14,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ minWidth: 280, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: TEXT_1 }}>
+            {publicationPack
+              ? publicationPack.source.title
+              : "Open this composer from a Localize row"}
+          </div>
+          <div style={{ fontSize: 10.5, color: TEXT_2, marginTop: 4 }}>
+            {publicationPack
+              ? `${publicationPack.readyCount}/${publicationPack.expected} translated videos have complete metadata and thumbnail copy.`
+              : "The job link supplies the five translated titles, descriptions, tags and headline lines."}
+          </div>
+          {publicationPack && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                marginTop: 9,
+                flexWrap: "wrap",
+              }}
+            >
+              {publicationPack.variants.map((variant) => (
+                <span
+                  key={variant.language}
+                  title={variant.reasons.join(", ") || "Ready"}
+                  style={{
+                    display: "inline-flex",
+                    gap: 5,
+                    alignItems: "center",
+                    padding: "4px 7px",
+                    borderRadius: 999,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    color: variant.ready ? "#78e6ae" : "#ffc978",
+                    border: `1px solid ${variant.ready ? "rgba(120,230,174,.35)" : "rgba(255,201,120,.35)"}`,
+                    background: variant.ready
+                      ? "rgba(120,230,174,.08)"
+                      : "rgba(255,201,120,.08)",
+                  }}
+                >
+                  <FlagIcon code={variant.language} />
+                  {variant.language.toUpperCase()}
+                  {variant.thumbnailId
+                    ? " · attached"
+                    : variant.ready
+                      ? " · ready"
+                      : " · blocked"}
+                </span>
+              ))}
+            </div>
+          )}
+          {packError && (
+            <div style={{ fontSize: 10.5, color: "#ff8080", marginTop: 8 }}>
+              {packError}
+            </div>
+          )}
+          {packResult && (
+            <div style={{ fontSize: 10.5, color: "#78e6ae", marginTop: 8 }}>
+              {packResult}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={
+            !publicationPack?.ready ||
+            publicationPack.variants.every((variant) => variant.thumbnailId) ||
+            isAttachingPack ||
+            isBatchExporting
+          }
+          onClick={handleAttachPublicationPack}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            padding: "10px 14px",
+            borderRadius: 8,
+            border: "none",
+            background: "var(--v2-accent)",
+            color: "#0b0b0f",
+            fontSize: 11.5,
+            fontWeight: 900,
+            cursor:
+              !publicationPack?.ready ||
+              publicationPack.variants.every(
+                (variant) => variant.thumbnailId,
+              ) ||
+              isAttachingPack
+                ? "not-allowed"
+                : "pointer",
+            opacity:
+              !publicationPack?.ready ||
+              publicationPack.variants.every(
+                (variant) => variant.thumbnailId,
+              ) ||
+              isAttachingPack
+                ? 0.55
+                : 1,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>
+            publish
+          </span>
+          {isAttachingPack
+            ? "Rendering and attaching…"
+            : publicationPack?.variants.every((variant) => variant.thumbnailId)
+              ? "All 5 attached"
+              : "Attach all 5 to jobs"}
+        </button>
       </GlassCard>
 
       {/* Main layout */}
@@ -939,7 +1383,14 @@ export function Composer() {
             }}
           >
             {(
-              ["CUSTOM", "PERSONAS", "LOGOS", "SYMBOLS", "BGS", "LAYERS"] as const
+              [
+                "CUSTOM",
+                "PERSONAS",
+                "LOGOS",
+                "SYMBOLS",
+                "BGS",
+                "LAYERS",
+              ] as const
             ).map((tab) => {
               const on = activeTab === tab;
               return (
@@ -951,7 +1402,9 @@ export function Composer() {
                     padding: "6px 2px",
                     borderRadius: 5,
                     border: "none",
-                    background: on ? "rgba(var(--v2-accent-rgb), 0.16)" : "transparent",
+                    background: on
+                      ? "rgba(var(--v2-accent-rgb), 0.16)"
+                      : "transparent",
                     color: on ? "var(--v2-accent)" : TEXT_2,
                     fontSize: 8.5,
                     fontWeight: 800,
@@ -1003,7 +1456,13 @@ export function Composer() {
                   + Add Text
                 </button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 8,
+                }}
+              >
                 <label
                   style={{
                     ...panelBtn(false),
@@ -1013,7 +1472,10 @@ export function Composer() {
                     gap: 4,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
                     upload
                   </span>
                   Face
@@ -1033,7 +1495,10 @@ export function Composer() {
                     gap: 4,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
                     upload
                   </span>
                   Logo
@@ -1087,7 +1552,13 @@ export function Composer() {
                     fontSize: 11.5,
                   }}
                 >
-                  <p style={{ fontWeight: 700, color: TEXT_1, margin: "0 0 4px" }}>
+                  <p
+                    style={{
+                      fontWeight: 700,
+                      color: TEXT_1,
+                      margin: "0 0 4px",
+                    }}
+                  >
                     No custom references uploaded.
                   </p>
                   <p style={{ margin: 0 }}>
@@ -1133,7 +1604,11 @@ export function Composer() {
                         <img
                           src={asset.url}
                           alt={asset.name}
-                          style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain" }}
+                          style={{
+                            maxHeight: "100%",
+                            maxWidth: "100%",
+                            objectFit: "contain",
+                          }}
                         />
                       </button>
                       <button
@@ -1153,7 +1628,10 @@ export function Composer() {
                           display: "inline-flex",
                         }}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                        <span
+                          className="material-symbols-outlined"
+                          style={{ fontSize: 13 }}
+                        >
                           delete
                         </span>
                       </button>
@@ -1165,19 +1643,27 @@ export function Composer() {
             {/* Personas — grouped by language with a flag header. Search
                 filters host names across every language group. */}
             {activeTab === "PERSONAS" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 14 }}
+              >
                 {PERSONA_LANG_ORDER.map((lang) => {
                   const hosts = (DEFAULT_PERSONAS[lang] ?? []).filter(
                     (p) =>
                       !searchQuery ||
-                      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      p.name
+                        .toLowerCase()
+                        .includes(searchQuery.toLowerCase()) ||
                       lang.toLowerCase().includes(searchQuery.toLowerCase()),
                   );
                   if (hosts.length === 0) return null;
                   return (
                     <div
                       key={lang}
-                      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
                     >
                       <div
                         style={{
@@ -1258,7 +1744,9 @@ export function Composer() {
                   <button
                     key={i}
                     type="button"
-                    onClick={() => handleAddAsset("LOGO", `/app_logos_png/${name}`)}
+                    onClick={() =>
+                      handleAddAsset("LOGO", `/app_logos_png/${name}`)
+                    }
                     style={{
                       aspectRatio: "1 / 1",
                       borderRadius: 8,
@@ -1311,7 +1799,10 @@ export function Composer() {
                     key={i}
                     type="button"
                     onClick={() =>
-                      handleAddAsset("SYMBOL", `/bulk_symbols_110_colored/${sym}`)
+                      handleAddAsset(
+                        "SYMBOL",
+                        `/bulk_symbols_110_colored/${sym}`,
+                      )
                     }
                     style={{
                       aspectRatio: "1 / 1",
@@ -1380,7 +1871,11 @@ export function Composer() {
                       <img
                         src={bg.url}
                         alt={bg.name}
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
                       />
                     )}
                     <span
@@ -1471,13 +1966,35 @@ export function Composer() {
                           {el.text || el.url?.split("/").pop() || el.id}
                         </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                      >
                         {(
                           [
-                            { icon: "arrow_upward", fn: () => handleMoveLayer(el.id, "up"), title: "Up" },
-                            { icon: "arrow_downward", fn: () => handleMoveLayer(el.id, "down"), title: "Down" },
-                            { icon: "content_copy", fn: () => handleDuplicate(el), title: "Duplicate" },
-                            { icon: "delete", fn: () => handleDeleteLayer(el.id), title: "Delete" },
+                            {
+                              icon: "arrow_upward",
+                              fn: () => handleMoveLayer(el.id, "up"),
+                              title: "Up",
+                            },
+                            {
+                              icon: "arrow_downward",
+                              fn: () => handleMoveLayer(el.id, "down"),
+                              title: "Down",
+                            },
+                            {
+                              icon: "content_copy",
+                              fn: () => handleDuplicate(el),
+                              title: "Duplicate",
+                            },
+                            {
+                              icon: "delete",
+                              fn: () => handleDeleteLayer(el.id),
+                              title: "Delete",
+                            },
                           ] as const
                         ).map((a) => (
                           <button
@@ -1497,7 +2014,10 @@ export function Composer() {
                               display: "inline-flex",
                             }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                            <span
+                              className="material-symbols-outlined"
+                              style={{ fontSize: 14 }}
+                            >
                               {a.icon}
                             </span>
                           </button>
@@ -1592,7 +2112,9 @@ export function Composer() {
                       key={el.id}
                       position={{ x: el.x, y: el.y }}
                       size={{ width: el.width, height: el.height }}
-                      onDragStop={(_e, d) => patchElement(el.id, { x: d.x, y: d.y })}
+                      onDragStop={(_e, d) =>
+                        patchElement(el.id, { x: d.x, y: d.y })
+                      }
                       onResizeStop={(_e, _dir, ref, _delta, position) =>
                         patchElement(el.id, {
                           width: parseInt(ref.style.width, 10),
@@ -1604,8 +2126,12 @@ export function Composer() {
                       bounds="parent"
                       style={{
                         zIndex: el.zIndex,
-                        transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
-                        outline: isSelected ? "2px solid var(--v2-accent)" : "none",
+                        transform: el.rotation
+                          ? `rotate(${el.rotation}deg)`
+                          : undefined,
+                        outline: isSelected
+                          ? "2px solid var(--v2-accent)"
+                          : "none",
                       }}
                       onClick={() => setSelectedId(el.id)}
                     >
@@ -1619,7 +2145,9 @@ export function Composer() {
                             justifyContent: "flex-start",
                             textTransform: "uppercase",
                             letterSpacing: "0.03em",
-                            fontWeight: (el.fontWeight as React.CSSProperties["fontWeight"]) || "bold",
+                            fontWeight:
+                              (el.fontWeight as React.CSSProperties["fontWeight"]) ||
+                              "bold",
                             fontFamily: el.fontFamily || "Impact",
                             fontSize: `${el.fontSize || 64}px`,
                             color: el.color || "#ffffff",
@@ -1670,7 +2198,14 @@ export function Composer() {
 
           {/* Property inspector */}
           {selectedElement && (
-            <GlassCard style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+            <GlassCard
+              style={{
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -1680,7 +2215,15 @@ export function Composer() {
                   gap: 8,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 200 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flex: 1,
+                    minWidth: 200,
+                  }}
+                >
                   <span
                     style={{
                       fontSize: 9,
@@ -1698,7 +2241,9 @@ export function Composer() {
                       type="text"
                       value={selectedElement.text || ""}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { text: e.target.value })
+                        patchElement(selectedElement.id, {
+                          text: e.target.value,
+                        })
                       }
                       style={{ ...inputStyle, flex: 1, fontWeight: 700 }}
                     />
@@ -1733,14 +2278,25 @@ export function Composer() {
                   }}
                 >
                   {/* Font family */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       FONT
                     </span>
                     <select
                       value={selectedElement.fontFamily || "Impact"}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { fontFamily: e.target.value })
+                        patchElement(selectedElement.id, {
+                          fontFamily: e.target.value,
+                        })
                       }
                       style={inputStyle}
                     >
@@ -1753,8 +2309,17 @@ export function Composer() {
                   </label>
 
                   {/* Font size */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       SIZE: {selectedElement.fontSize || 64}px
                     </span>
                     <input
@@ -1772,15 +2337,26 @@ export function Composer() {
                   </label>
 
                   {/* Fill color */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       TEXT COLOR
                     </span>
                     <input
                       type="color"
                       value={selectedElement.color || "#ffffff"}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { color: e.target.value })
+                        patchElement(selectedElement.id, {
+                          color: e.target.value,
+                        })
                       }
                       style={{
                         width: "100%",
@@ -1794,8 +2370,17 @@ export function Composer() {
                   </label>
 
                   {/* Stroke width */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       STROKE: {selectedElement.strokeWidth ?? 8}px
                     </span>
                     <input

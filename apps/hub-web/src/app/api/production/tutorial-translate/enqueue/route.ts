@@ -5,23 +5,23 @@ import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db, tutorialJobs } from "@/lib/db";
 import {
+  DEFAULT_STANDARD_LANGUAGES,
+  TARGET_LANGUAGE_CODES,
+} from "@/lib/tutorial/languages";
+import {
   createRedisConnection,
   createTutorialTranslateQueue,
 } from "@repo/queue";
+import type { TutorialTranslatePayload } from "@repo/contracts";
 
 export const dynamic = "force-dynamic";
-
-/** The launch set of translation target languages (mirrors the translate payload). */
-const TARGET_LANGUAGES = [
-  "de", "fr", "it", "es", "nl", "sv", "no", "da",
-  "pt", "pl", "cs", "ru", "ar", "zh", "ja", "ko", "id",
-] as const;
-type TargetLanguage = (typeof TARGET_LANGUAGES)[number];
 
 const EnqueueSchema = z.object({
   sourceJobId: z.string().uuid(),
   languages: z.array(z.string()).min(1),
+  mode: z.enum(["automatic", "manual"]).default("manual"),
 });
+type TargetLanguage = TutorialTranslatePayload["targetLanguage"];
 
 /**
  * Fan out one tutorial-translate queue job per requested language for a
@@ -42,19 +42,39 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
-  const { sourceJobId, languages } = parsed.data;
+  const { sourceJobId, languages, mode } = parsed.data;
 
   // Restrict to the supported launch set; ignore anything else the caller sends.
   const requested = Array.from(
     new Set(
-      languages.filter((l): l is TargetLanguage =>
-        (TARGET_LANGUAGES as readonly string[]).includes(l),
+      languages.filter((language): language is TargetLanguage =>
+        TARGET_LANGUAGE_CODES.includes(language),
       ),
     ),
   );
   if (requested.length === 0) {
     return NextResponse.json(
-      { error: `No supported languages requested (${TARGET_LANGUAGES.join(", ")})` },
+      {
+        error: `No supported languages requested (${TARGET_LANGUAGE_CODES.join(", ")})`,
+      },
+      { status: 400 },
+    );
+  }
+
+  if (
+    mode === "automatic" &&
+    requested.some((language) => !DEFAULT_STANDARD_LANGUAGES.includes(language))
+  ) {
+    return NextResponse.json(
+      {
+        error: `Automatic translation is restricted to ${DEFAULT_STANDARD_LANGUAGES.join(", ")}`,
+      },
+      { status: 400 },
+    );
+  }
+  if (mode === "manual" && requested.length !== 1) {
+    return NextResponse.json(
+      { error: "Manual translation requests must select exactly one language" },
       { status: 400 },
     );
   }
@@ -72,7 +92,10 @@ export async function POST(req: NextRequest) {
     .limit(1);
 
   if (!source) {
-    return NextResponse.json({ error: "source job not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "source job not found" },
+      { status: 404 },
+    );
   }
   if (source.status !== "COMPLETED") {
     return NextResponse.json(

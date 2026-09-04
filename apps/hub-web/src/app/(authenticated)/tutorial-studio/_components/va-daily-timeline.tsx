@@ -160,14 +160,14 @@ export function VaDailyTimeline() {
 
     map.forEach((val, name) => {
       const dayMap = new Map<string, Ev[]>();
-      let latestTimestamp: Date | null = null;
+      let latestTimestampMs = 0;
 
       for (const job of val.jobs) {
         const push = (iso: string | null, type: EventType) => {
           if (!iso) return;
           const d = new Date(iso);
           if (Number.isNaN(d.getTime())) return;
-          if (!latestTimestamp || d > latestTimestamp) latestTimestamp = d;
+          latestTimestampMs = Math.max(latestTimestampMs, d.getTime());
 
           const key = dayKey(d);
           const list = dayMap.get(key) ?? [];
@@ -273,8 +273,8 @@ export function VaDailyTimeline() {
       const todayEnd = todaySummary && todaySummary.endHour != null ? fmtH(todaySummary.endHour) : null;
       const todayAvgSpeedMin = todaySummary ? todaySummary.avgMinPerVideo : 0;
 
-      const lastActiveMinutesAgo = latestTimestamp
-        ? Math.max(0, Math.round((Date.now() - latestTimestamp.getTime()) / 60000))
+      const lastActiveMinutesAgo = latestTimestampMs > 0
+        ? Math.max(0, Math.round((Date.now() - latestTimestampMs) / 60000))
         : null;
 
       summaries.push({

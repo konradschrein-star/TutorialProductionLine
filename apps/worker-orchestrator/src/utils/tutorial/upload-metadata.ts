@@ -1,7 +1,8 @@
 import { generateScript } from "./llm-registry.js";
 
 /**
- * Generate the YouTube description and tags for a tutorial.
+ * Generate YouTube description, tags, and two-line thumbnail copy for a
+ * tutorial.
  *
  * ## Why this exists
  *
@@ -31,6 +32,8 @@ import { generateScript } from "./llm-registry.js";
 export interface TutorialUploadMetadata {
   description: string | null;
   tags: string[] | null;
+  thumbnailTextTop: string | null;
+  thumbnailTextBottom: string | null;
 }
 
 export interface GenerateUploadMetadataParams {
@@ -62,6 +65,20 @@ function normaliseTags(raw: unknown): string[] | null {
 }
 
 /**
+ * Visible thumbnail copy must come from the model response, never from a
+ * generic slogan. Keep the validator deliberately language-agnostic (word
+ * counts do not work for Japanese or Korean), but reject prose-length output
+ * that cannot fit the two-line layout.
+ */
+function normaliseThumbnailText(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim().replace(/\s+/g, " ");
+  if (text === "" || text.length > 48) return null;
+  if (/^(learn fast|step by step)$/i.test(text)) return null;
+  return text;
+}
+
+/**
  * Pull the JSON object out of a model response. Models wrap JSON in prose and
  * fenced code blocks regardless of instructions, so we take the outermost
  * braces rather than trusting the whole string to parse.
@@ -72,23 +89,43 @@ export function parseUploadMetadataResponse(
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
-    return { description: null, tags: null };
+    return {
+      description: null,
+      tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { description: null, tags: null };
+    return {
+      description: null,
+      tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
+    };
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return { description: null, tags: null };
+    return {
+      description: null,
+      tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
+    };
   }
   const obj = parsed as Record<string, unknown>;
   const description =
     typeof obj["description"] === "string" && obj["description"].trim() !== ""
       ? obj["description"].trim()
       : null;
-  return { description, tags: normaliseTags(obj["tags"]) };
+  return {
+    description,
+    tags: normaliseTags(obj["tags"]),
+    thumbnailTextTop: normaliseThumbnailText(obj["thumbnail_text_top"]),
+    thumbnailTextBottom: normaliseThumbnailText(obj["thumbnail_text_bottom"]),
+  };
 }
 
 export function buildUploadMetadataPrompt(
@@ -128,8 +165,15 @@ export function buildUploadMetadataPrompt(
     "- 8 to 15 tags, lowercase, each under 30 characters.",
     "- Real search phrases a person would type, not hashtags.",
     "",
+    "THUMBNAIL COPY rules:",
+    "- Write two short lines of visible thumbnail copy in the requested language.",
+    "- Each line must be a punchy phrase that fits a thumbnail, not a sentence.",
+    "- Keep software and product names unchanged.",
+    "- Promise only an action or outcome that the title and script actually support.",
+    "- Never use generic filler such as 'LEARN FAST' or 'STEP BY STEP'.",
+    "",
     "Return ONLY a JSON object, no prose around it:",
-    '{"description": "...", "tags": ["...", "..."]}',
+    '{"description": "...", "tags": ["...", "..."], "thumbnail_text_top": "...", "thumbnail_text_bottom": "..."}',
   ].join("\n");
 }
 
@@ -140,7 +184,12 @@ export async function generateTutorialUploadMetadata(
     params;
 
   if (!title.trim() || !scriptText.trim()) {
-    return { description: null, tags: null };
+    return {
+      description: null,
+      tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
+    };
   }
 
   try {
@@ -163,12 +212,17 @@ export async function generateTutorialUploadMetadata(
       maxTokens: 8192,
     });
     const result = parseUploadMetadataResponse(raw);
-    if (result.description === null && result.tags === null) {
+    if (
+      result.description === null &&
+      result.tags === null &&
+      result.thumbnailTextTop === null &&
+      result.thumbnailTextBottom === null
+    ) {
       console.warn(
         JSON.stringify({
           level: "warn",
           message:
-            "tutorial upload metadata unparseable — leaving description/tags null rather than inventing them",
+            "tutorial upload metadata unparseable — leaving missing fields null rather than inventing them",
           title,
           provider,
         }),
@@ -187,6 +241,11 @@ export async function generateTutorialUploadMetadata(
         error: err instanceof Error ? err.message : String(err),
       }),
     );
-    return { description: null, tags: null };
+    return {
+      description: null,
+      tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
+    };
   }
 }

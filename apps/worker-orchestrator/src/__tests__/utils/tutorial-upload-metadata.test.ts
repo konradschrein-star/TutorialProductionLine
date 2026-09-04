@@ -13,15 +13,17 @@ import {
 describe("parseUploadMetadataResponse", () => {
   it("parses a clean JSON response", () => {
     const r = parseUploadMetadataResponse(
-      '{"description":"Do the thing.","tags":["gmail 2fa","security"]}',
+      '{"description":"Do the thing.","tags":["gmail 2fa","security"],"thumbnail_text_top":"LOCK IT DOWN","thumbnail_text_bottom":"IN 2 MINUTES"}',
     );
     expect(r.description).toBe("Do the thing.");
     expect(r.tags).toEqual(["gmail 2fa", "security"]);
+    expect(r.thumbnailTextTop).toBe("LOCK IT DOWN");
+    expect(r.thumbnailTextBottom).toBe("IN 2 MINUTES");
   });
 
   it("survives the fenced code block models insist on adding", () => {
     const r = parseUploadMetadataResponse(
-      'Sure! Here you go:\n```json\n{"description":"Do the thing.","tags":["a"]}\n```\nHope that helps!',
+      'Sure! Here you go:\n```json\n{"description":"Do the thing.","tags":["a"],"thumbnail_text_top":"SECURE GMAIL","thumbnail_text_bottom":"RIGHT NOW"}\n```\nHope that helps!',
     );
     expect(r.description).toBe("Do the thing.");
     expect(r.tags).toEqual(["a"]);
@@ -31,14 +33,20 @@ describe("parseUploadMetadataResponse", () => {
     expect(parseUploadMetadataResponse("I cannot help with that.")).toEqual({
       description: null,
       tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
     });
     expect(parseUploadMetadataResponse("{not json at all")).toEqual({
       description: null,
       tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
     });
     expect(parseUploadMetadataResponse("")).toEqual({
       description: null,
       tags: null,
+      thumbnailTextTop: null,
+      thumbnailTextBottom: null,
     });
   });
 
@@ -86,6 +94,36 @@ describe("parseUploadMetadataResponse", () => {
       parseUploadMetadataResponse('{"description":"x","tags":["","   "]}').tags,
     ).toBeNull();
   });
+
+  it("returns null thumbnail copy instead of inventing a fallback", () => {
+    const missing = parseUploadMetadataResponse(
+      '{"description":"x","tags":["gmail"]}',
+    );
+    expect(missing.thumbnailTextTop).toBeNull();
+    expect(missing.thumbnailTextBottom).toBeNull();
+
+    const invalid = parseUploadMetadataResponse(
+      JSON.stringify({
+        description: "x",
+        tags: ["gmail"],
+        thumbnail_text_top: "LEARN FAST",
+        thumbnail_text_bottom: "STEP BY STEP",
+      }),
+    );
+    expect(invalid.thumbnailTextTop).toBeNull();
+    expect(invalid.thumbnailTextBottom).toBeNull();
+
+    const tooLong = parseUploadMetadataResponse(
+      JSON.stringify({
+        description: "x",
+        tags: ["gmail"],
+        thumbnail_text_top: "   ",
+        thumbnail_text_bottom: "x".repeat(49),
+      }),
+    );
+    expect(tooLong.thumbnailTextTop).toBeNull();
+    expect(tooLong.thumbnailTextBottom).toBeNull();
+  });
 });
 
 describe("buildUploadMetadataPrompt", () => {
@@ -93,6 +131,8 @@ describe("buildUploadMetadataPrompt", () => {
     const p = buildUploadMetadataPrompt("Set up 2FA", "Step one...", "en");
     expect(p).toContain("Set up 2FA");
     expect(p).toContain("Never invent");
+    expect(p).toContain("thumbnail_text_top");
+    expect(p).toContain("Never use generic filler");
   });
 
   it("truncates a very long script rather than sending an hour of text", () => {

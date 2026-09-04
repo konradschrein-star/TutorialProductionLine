@@ -18,13 +18,8 @@ import {
 } from "@/lib/tutorial/languages";
 import { FlagIcon } from "@/lib/tutorial/flag-icon";
 
-
 type PromptCategory =
-  | "THREE_MIN"
-  | "SIX_MIN"
-  | "SIX_MIN_STITCH"
-  | "SHORT_MATCH"
-  | "SHORT_PLUS";
+  "THREE_MIN" | "SIX_MIN" | "SIX_MIN_STITCH" | "SHORT_MATCH" | "SHORT_PLUS";
 
 interface SettingsProps {
   presets: TutorialPromptPreset[];
@@ -899,51 +894,10 @@ function DefaultVoiceSettings({ settings }: { settings: TutorialSettingsRow }) {
 }
 
 function StandardTranslationLanguagesSettings() {
-
-  const STORAGE_KEY = "tutorial_standard_translation_languages";
-  const [standardLangs, setStandardLangs] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [...DEFAULT_STANDARD_LANGUAGES];
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [...DEFAULT_STANDARD_LANGUAGES];
-  });
   const [saving, setSaving] = useState(false);
-
-  function handleToggle(code: string) {
-    if (standardLangs.includes(code)) {
-      if (standardLangs.length <= 1) {
-        toast.error("Keep at least one standard language.");
-        return;
-      }
-      const updated = standardLangs.filter((c) => c !== code);
-      setStandardLangs(updated);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      }
-    } else {
-      const updated = [...standardLangs, code];
-      setStandardLangs(updated);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      }
-    }
-  }
-
-  function handleReset() {
-    setStandardLangs([...DEFAULT_STANDARD_LANGUAGES]);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify([...DEFAULT_STANDARD_LANGUAGES]),
-      );
-    }
-    toast.success("Reset to 5 core launch languages (DE, FR, ES, JA, KO).");
-  }
+  const automaticLanguages = ALL_TARGET_LANGUAGES.filter((language) =>
+    DEFAULT_STANDARD_LANGUAGES.includes(language.code),
+  );
 
   async function handleCancelNonStandard() {
     setSaving(true);
@@ -970,9 +924,9 @@ function StandardTranslationLanguagesSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.5 }}>
-        Configure the standard languages used for automatic video translations.
-        When virtual assistants click &quot;Translate everything missing&quot;, translations
-        are strictly created only for these {standardLangs.length} standard languages.
+        Automatic translation is currently locked to exactly five languages.
+        Other languages can still be requested explicitly for an individual
+        tutorial, but they are never included in automatic fan-out.
       </div>
 
       <div
@@ -982,46 +936,32 @@ function StandardTranslationLanguagesSettings() {
           gap: 8,
         }}
       >
-        {ALL_TARGET_LANGUAGES.map((l) => {
-          const isSelected = standardLangs.includes(l.code);
-          return (
-            <button
-              key={l.code}
-              type="button"
-              onClick={() => handleToggle(l.code)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: 12,
-                fontWeight: isSelected ? 700 : 500,
-                background: isSelected
-                  ? "rgba(var(--v2-accent-rgb),0.15)"
-                  : "var(--v2-surface-2)",
-                border: isSelected
-                  ? "1px solid var(--v2-accent)"
-                  : "1px solid rgba(255,255,255,0.1)",
-                color: isSelected ? "var(--v2-accent)" : "var(--v2-text-2)",
-                cursor: "pointer",
-                textAlign: "left",
-              }}
-            >
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <FlagIcon code={l.code} />
-                <span>{l.name}</span>
-              </span>
-              <span>{isSelected ? "✓" : "+"}</span>
-            </button>
-          );
-        })}
+        {automaticLanguages.map((language) => (
+          <div
+            key={language.code}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "8px 12px",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              background: "rgba(var(--v2-accent-rgb),0.15)",
+              border: "1px solid var(--v2-accent)",
+              color: "var(--v2-accent)",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <FlagIcon code={language.code} />
+              <span>{language.name}</span>
+            </span>
+            <span>✓</span>
+          </div>
+        ))}
       </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", paddingTop: 8 }}>
-        <V2Button variant="outline" size="sm" onClick={handleReset}>
-          Reset to 5 Core Languages
-        </V2Button>
+      <div style={{ paddingTop: 8 }}>
         <V2Button
           variant="outline"
           size="sm"
@@ -1141,4 +1081,3 @@ export function ProductionSettings({
     </div>
   );
 }
-

@@ -133,6 +133,11 @@ export const tutorialJobs = pgTable(
     // and is printed as such on the upload sheet — never filled with a guess.
     description: text("description"),
     tags: jsonb("tags").$type<string[]>(),
+    // Localized two-line copy for the deterministic thumbnail compositor.
+    // NULL means the metadata model did not provide usable copy; callers must
+    // surface that gap rather than substituting a generic English slogan.
+    thumbnail_text_top: text("thumbnail_text_top"),
+    thumbnail_text_bottom: text("thumbnail_text_bottom"),
 
     // Manual YouTube upload tracking (migration 0069)
     is_uploaded: boolean("is_uploaded").notNull().default(false),
@@ -147,7 +152,6 @@ export const tutorialJobs = pgTable(
     va_review_status: text("va_review_status"),
     va_reviewed_at: timestamp("va_reviewed_at", { withTimezone: true }),
     va_reviewed_by: uuid("va_reviewed_by"),
-
 
     // Output QA verdict (migration 0064). NULL = never checked, which is the
     // correct state for every tutorial that completed before the gate existed —

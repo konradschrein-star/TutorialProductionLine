@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ALL_TARGET_LANGUAGES,
   DEFAULT_STANDARD_LANGUAGES,
+  STANDARD_LANGUAGES,
   type TargetLanguage,
 } from "@/lib/tutorial/languages";
 import { FlagIcon } from "@/lib/tutorial/flag-icon";
@@ -17,8 +18,8 @@ import { toast } from "sonner";
  * fan out translations only for the 5 active Standard Languages (German, French,
  * Spanish, Japanese, Korean) to prevent unintended token and compute explosion.
  *
- * Additional languages can be added to the standard set in Settings / Config, or
- * triggered individually per video or backfilled in 1 click across all completed videos.
+ * Automatic fan-out is deliberately locked to those five languages. Additional
+ * languages remain available as explicit, per-video actions.
  */
 
 interface TranslationRef {
@@ -72,35 +73,12 @@ const card: React.CSSProperties = {
   padding: 18,
 };
 
-const STORAGE_KEY = "tutorial_standard_translation_languages";
-
 export function LocalizePanel() {
   const [sources, setSources] = useState<SourceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [bulkRunning, setBulkRunning] = useState(false);
   const [showAllLanguages, setShowAllLanguages] = useState(false);
-  const [showConfigModal, setShowConfigModal] = useState(false);
-
-  // Standard languages: defaults to the 5 launch languages (de, fr, es, ja, ko)
-  const [standardLangs, setStandardLangs] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [...DEFAULT_STANDARD_LANGUAGES];
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [...DEFAULT_STANDARD_LANGUAGES];
-  });
-
-  const saveStandardLangs = (langs: string[]) => {
-    setStandardLangs(langs);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(langs));
-    }
-  };
 
   const load = useCallback(() => {
     fetch("/api/production/tutorial-translate")
@@ -118,9 +96,7 @@ export function LocalizePanel() {
     load();
   }, [load]);
 
-  const activeStandardLanguages: TargetLanguage[] = useMemo(() => {
-    return ALL_TARGET_LANGUAGES.filter((l) => standardLangs.includes(l.code));
-  }, [standardLangs]);
+  const activeStandardLanguages: TargetLanguage[] = STANDARD_LANGUAGES;
 
   // Aggregate progress strictly across every source × standard target language.
   const stats = useMemo(() => {
@@ -150,7 +126,11 @@ export function LocalizePanel() {
   }, [stats.pending, load]);
 
   const enqueue = useCallback(
-    async (sourceJobId: string, languages: string[]) => {
+    async (
+      sourceJobId: string,
+      languages: string[],
+      mode: "automatic" | "manual" = "manual",
+    ) => {
       if (languages.length === 0) return;
       const key = sourceJobId + languages.join(",");
       setBusy((b) => new Set(b).add(key));
@@ -158,7 +138,7 @@ export function LocalizePanel() {
         const res = await fetch("/api/production/tutorial-translate/enqueue", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourceJobId, languages }),
+          body: JSON.stringify({ sourceJobId, languages, mode }),
         });
         if (!res.ok) {
           const j = await res.json().catch(() => ({}));
@@ -190,7 +170,7 @@ export function LocalizePanel() {
         const missing = activeStandardLanguages
           .filter((l) => !byLang.has(l.code))
           .map((l) => l.code);
-        if (missing.length) await enqueue(s.id, missing);
+        if (missing.length) await enqueue(s.id, missing, "automatic");
       }
       toast.success(
         `Enqueued standard translations (${activeStandardLanguages.map((l) => l.code.toUpperCase()).join(", ")}).`,
@@ -201,37 +181,12 @@ export function LocalizePanel() {
     }
   }, [sources, activeStandardLanguages, enqueue, load]);
 
-  // Backfill specific languages across all completed source tutorials
-  const handleBackfillLanguages = useCallback(
-    async (targetCodes: string[]) => {
-      if (!sources || sources.length === 0 || targetCodes.length === 0) return;
-      setBulkRunning(true);
-      try {
-        let count = 0;
-        for (const s of sources) {
-          const byLang = new Map(
-            s.translations.map((t) => [t.language, t.status]),
-          );
-          const missing = targetCodes.filter((c) => !byLang.has(c));
-          if (missing.length > 0) {
-            await enqueue(s.id, missing);
-            count += missing.length;
-          }
-        }
-        toast.success(`Backfilled ${count} translation jobs across ${sources.length} videos.`);
-      } finally {
-        setBulkRunning(false);
-        load();
-      }
-    },
-    [sources, enqueue, load],
-  );
-
-  const pct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
+  const pct =
+    stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header with Standard Language overview & config trigger */}
+      {/* Header with the fixed five-language automatic set. */}
       <div
         style={{
           display: "flex",
@@ -247,9 +202,13 @@ export function LocalizePanel() {
           >
             Localization Factory
           </div>
-          <div style={{ fontSize: 13, color: "var(--v2-text-3)", marginTop: 2 }}>
+          <div
+            style={{ fontSize: 13, color: "var(--v2-text-3)", marginTop: 2 }}
+          >
             Auto-translating into{" "}
-            <strong>{activeStandardLanguages.length} standard languages:</strong>{" "}
+            <strong>
+              {activeStandardLanguages.length} standard languages:
+            </strong>{" "}
             {activeStandardLanguages.map((l, i) => (
               <span
                 key={l.code}
@@ -285,23 +244,9 @@ export function LocalizePanel() {
               cursor: "pointer",
             }}
           >
-            {showAllLanguages ? "Hide Extra Languages" : "Show All 17 Languages"}
-          </button>
-
-          <button
-            onClick={() => setShowConfigModal(true)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 600,
-              background: "var(--v2-surface-3)",
-              color: "var(--v2-text-1)",
-              border: "1px solid var(--v2-border-1)",
-              cursor: "pointer",
-            }}
-          >
-            ⚙ Manage Standard Languages
+            {showAllLanguages
+              ? "Hide Extra Languages"
+              : "Show All 17 Languages"}
           </button>
         </div>
       </div>
@@ -329,8 +274,8 @@ export function LocalizePanel() {
               <strong style={{ color: "var(--v2-text-1)" }}>
                 {stats.done}/{stats.total}
               </strong>{" "}
-              standard translations complete ({activeStandardLanguages.length} target
-              languages × {sources.length} videos)
+              standard translations complete ({activeStandardLanguages.length}{" "}
+              target languages × {sources.length} videos)
               {stats.pending > 0 && (
                 <span style={{ color: "#f0a642" }}>
                   {" "}
@@ -338,7 +283,10 @@ export function LocalizePanel() {
                 </span>
               )}
               {stats.failed > 0 && (
-                <span style={{ color: "#ff8080" }}> · {stats.failed} failed</span>
+                <span style={{ color: "#ff8080" }}>
+                  {" "}
+                  · {stats.failed} failed
+                </span>
               )}
             </div>
             <button
@@ -398,7 +346,10 @@ export function LocalizePanel() {
         }}
       >
         {(["done", "pending", "failed", "none"] as ChipState[]).map((s) => (
-          <span key={s} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            key={s}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
             <span
               style={{
                 width: 12,
@@ -407,11 +358,7 @@ export function LocalizePanel() {
                 ...CHIP_STYLE[s],
               }}
             />
-            {s === "none"
-              ? "not started"
-              : s === "pending"
-                ? "in progress"
-                : s}
+            {s === "none" ? "not started" : s === "pending" ? "in progress" : s}
           </span>
         ))}
       </div>
@@ -481,7 +428,9 @@ export function LocalizePanel() {
                     const st = stateFor(byLang.get(l.code));
                     const clickable = st === "none" || st === "failed";
                     const key = s.id + [l.code].join(",");
-                    const isStandard = standardLangs.includes(l.code);
+                    const isStandard = DEFAULT_STANDARD_LANGUAGES.includes(
+                      l.code,
+                    );
 
                     return (
                       <button
@@ -529,7 +478,7 @@ export function LocalizePanel() {
                 {/* Row Standard Translate Button */}
                 {missingStandard.length > 0 && (
                   <button
-                    onClick={() => enqueue(s.id, missingStandard)}
+                    onClick={() => enqueue(s.id, missingStandard, "automatic")}
                     disabled={busy.has(s.id + missingStandard.join(","))}
                     style={{
                       padding: "7px 14px",
@@ -545,198 +494,24 @@ export function LocalizePanel() {
                     Translate standard ({missingStandard.length})
                   </button>
                 )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Standard Languages Configuration & Backfill Modal */}
-      {showConfigModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 100,
-            background: "rgba(0,0,0,0.8)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              ...card,
-              maxWidth: 580,
-              width: "100%",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: "var(--v2-text-1)",
-                }}
-              >
-                Standard Translation Languages
-              </div>
-              <button
-                onClick={() => setShowConfigModal(false)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--v2-text-3)",
-                  fontSize: 18,
-                  cursor: "pointer",
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.5 }}>
-              Choose which languages are automatically translated when virtual assistants
-              click <strong>&quot;Translate everything missing&quot;</strong>. By default, only
-              the 5 launch languages (German, French, Spanish, Japanese, Korean) are
-              translated to prevent runaway compute costs.
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                gap: 8,
-              }}
-            >
-              {ALL_TARGET_LANGUAGES.map((l) => {
-                const isSelected = standardLangs.includes(l.code);
-                return (
-                  <button
-                    key={l.code}
-                    onClick={() => {
-                      if (isSelected) {
-                        if (standardLangs.length <= 1) {
-                          toast.error("Keep at least one standard language.");
-                          return;
-                        }
-                        saveStandardLangs(
-                          standardLangs.filter((c) => c !== l.code),
-                        );
-                      } else {
-                        saveStandardLangs([...standardLangs, l.code]);
-                      }
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "8px 12px",
-                      borderRadius: 8,
-                      fontSize: 12,
-                      fontWeight: isSelected ? 700 : 500,
-                      background: isSelected
-                        ? "rgba(var(--v2-accent-rgb),0.15)"
-                        : "var(--v2-surface-3)",
-                      border: isSelected
-                        ? "1px solid var(--v2-accent)"
-                        : "1px solid var(--v2-border-1)",
-                      color: isSelected
-                        ? "var(--v2-accent)"
-                        : "var(--v2-text-2)",
-                      cursor: "pointer",
-                      textAlign: "left",
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <FlagIcon code={l.code} />
-                      <span>{l.name}</span>
-                    </span>
-                    <span>{isSelected ? "✓" : "+"}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              style={{
-                borderTop: "1px solid var(--v2-border-1)",
-                paddingTop: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 8,
-              }}
-            >
-              <button
-                onClick={() => {
-                  saveStandardLangs([...DEFAULT_STANDARD_LANGUAGES]);
-                  toast.success("Reset to 5 core launch languages (DE, FR, ES, JA, KO).");
-                }}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--v2-text-3)",
-                  fontSize: 12,
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                }}
-              >
-                Reset to 5 Core Languages
-              </button>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={() => {
-                    handleBackfillLanguages(standardLangs);
-                    setShowConfigModal(false);
-                  }}
-                  disabled={bulkRunning}
+                <a
+                  href={`/thumbnails?tutorialJobId=${encodeURIComponent(s.id)}`}
                   style={{
                     padding: "7px 14px",
                     borderRadius: 8,
                     fontSize: 12,
                     fontWeight: 700,
-                    background: "var(--v2-surface-3)",
-                    color: "var(--v2-text-1)",
-                    border: "1px solid var(--v2-border-1)",
-                    cursor: "pointer",
+                    color: "var(--v2-accent)",
+                    border: "1px solid rgba(var(--v2-accent-rgb),0.4)",
+                    textDecoration: "none",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  Backfill missing to all videos
-                </button>
-                <button
-                  onClick={() => setShowConfigModal(false)}
-                  style={{
-                    padding: "7px 16px",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    background: "var(--v2-accent)",
-                    color: "#000",
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  Done
-                </button>
+                  Thumbnail pack
+                </a>
               </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
       )}
     </div>

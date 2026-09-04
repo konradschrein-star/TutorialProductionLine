@@ -225,7 +225,10 @@ function resolveVoiceForProvider(
  * mapped, so the caller falls back to the source/channel voice.
  */
 function normalizeTtsProviderId(raw: string): string | null {
-  const v = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const v = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   const KNOWN = new Set([
     "fish_audio",
     "ai33_minimax",
@@ -304,14 +307,18 @@ async function synthesizeTranslatedTts(
   providerUsed: string;
   audioDurationS: number | null;
 }> {
-  const { childId, scriptText, ttsProvider, ttsVoice, voiceSettings, channelId } =
-    args;
+  const {
+    childId,
+    scriptText,
+    ttsProvider,
+    ttsVoice,
+    voiceSettings,
+    channelId,
+  } = args;
 
   const tutorialSettingsRow = await getTutorialSettings(db);
-  const defaultVs = (tutorialSettingsRow.default_voice_settings ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const defaultVs = (tutorialSettingsRow.default_voice_settings ??
+    {}) as Record<string, unknown>;
   const jobVs = (voiceSettings ?? {}) as Record<string, unknown>;
   const mergedVs: VoiceSettings = { ...defaultVs, ...jobVs } as VoiceSettings;
 
@@ -459,9 +466,8 @@ export function createTutorialTranslateProcessor(
   },
 ) {
   return async (job: Job<TutorialTranslatePayload>) => {
-    const { sourceJobId, targetLanguage } = TutorialTranslatePayloadSchema.parse(
-      job.data,
-    );
+    const { sourceJobId, targetLanguage } =
+      TutorialTranslatePayloadSchema.parse(job.data);
     const languageName = LANGUAGE_NAMES[targetLanguage] ?? targetLanguage;
 
     console.log(
@@ -553,9 +559,10 @@ export function createTutorialTranslateProcessor(
         );
       }
 
-      // 2) Translate the title (short call). Fall back to the source title if
-      //    the model returns nothing usable rather than shipping a blank title.
-      let translatedTitle = source.title;
+      // 2) Translate the title (short call). A source-language title is not a
+      // valid fallback for a localized publication job: fail this attempt and
+      // retry instead of creating a plausible-looking mixed-language child.
+      let translatedTitle: string;
       try {
         const rawTitle = await generateScript({
           provider: source.script_provider,
@@ -571,18 +578,15 @@ export function createTutorialTranslateProcessor(
           .replace(/^["'`]+|["'`]+$/g, "")
           .split("\n")[0]
           ?.trim();
-        if (cleaned) translatedTitle = cleaned;
+        if (!cleaned) {
+          throw new Error("title translation returned no usable text");
+        }
+        translatedTitle = cleaned;
       } catch (titleErr) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            message:
-              "Tutorial translate: title translation failed — using source title",
-            source_job_id: sourceJobId,
-            target_language: targetLanguage,
-            error:
-              titleErr instanceof Error ? titleErr.message : String(titleErr),
-          }),
+        throw new Error(
+          `Title translation failed for ${targetLanguage}: ${
+            titleErr instanceof Error ? titleErr.message : String(titleErr)
+          }`,
         );
       }
 
@@ -647,6 +651,8 @@ export function createTutorialTranslateProcessor(
           script_done_at: new Date(),
           description: uploadMeta.description,
           tags: uploadMeta.tags,
+          thumbnail_text_top: uploadMeta.thumbnailTextTop,
+          thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
           tts_provider: ttsProvider,
           tts_voice: ttsVoice,
           channel_id: targetChannelId,
@@ -667,6 +673,8 @@ export function createTutorialTranslateProcessor(
           script_done_at: new Date(),
           description: uploadMeta.description,
           tags: uploadMeta.tags,
+          thumbnail_text_top: uploadMeta.thumbnailTextTop,
+          thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
           script_provider: source.script_provider,
           script_model: source.script_model,
           tts_provider: ttsProvider,
