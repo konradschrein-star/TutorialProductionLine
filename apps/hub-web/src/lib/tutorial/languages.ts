@@ -18,13 +18,8 @@ export interface TargetLanguage {
  * Auto-translation ("Translate everything missing" / "Translate all") strictly targets
  * these standard languages by default.
  */
-export const DEFAULT_STANDARD_LANGUAGES: readonly string[] = [
-  "de",
-  "fr",
-  "es",
-  "ja",
-  "ko",
-] as const;
+export const DEFAULT_STANDARD_LANGUAGES: readonly string[] =
+  AUTOMATIC_TUTORIAL_LANGUAGE_CODES;
 
 export const ALL_TARGET_LANGUAGES: TargetLanguage[] = [
   { code: "de", name: "German", native: "Deutsch", flag: "🇩🇪" },
@@ -69,3 +64,4 @@ export function isStandardTargetLanguage(code: string, standardList: readonly st
   return standardList.includes(code);
 }
 
+import { AUTOMATIC_TUTORIAL_LANGUAGE_CODES } from "@repo/contracts";

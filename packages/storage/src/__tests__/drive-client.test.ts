@@ -102,6 +102,74 @@ describe("DriveClient folders", () => {
     // Only Chan + 2026-07 created; "Content Forge" was replaced by the id.
     expect(drive.files.size).toBe(2);
   });
+
+  it("lists all direct children without collapsing duplicate-capable names", async () => {
+    const c = client(drive);
+    const folder = await c.ensureFolder("Exchange", null);
+    if (!folder.ok) throw new Error("folder");
+    await c.uploadSmallFile({
+      filename: "receipt.json",
+      parentId: folder.value,
+      mimeType: "application/json",
+      content: Buffer.from("{}"),
+      jobId: "exchange-1",
+      kind: "receipt",
+    });
+
+    const children = await c.listChildren(folder.value);
+
+    expect(children.ok).toBe(true);
+    if (children.ok) {
+      expect(children.value.map((file) => file.name)).toEqual(["receipt.json"]);
+    }
+  });
+});
+
+describe("DriveClient bounded reads", () => {
+  function readClient(content: Buffer): DriveClient {
+    let now = 0;
+    return new DriveClient(fakeDriveConfig(), {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      fetch: async (input) => {
+        const url = input.toString();
+        if (url.includes("oauth2.googleapis.com/token")) {
+          return new Response(
+            JSON.stringify({ access_token: "token", expires_in: 3600 }),
+            { status: 200 },
+          );
+        }
+        return new Response(content, {
+          status: 200,
+          headers: { "content-length": String(content.byteLength) },
+        });
+      },
+    });
+  }
+
+  it("returns exact bytes, size and SHA-256 for a bounded JSON object", async () => {
+    const content = Buffer.from('{"state":"accepted"}');
+    const result = await readClient(content).downloadFileBytes("receipt", 1024);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.content.equals(content)).toBe(true);
+      expect(result.value.sizeBytes).toBe(content.byteLength);
+      expect(result.value.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("refuses a body whose declared length exceeds the caller's limit", async () => {
+    const result = await readClient(Buffer.alloc(20)).downloadFileBytes(
+      "receipt",
+      10,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("bad_request");
+  });
 });
 
 describe("DriveClient retry behaviour", () => {

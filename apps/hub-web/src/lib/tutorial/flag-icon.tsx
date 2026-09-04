@@ -6,8 +6,8 @@
  * Windows browser those render as two boxed letters ("DE"), which the owner read
  * as "the emojis don't work". These inline SVGs render identically on every OS.
  *
- * We hand-draw the languages this line actually publishes (de/fr/it/nl/sv/es/pt
- * + the en source). Anything else falls back to a clean 2-letter code chip —
+ * We hand-draw the five unattended targets (de/fr/es/ja/ko), the English
+ * source, and the older manual targets. Anything else uses a 2-letter chip —
  * still legible, never a broken glyph.
  */
 import type { CSSProperties } from "react";
@@ -66,6 +66,30 @@ const FLAGS: Record<string, React.ReactNode> = {
     <Svg>
       <rect x="0" y="0" width="3" height="2" fill="#AA151B" />
       <rect x="0" y="0.5" width="3" height="1" fill="#F1BF00" />
+    </Svg>
+  ),
+  ja: (
+    <Svg>
+      <rect x="0" y="0" width="3" height="2" fill="#FFFFFF" />
+      <circle cx="1.5" cy="1" r="0.48" fill="#BC002D" />
+    </Svg>
+  ),
+  ko: (
+    <Svg>
+      <rect x="0" y="0" width="3" height="2" fill="#FFFFFF" />
+      <path
+        d="M1.18 1a.32.32 0 0 1 .64 0 .64.64 0 0 0-1.28 0 .64.64 0 0 1 1.28 0 .32.32 0 0 1-.64 0Z"
+        fill="#CD2E3A"
+      />
+      <path
+        d="M1.82 1a.32.32 0 0 1-.64 0 .64.64 0 0 0 1.28 0 .64.64 0 0 1-1.28 0 .32.32 0 0 1 .64 0Z"
+        fill="#0047A0"
+      />
+      <path
+        d="M.36.35h.46M.36.48h.46M2.18 1.52h.46M2.18 1.65h.46"
+        stroke="#111"
+        strokeWidth=".055"
+      />
     </Svg>
   ),
   pt: (

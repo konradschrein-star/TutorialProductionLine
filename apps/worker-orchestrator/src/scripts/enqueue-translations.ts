@@ -3,10 +3,11 @@
  *
  * Mirrors /api/production/tutorial-translate/enqueue exactly (same queue, job
  * name, idempotent jobId, skip-if-child-exists) but runs server-side over the
- * whole back-catalog. Env-configurable so we can pilot before the full run:
+ * whole back-catalog. The unattended language set is compiled into
+ * @repo/contracts; environment values cannot widen it. Other knobs still
+ * allow a one-source pilot before the full run:
  *
  *   DATABASE_URL, REDIS_URL      (from /opt/tutorial-studio/.env)
- *   BATCH_LANGS=de,fr,it,sv,nl   (default)
  *   BATCH_LIMIT=1                 (optional — only the first N source jobs)
  *   BATCH_SOURCE_ID=<uuid>        (optional — only this one source job)
  *   DRY_RUN=1                     (optional — plan only, enqueue nothing)
@@ -26,6 +27,7 @@ import {
   createRedisConnection,
   createTutorialTranslateQueue,
 } from "@repo/queue";
+import { AUTOMATIC_TUTORIAL_LANGUAGE_CODES } from "@repo/contracts";
 
 const DATABASE_URL = process.env["DATABASE_URL"];
 const REDIS_URL = process.env["REDIS_URL"];
@@ -34,10 +36,7 @@ if (!DATABASE_URL || !REDIS_URL) {
   process.exit(1);
 }
 
-const LANGS = (process.env["BATCH_LANGS"] ?? "de,fr,es,ja,ko")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+const LANGS = [...AUTOMATIC_TUTORIAL_LANGUAGE_CODES];
 
 const LIMIT = process.env["BATCH_LIMIT"]
   ? parseInt(process.env["BATCH_LIMIT"], 10)

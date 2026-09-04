@@ -275,8 +275,8 @@ export function buildNewVideoTreatmentArgs(
 
 /**
  * Per-language default CTA strings. Keyed by the short language code stored in
- * tutorial_jobs.language (de/fr/it/nl/sv, plus es/ja/ko already handled by the
- * translate pipeline). Falls back to English.
+ * tutorial_jobs.language. The unattended translation set (de/fr/es/ja/ko)
+ * must always have native copy; older manual targets remain supported too.
  */
 export const DEFAULT_CTA_BY_LANG: Record<string, string> = {
   de: "Abonniere für mehr Tutorials!",
@@ -285,6 +285,8 @@ export const DEFAULT_CTA_BY_LANG: Record<string, string> = {
   nl: "Abonneer voor meer tutorials!",
   sv: "Prenumerera för fler guider!",
   es: "¡Suscríbete para más tutoriales!",
+  ja: "チャンネル登録して、さらにチュートリアルをご覧ください！",
+  ko: "더 많은 튜토리얼을 보려면 구독하세요!",
   en: "Subscribe for more tutorials!",
 };
 

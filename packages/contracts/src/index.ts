@@ -507,14 +507,37 @@ export { VoiceSettingsSchema } from "./schemas/voice-settings.js";
 export type { VoiceSettings } from "./schemas/voice-settings.js";
 
 export {
+  AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
   TutorialGeneratePayloadSchema,
   TutorialSplicePayloadSchema,
   TutorialStitchPayloadSchema,
   TutorialTranslatePayloadSchema,
 } from "./queue-payloads/tutorial-payloads.js";
 export type {
+  AutomaticTutorialLanguage,
   TutorialGeneratePayload,
   TutorialSplicePayload,
   TutorialStitchPayload,
   TutorialTranslatePayload,
 } from "./queue-payloads/tutorial-payloads.js";
+
+export {
+  TUTORIAL_UPLOADER_JOB_VERSION,
+  TUTORIAL_UPLOADER_RECEIPT_VERSION,
+  TutorialUploaderAttributesSchema,
+  TutorialUploaderAssetSchema,
+  TutorialUploaderJobSchema,
+  TutorialUploaderReceiptStateSchema,
+  TutorialUploaderReceiptErrorSchema,
+  TutorialUploaderReceiptResultSchema,
+  TutorialUploaderReceiptSchema,
+  canonicalTutorialUploaderJob,
+  tutorialUploaderReceiptFileName,
+} from "./tutorial-uploader-exchange.js";
+export type {
+  TutorialUploaderAttributes,
+  TutorialUploaderAsset,
+  TutorialUploaderJob,
+  TutorialUploaderReceipt,
+  TutorialUploaderReceiptState,
+} from "./tutorial-uploader-exchange.js";

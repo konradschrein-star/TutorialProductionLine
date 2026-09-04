@@ -26,6 +26,7 @@ export async function createChannel(data: {
   youtube_channel_id?: string;
   name: string;
   language?: string;
+  uploader_channel_key?: string | null;
 }): Promise<ActionResult> {
   try {
     const session = await getSession();
@@ -61,6 +62,7 @@ export async function updateChannel(
     name: string;
     language?: string;
     is_primary?: boolean;
+    uploader_channel_key?: string | null;
   },
 ): Promise<ActionResult> {
   try {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
 import type { DriveConfig } from "../config.js";
@@ -41,14 +42,19 @@ export const APP_PROP_KIND = "cfKind";
 export interface DriveFile {
   id: string;
   name: string;
+  mimeType?: string;
   webViewLink?: string;
   size?: string;
   md5Checksum?: string;
+  sha256Checksum?: string;
+  version?: string;
   trashed?: boolean;
 }
 
 interface DriveFileListResponse {
   files?: DriveFile[];
+  nextPageToken?: string;
+  incompleteSearch?: boolean;
 }
 
 export interface DriveClientDeps {
@@ -244,6 +250,60 @@ export class DriveClient {
     return { ok: true, value: first?.id ?? null };
   }
 
+  /**
+   * List every direct child of a folder. The exchange transport relies on a
+   * complete listing because Drive permits duplicate names: picking the first
+   * match would turn an integrity conflict into an apparently successful
+   * publish. Pagination is therefore handled here rather than at call sites.
+   */
+  async listChildren(parentId: string): Promise<Attempt<DriveFile[]>> {
+    const files: DriveFile[] = [];
+    let pageToken: string | undefined;
+
+    for (let page = 0; page < 200; page += 1) {
+      const params: Record<string, string> = {
+        q: `'${parentId.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' in parents and trashed = false`,
+        fields:
+          "incompleteSearch,nextPageToken,files(id,name,mimeType,webViewLink,size,md5Checksum,sha256Checksum,version,trashed)",
+        pageSize: "1000",
+        orderBy: "name",
+        spaces: "drive",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        corpora: "allDrives",
+        ...(pageToken !== undefined ? { pageToken } : {}),
+      };
+      const res = await this.request({
+        url: `${DRIVE_FILES_URL}?${new URLSearchParams(params).toString()}`,
+        method: "GET",
+      });
+      if (!res.ok) return res;
+      const parsed = DriveClient.parseJson<DriveFileListResponse>(
+        res.value.text,
+      );
+      if (!parsed.ok) return parsed;
+      if (parsed.value.incompleteSearch === true) {
+        return {
+          ok: false,
+          error: storageError(
+            "unknown",
+            "Drive returned an incomplete child listing",
+          ),
+        };
+      }
+      files.push(...(parsed.value.files ?? []));
+      pageToken = parsed.value.nextPageToken;
+      if (pageToken === undefined || pageToken === "") {
+        return { ok: true, value: files };
+      }
+    }
+
+    return {
+      ok: false,
+      error: storageError("unknown", "Drive child listing exceeded 200 pages"),
+    };
+  }
+
   async createFolder(
     name: string,
     parentId: string | null,
@@ -365,11 +425,158 @@ export class DriveClient {
 
   async getFile(fileId: string): Promise<Attempt<DriveFile>> {
     const url = `${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}?${new URLSearchParams(
-      { fields: "id,name,webViewLink,size,md5Checksum,trashed" },
+      {
+        fields:
+          "id,name,mimeType,webViewLink,size,md5Checksum,sha256Checksum,version,trashed",
+      },
     ).toString()}`;
     const res = await this.request({ url, method: "GET" });
     if (!res.ok) return res;
     return DriveClient.parseJson<DriveFile>(res.value.text);
+  }
+
+  private async attemptReadFile(
+    fileId: string,
+    maxBytes: number,
+    collect: boolean,
+  ): Promise<Attempt<{ content?: Buffer; sizeBytes: number; sha256: string }>> {
+    const tokenResult = await this.tokens.getToken();
+    if (!tokenResult.ok) return tokenResult;
+    await this.limiter.acquire();
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(
+        `${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
+        {
+          method: "GET",
+          headers: { authorization: `Bearer ${tokenResult.value.token}` },
+        },
+      );
+    } catch (err) {
+      return { ok: false, error: classifyThrown(err) };
+    }
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      const error = classifyHttpError({
+        status: response.status,
+        bodyText,
+        retryAfterHeader: response.headers.get("retry-after"),
+      });
+      if (error.kind === "auth" && response.status === 401) {
+        this.tokens.invalidate();
+      }
+      if (error.kind === "rate_limited") {
+        this.limiter.penalise(error.retryAfterMs ?? 5_000);
+      }
+      return { ok: false, error };
+    }
+
+    const declaredLength = response.headers.get("content-length");
+    if (
+      declaredLength !== null &&
+      Number.isFinite(Number(declaredLength)) &&
+      Number(declaredLength) > maxBytes
+    ) {
+      await response.body?.cancel();
+      return {
+        ok: false,
+        error: storageError(
+          "bad_request",
+          `Drive file exceeds the ${maxBytes} byte read limit`,
+        ),
+      };
+    }
+    if (response.body === null) {
+      return {
+        ok: false,
+        error: storageError("unknown", "Drive file response had no body"),
+      };
+    }
+
+    const digest = createHash("sha256");
+    const chunks: Buffer[] = [];
+    let sizeBytes = 0;
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const chunk = Buffer.from(next.value);
+        sizeBytes += chunk.byteLength;
+        if (sizeBytes > maxBytes) {
+          await reader.cancel();
+          return {
+            ok: false,
+            error: storageError(
+              "bad_request",
+              `Drive file exceeded the ${maxBytes} byte read limit`,
+            ),
+          };
+        }
+        digest.update(chunk);
+        if (collect) chunks.push(chunk);
+      }
+    } catch (err) {
+      return { ok: false, error: classifyThrown(err) };
+    }
+
+    return {
+      ok: true,
+      value: {
+        ...(collect ? { content: Buffer.concat(chunks) } : {}),
+        sizeBytes,
+        sha256: digest.digest("hex"),
+      },
+    };
+  }
+
+  /** Read a bounded Drive object into memory (used for JSON receipts/markers). */
+  async downloadFileBytes(
+    fileId: string,
+    maxBytes: number,
+  ): Promise<Attempt<{ content: Buffer; sizeBytes: number; sha256: string }>> {
+    const result = await withRetry(
+      () => this.attemptReadFile(fileId, maxBytes, true),
+      this.backoff,
+      this.retryDeps,
+    );
+    if (!result.ok) return result;
+    if (result.value.content === undefined) {
+      return {
+        ok: false,
+        error: storageError("unknown", "Drive file read produced no bytes"),
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        content: result.value.content,
+        sizeBytes: result.value.sizeBytes,
+        sha256: result.value.sha256,
+      },
+    };
+  }
+
+  /** Hash a bounded Drive object without retaining its bytes in memory. */
+  async inspectFileContent(
+    fileId: string,
+    maxBytes: number,
+  ): Promise<Attempt<{ sizeBytes: number; sha256: string }>> {
+    const result = await withRetry(
+      () => this.attemptReadFile(fileId, maxBytes, false),
+      this.backoff,
+      this.retryDeps,
+    );
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      value: {
+        sizeBytes: result.value.sizeBytes,
+        sha256: result.value.sha256,
+      },
+    };
   }
 
   // ---------------------------------------------------------------- uploads
@@ -395,7 +602,7 @@ export class DriveClient {
       },
     };
     const res = await this.request({
-      url: `${DRIVE_UPLOAD_URL}?uploadType=resumable&fields=id,name,webViewLink,size,md5Checksum`,
+      url: `${DRIVE_UPLOAD_URL}?uploadType=resumable&fields=id,name,mimeType,webViewLink,size,md5Checksum,sha256Checksum,version,trashed`,
       method: "POST",
       headers: {
         "content-type": "application/json; charset=UTF-8",
@@ -565,7 +772,7 @@ export class DriveClient {
     ]);
 
     const res = await this.request({
-      url: `${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,webViewLink,size,md5Checksum`,
+      url: `${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,name,mimeType,webViewLink,size,md5Checksum,sha256Checksum,version,trashed`,
       method: "POST",
       headers: { "content-type": `multipart/related; boundary=${boundary}` },
       body: new Uint8Array(body),
@@ -583,7 +790,7 @@ export class DriveClient {
     const res = await this.request({
       url: `${DRIVE_UPLOAD_URL}/${encodeURIComponent(
         args.fileId,
-      )}?uploadType=media&fields=id,name,webViewLink,size,md5Checksum`,
+      )}?uploadType=media&fields=id,name,mimeType,webViewLink,size,md5Checksum,sha256Checksum,version,trashed`,
       method: "PATCH",
       headers: { "content-type": args.mimeType },
       body: new Uint8Array(args.content),

@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+/**
+ * The only languages an unattended translation action may enqueue.
+ * Other languages remain representable for deliberate one-off/manual work.
+ */
+export const AUTOMATIC_TUTORIAL_LANGUAGE_CODES = [
+  "de",
+  "fr",
+  "es",
+  "ja",
+  "ko",
+] as const;
+export type AutomaticTutorialLanguage =
+  (typeof AUTOMATIC_TUTORIAL_LANGUAGE_CODES)[number];
+
 export const TutorialGeneratePayloadSchema = z.object({
   jobId: z.string().uuid(),
   stage: z.enum(["script", "tts"]),

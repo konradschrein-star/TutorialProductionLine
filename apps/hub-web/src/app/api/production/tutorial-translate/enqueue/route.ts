@@ -44,6 +44,20 @@ export async function POST(req: NextRequest) {
   }
   const { sourceJobId, languages, mode } = parsed.data;
 
+  if (
+    mode === "automatic" &&
+    languages.some(
+      (language) => !DEFAULT_STANDARD_LANGUAGES.includes(language),
+    )
+  ) {
+    return NextResponse.json(
+      {
+        error: `Automatic translation is restricted to ${DEFAULT_STANDARD_LANGUAGES.join(", ")}`,
+      },
+      { status: 400 },
+    );
+  }
+
   // Restrict to the supported launch set; ignore anything else the caller sends.
   const requested = Array.from(
     new Set(
@@ -61,17 +75,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (
-    mode === "automatic" &&
-    requested.some((language) => !DEFAULT_STANDARD_LANGUAGES.includes(language))
-  ) {
-    return NextResponse.json(
-      {
-        error: `Automatic translation is restricted to ${DEFAULT_STANDARD_LANGUAGES.join(", ")}`,
-      },
-      { status: 400 },
-    );
-  }
   if (mode === "manual" && requested.length !== 1) {
     return NextResponse.json(
       { error: "Manual translation requests must select exactly one language" },

@@ -52,6 +52,21 @@ describe("POST /api/production/tutorial-translate/enqueue language scope", () =>
     });
   });
 
+  it("rejects unknown automatic targets instead of silently dropping them", async () => {
+    const response = await POST(
+      request({
+        sourceJobId: SOURCE_JOB_ID,
+        languages: ["de", "xx"],
+        mode: "automatic",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/restricted to de, fr, es, ja, ko/i),
+    });
+  });
+
   it("allows only one language per explicit manual request", async () => {
     const response = await POST(
       request({
