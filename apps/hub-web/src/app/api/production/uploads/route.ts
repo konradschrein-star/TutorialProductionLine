@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -110,7 +110,10 @@ export async function GET(request: Request): Promise<NextResponse> {
           isNull(tutorialJobs.source_job_id),
         ),
       )
-      .orderBy(desc(tutorialJobs.completed_at), desc(tutorialJobs.created_at))
+      .orderBy(
+        sql`${tutorialJobs.completed_at} DESC NULLS LAST`,
+        desc(tutorialJobs.created_at),
+      )
       .limit(300);
 
     const parentIds = parents.map((p) => p.id);
