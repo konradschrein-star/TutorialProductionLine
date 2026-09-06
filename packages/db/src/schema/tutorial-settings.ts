@@ -36,7 +36,12 @@ export const tutorialSettings = pgTable("tutorial_settings", {
   thumbnail_background_rotation: jsonb("thumbnail_background_rotation")
     .$type<string[]>()
     .notNull()
-    .default(["Modern Minimal Tech", "Neon Glow Studio", "Dark Corporate Slate", "Abstract Gradient Blue"]),
+    .default([
+      "Office 1 · Window Desk",
+      "Office 2 · White Desk",
+      "Office 3 · Conference Room",
+      "Office 4 · Desktop",
+    ]),
   thumbnail_persona_rotation: jsonb("thumbnail_persona_rotation")
     .$type<Record<string, string[]>>()
     .notNull()

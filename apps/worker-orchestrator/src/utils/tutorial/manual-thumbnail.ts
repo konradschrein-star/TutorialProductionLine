@@ -1,7 +1,10 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import * as fontkit from "fontkit";
+import type { Font } from "fontkit";
 import sharp from "sharp";
 import type { DrizzleClient, TutorialJob } from "@repo/db";
+import { defringePersonaRgba } from "@repo/media-core/images";
 import {
   createThumbnailRecord,
   getChannelThumbnailProfile,
@@ -23,17 +26,23 @@ const MEDIA_DIR =
 const PUBLIC_DIR =
   process.env["HUB_PUBLIC_DIR"] ?? resolve(process.cwd(), "../hub-web/public");
 const ROTATION_BACKGROUNDS = [
+  "background/bg_1_1128207.jpg",
+  "background/bg_5_4386356.jpg",
   "background/bg_9_5717314.jpg",
   "background/bg_6_322338.jpg",
-  "background/bg_5_4386356.jpg",
-  "background/bg_1_1128207.jpg",
 ];
 const BACKGROUND_BY_NAME: Record<string, string> = {
+  "Office 1 · Window Desk": "background/bg_1_1128207.jpg",
+  "Office 2 · White Desk": "background/bg_5_4386356.jpg",
+  "Office 3 · Conference Room": "background/bg_9_5717314.jpg",
+  "Office 4 · Desktop": "background/bg_6_322338.jpg",
+  // Compatibility for rows saved by the previous mislabeled UI.
   "Modern Minimal Tech": "background/bg_9_5717314.jpg",
   "Neon Glow Studio": "background/bg_6_322338.jpg",
   "Dark Corporate Slate": "background/bg_5_4386356.jpg",
   "Abstract Gradient Blue": "background/bg_1_1128207.jpg",
 };
+const FONT_PATH = "fonts/Montserrat-Bold.ttf";
 
 function hash(text: string): number {
   return [...text].reduce(
@@ -48,6 +57,134 @@ function escapeXml(value: string): string {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+type LayoutSide = "left" | "right";
+
+function headlinePaths(
+  font: Font,
+  lines: readonly string[],
+  x: number,
+  maxWidth: number,
+): string {
+  const runs = lines.map((line) => font.layout(line.toUpperCase()));
+  const widest = Math.max(...runs.map((run) => run.advanceWidth), 1);
+  const fontSize = Math.max(
+    58,
+    Math.min(88, (maxWidth / widest) * font.unitsPerEm),
+  );
+  const scale = fontSize / font.unitsPerEm;
+  return runs
+    .map((run, lineIndex) => {
+      let cursor = 0;
+      const paths = run.glyphs.map((glyph, glyphIndex) => {
+        const position = run.positions[glyphIndex]!;
+        const translated = cursor + position.xOffset;
+        cursor += position.xAdvance;
+        return `<path d="${glyph.path.toSVG()}" transform="translate(${translated} ${position.yOffset})"/>`;
+      });
+      const baseline = 225 + lineIndex * 112;
+      return `<g transform="translate(${x} ${baseline}) scale(${scale} ${-scale})" fill="#111318" stroke="#ffffff" stroke-width="${4 / scale}" paint-order="stroke fill" stroke-linejoin="round">${paths.join("")}</g>`;
+    })
+    .join("");
+}
+
+async function cleanAndSizeHost(
+  host: string,
+): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const raw = await sharp(host)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const cleaned = defringePersonaRgba(
+    raw.data,
+    raw.info.width,
+    raw.info.height,
+  );
+  const resized = await sharp(cleaned, { raw: raw.info })
+    .trim({ background: "#00000000", threshold: 6 })
+    .resize(650, 710, {
+      fit: "inside",
+      position: "top",
+      withoutEnlargement: false,
+    })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  return {
+    buffer: resized.data,
+    width: resized.info.width,
+    height: resized.info.height,
+  };
+}
+
+export interface ManualTutorialArtworkInput {
+  outputPath: string;
+  backgroundPath: string;
+  hostPath: string;
+  logoPath?: string | null;
+  lines: readonly [string, string];
+  accent: string;
+  hostSide: LayoutSide;
+  publicDir?: string;
+}
+
+/** Render the reference-inspired office layout without any database access. */
+export async function renderManualTutorialArtwork({
+  outputPath,
+  backgroundPath,
+  hostPath,
+  logoPath,
+  lines,
+  accent,
+  hostSide,
+  publicDir = PUBLIC_DIR,
+}: ManualTutorialArtworkInput): Promise<void> {
+  const textX = hostSide === "left" ? 610 : 62;
+  const cardX = textX - 28;
+  const [hostImage, fontBytes] = await Promise.all([
+    cleanAndSizeHost(hostPath),
+    readFile(join(publicDir, FONT_PATH)),
+  ]);
+  const font = fontkit.create(fontBytes) as Font;
+  const svg = Buffer.from(
+    `<svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="card-shadow" x="-30%" y="-30%" width="160%" height="180%">
+          <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity=".24"/>
+        </filter>
+      </defs>
+      <rect x="${cardX}" y="72" width="636" height="350" rx="28" fill="#ffffff" fill-opacity=".91" filter="url(#card-shadow)"/>
+      <rect x="${cardX}" y="72" width="16" height="350" rx="8" fill="${escapeXml(accent)}"/>
+      ${headlinePaths(font, lines, textX, 560)}
+      <rect x="${textX}" y="376" width="270" height="12" rx="6" fill="${escapeXml(accent)}"/>
+    </svg>`,
+  );
+  const hostX = hostSide === "left" ? -12 : 1280 - hostImage.width + 18;
+  const hostY = 720 - hostImage.height;
+  const composites: sharp.OverlayOptions[] = [
+    { input: svg, left: 0, top: 0 },
+    { input: hostImage.buffer, left: hostX, top: hostY },
+  ];
+  if (logoPath) {
+    const disc = Buffer.from(
+      `<svg width="176" height="176" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="160" height="160" rx="36" fill="white" stroke="${escapeXml(accent)}" stroke-width="8"/></svg>`,
+    );
+    const logoBuffer = await sharp(logoPath)
+      .resize(116, 116, { fit: "contain" })
+      .png()
+      .toBuffer();
+    composites.push(
+      { input: disc, left: textX, top: 478 },
+      { input: logoBuffer, left: textX + 30, top: 508 },
+    );
+  }
+  await sharp(backgroundPath)
+    .resize(1280, 720, { fit: "cover" })
+    .modulate({ brightness: 1.02, saturation: 0.9 })
+    .blur(0.6)
+    .composite(composites)
+    .png()
+    .toFile(outputPath);
 }
 
 function resolveAssetPath(path: string): string {
@@ -128,22 +265,17 @@ export async function ensureManualTutorialThumbnail(
   const logo = profile?.logo_image_path
     ? { path: resolveAssetPath(profile.logo_image_path), subject: null }
     : derivedLogo;
-  const lines = [context.thumbnailTextTop, context.thumbnailTextBottom];
-  const fontSize = Math.max(
-    54,
-    Math.min(
-      94,
-      Math.floor(760 / Math.max(...lines.map((line) => line.length), 5)) * 1.2,
-    ),
-  );
+  const lines: [string, string] = [
+    context.thumbnailTextTop,
+    context.thumbnailTextBottom,
+  ];
   const palette = ["#a8ff00", "#00e5ff", "#ffd400", "#ff5c8a"];
   const accent =
     profile?.primary_color ??
     palette[hash(context.channelId) % palette.length]!;
-  const secondary = profile?.secondary_color ?? "#000000";
-  const hostLeft = hash(`${job.id}:layout`) % 2 === 0;
-  const textX = hostLeft ? 535 : 55;
-  const hostX = hostLeft ? 20 : 790;
+  const rootJobId = job.source_job_id ?? job.id;
+  const hostSide: LayoutSide =
+    hash(`${rootJobId}:${job.title}:layout`) % 2 === 0 ? "left" : "right";
   const outputDir = join(MEDIA_DIR, job.id);
   const outputPath = join(outputDir, `manual-default-${context.language}.png`);
   await mkdir(outputDir, { recursive: true });
@@ -157,60 +289,18 @@ export async function ensureManualTutorialThumbnail(
   const background = join(
     PUBLIC_DIR,
     backgroundPool[
-      hash(`${context.channelId}:background`) % backgroundPool.length
+      hash(`${rootJobId}:${job.title}:background`) % backgroundPool.length
     ]!,
   );
-  const svg =
-    Buffer.from(`<svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="1100" cy="80" r="330" fill="${escapeXml(accent)}" opacity=".13"/>
-    <rect x="${textX - 24}" y="92" width="690" height="360" rx="28" fill="${escapeXml(secondary)}" opacity=".34"/>
-    ${lines.map((line, index) => `<text x="${textX}" y="${220 + index * 122}" font-family="Arial Black,Arial" font-weight="900" font-size="${fontSize}" font-style="italic" fill="white" stroke="#000" stroke-width="14" paint-order="stroke" letter-spacing="2">${escapeXml(line)}</text>`).join("")}
-    <rect x="${textX}" y="367" width="300" height="14" rx="7" fill="${escapeXml(accent)}"/>
-  </svg>`);
-
-  const rawHost = await sharp(host)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  for (let index = 0; index < rawHost.data.length; index += 4) {
-    const red = rawHost.data[index]!;
-    const green = rawHost.data[index + 1]!;
-    const blue = rawHost.data[index + 2]!;
-    if (green > red * 1.16 && green > blue * 1.16) {
-      const neutral = Math.max(red, blue);
-      const spill = green - neutral;
-      rawHost.data[index + 1] = Math.min(255, neutral + 8);
-      rawHost.data[index + 3] = Math.round(
-        rawHost.data[index + 3]! * Math.max(0, 1 - (spill / 255) * 0.9),
-      );
-    }
-  }
-  const hostBuffer = await sharp(rawHost.data, { raw: rawHost.info })
-    .trim({ background: "#000000", threshold: 8 })
-    .resize(470, 680, { fit: "cover", position: "top" })
-    .png()
-    .toBuffer();
-  const composites: sharp.OverlayOptions[] = [
-    { input: hostBuffer, left: hostX, top: 40 },
-  ];
-  if (logo.path) {
-    const disc = Buffer.from(
-      `<svg width="190" height="190" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="5" width="180" height="180" rx="38" fill="white" stroke="${escapeXml(accent)}" stroke-width="10"/></svg>`,
-    );
-    const logoBuffer = await sharp(logo.path)
-      .resize(130, 130, { fit: "contain" })
-      .png()
-      .toBuffer();
-    composites.push(
-      { input: disc, left: textX + 430, top: 470 },
-      { input: logoBuffer, left: textX + 460, top: 500 },
-    );
-  }
-  await sharp(background)
-    .resize(1280, 720, { fit: "cover" })
-    .composite([{ input: svg }, ...composites])
-    .png()
-    .toFile(outputPath);
+  await renderManualTutorialArtwork({
+    outputPath,
+    backgroundPath: background,
+    hostPath: host,
+    logoPath: logo.path,
+    lines,
+    accent,
+    hostSide,
+  });
 
   const headline = lines.join("\n");
   if (existing) {

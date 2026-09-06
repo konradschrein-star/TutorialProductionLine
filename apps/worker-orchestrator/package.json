@@ -31,6 +31,7 @@
     "bullmq": "^5.35.4",
     "dotenv": "^17.0.0",
     "drizzle-orm": "^0.36.4",
+    "fontkit": "^2.0.4",
     "ioredis": "^5.4.2",
     "postgres": "^3.4.5",
     "react": "^19.2.4",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "@types/fontkit": "^2.0.9",
     "@typescript-eslint/parser": "^8",
     "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^9",

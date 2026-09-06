@@ -693,11 +693,17 @@ function ThumbnailGenerationMode({ settings }: { settings: TutorialSettingsRow }
 }
 
 const ROTATION_BACKGROUNDS = [
-  "Modern Minimal Tech",
-  "Neon Glow Studio",
-  "Dark Corporate Slate",
-  "Abstract Gradient Blue",
+  "Office 1 · Window Desk",
+  "Office 2 · White Desk",
+  "Office 3 · Conference Room",
+  "Office 4 · Desktop",
 ] as const;
+const LEGACY_BACKGROUND_NAMES: Record<string, (typeof ROTATION_BACKGROUNDS)[number]> = {
+  "Abstract Gradient Blue": "Office 1 · Window Desk",
+  "Dark Corporate Slate": "Office 2 · White Desk",
+  "Modern Minimal Tech": "Office 3 · Conference Room",
+  "Neon Glow Studio": "Office 4 · Desktop",
+};
 const PERSONA_ROTATION: Record<string, { label: string; poses: { label: string; path: string }[] }> = {
   en: { label: "English host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `English/american-${pose}.png` })) },
   de: { label: "German host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `germanese/german-${pose}.png` })) },
@@ -708,7 +714,11 @@ const PERSONA_ROTATION: Record<string, { label: string; poses: { label: string; 
 };
 
 function ThumbnailRotationSettings({ settings }: { settings: TutorialSettingsRow }) {
-  const [selected, setSelected] = useState<string[]>(settings.thumbnail_background_rotation ?? [...ROTATION_BACKGROUNDS]);
+  const [selected, setSelected] = useState<string[]>(() => {
+    const configured = settings.thumbnail_background_rotation ?? [];
+    const normalized = configured.map((name) => LEGACY_BACKGROUND_NAMES[name] ?? name);
+    return normalized.length ? [...new Set(normalized)] : [...ROTATION_BACKGROUNDS];
+  });
   const [saving, setSaving] = useState(false);
   async function toggle(name: string) {
     const next = selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name];
@@ -731,7 +741,7 @@ function ThumbnailRotationSettings({ settings }: { settings: TutorialSettingsRow
           </button>;
         })}
       </div>
-      <div style={{ marginTop: 7, fontSize: 10.5, color: "var(--v2-text-2)" }}>Only these four approved backgrounds start enabled. Uploaded backgrounds remain available for manual selection.</div>
+      <div style={{ marginTop: 7, fontSize: 10.5, color: "var(--v2-text-2)" }}>The automatic system cycles only these four approved office photographs. Uploaded backgrounds remain available for manual selection.</div>
     </div>
   );
 }

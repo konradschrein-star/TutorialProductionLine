@@ -7,6 +7,11 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { GlassCard } from "@/app/(authenticated)/_components";
 import { FlagIcon } from "@/lib/tutorial/flag-icon";
+import {
+  ACTIVE_PERSONA_LANGUAGES,
+  cleanedPersonaUrl,
+  PERSONA_CATALOG,
+} from "@/lib/thumbnails/persona-catalog";
 
 /**
  * Manual Thumbnail Composer — the PRIMARY, fully-offline thumbnail tool.
@@ -30,13 +35,7 @@ const TEXT_2 = "#cdc3d7";
 const CUSTOM_ASSETS_KEY = "ts_custom_assets";
 
 // English source + the four localized launch channels, in export order.
-const LANGUAGES = [
-  "English",
-  "German",
-  "French",
-  "Italian",
-  "Swedish",
-] as const;
+const LANGUAGES = ACTIVE_PERSONA_LANGUAGES;
 
 interface VariantCopy {
   top: string;
@@ -52,17 +51,14 @@ const INITIAL_VARIANT_COPY: Record<(typeof LANGUAGES)[number], VariantCopy> = {
 };
 
 const FONT_OPTIONS = [
-  { label: "Impact (Standard Bold)", value: "Impact" },
-  { label: "Anton (Heavy Punch)", value: "Anton" },
-  { label: "Montserrat ExtraBold", value: "Montserrat" },
-  { label: "Bebas Neue (Tall Condensed)", value: "Bebas Neue" },
-  { label: "Plus Jakarta Sans", value: "Plus Jakarta Sans" },
-  { label: "Arial Black", value: "Arial Black" },
-  { label: "Inter Black", value: "Inter" },
+  {
+    label: "Montserrat Bold (Channel Font)",
+    value: "var(--font-montserrat), Montserrat, Arial, sans-serif",
+  },
 ];
+const THUMBNAIL_FONT = FONT_OPTIONS[0]!.value;
 
-// A background swatch is EITHER a served image (url) OR a pure CSS background
-// (gradient/solid). The canvas BACKGROUND element carries the same two fields.
+// The approved backgrounds are the four office photographs in /public/background.
 interface BgOption {
   name: string;
   url?: string;
@@ -71,63 +67,22 @@ interface BgOption {
 
 const DEFAULT_BGS: BgOption[] = [
   // Original served image backgrounds (public/background/).
-  { name: "Abstract Gradient Blue", url: "/background/bg_1_1128207.jpg" },
-  { name: "Dark Corporate Slate", url: "/background/bg_5_4386356.jpg" },
-  { name: "Neon Glow Studio", url: "/background/bg_6_322338.jpg" },
-  { name: "Modern Minimal Tech", url: "/background/bg_9_5717314.jpg" },
-  // Built-in CSS studio gradients — no assets required.
-  {
-    name: "Dark Slate",
-    css: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
-  },
-  {
-    name: "Soft Blue",
-    css: "linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%)",
-  },
-  {
-    name: "Warm Sunset",
-    css: "linear-gradient(135deg, #f97316 0%, #b91c1c 100%)",
-  },
-  {
-    name: "Fresh Green",
-    css: "linear-gradient(135deg, #10b981 0%, #065f46 100%)",
-  },
-  {
-    name: "Royal Purple",
-    css: "linear-gradient(135deg, #8b5cf6 0%, #3b0764 100%)",
-  },
-  {
-    name: "Neutral Gray",
-    css: "linear-gradient(135deg, #9ca3af 0%, #374151 100%)",
-  },
+  { name: "Office 1 · Window Desk", url: "/background/bg_1_1128207.jpg" },
+  { name: "Office 2 · White Desk", url: "/background/bg_5_4386356.jpg" },
+  { name: "Office 3 · Conference Room", url: "/background/bg_9_5717314.jpg" },
+  { name: "Office 4 · Desktop", url: "/background/bg_6_322338.jpg" },
 ];
 
 // Per-language display order + flag emoji for the grouped PERSONAS library.
-const PERSONA_LANG_ORDER = [
-  "English",
-  "Spanish",
-  "German",
-  "Italian",
-  "French",
-  "Portuguese",
-  "Japanese",
-  "Korean",
-  "Swedish",
-  "Dutch",
-] as const;
+const PERSONA_LANG_ORDER = ACTIVE_PERSONA_LANGUAGES;
 
 // Windows has no flag-emoji glyphs, so these render as SVGs via FlagIcon.
 const LANG_NAME_TO_CODE: Record<string, string> = {
   English: "en",
-  Spanish: "es",
   German: "de",
   Italian: "it",
   French: "fr",
-  Portuguese: "pt",
-  Japanese: "ja",
-  Korean: "ko",
   Swedish: "sv",
-  Dutch: "nl",
 };
 
 const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
@@ -366,16 +321,14 @@ const RAW_PERSONAS: Record<string, { name: string; url: string }[]> = {
   ],
 };
 
-// Legacy UUID/persona uploads were different people from the established
-// language hosts. Keep one person per language and offer only that person's
-// named pose set (pointing, thinking, smiling, etc.).
 const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> =
   Object.fromEntries(
-    Object.entries(RAW_PERSONAS).map(([language, personas]) => [
+    Object.entries(PERSONA_CATALOG).map(([language, personas]) => [
       language,
-      personas.filter(
-        (persona) => !/(removalai|persona_|\/new_)/i.test(persona.url),
-      ),
+      personas.map((persona) => ({
+        name: persona.name,
+        url: cleanedPersonaUrl(persona.path),
+      })),
     ]),
   );
 
@@ -535,7 +488,7 @@ interface CustomThumbnailAsset {
 }
 
 type LibraryTab =
-  "CUSTOM" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "LAYERS";
+  "PRESETS" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "CUSTOM" | "LAYERS";
 
 // ── localStorage helpers (replicate facade StorageService, plain localStorage) ──
 function readCustomAssets(): CustomThumbnailAsset[] {
@@ -572,57 +525,57 @@ function initialElements(): ThumbnailElement[] {
     {
       id: "person-1",
       type: "PERSON",
-      url: "/English/american-hero.png",
-      x: 20,
-      y: 40,
-      width: 320,
-      height: 410,
+      url: cleanedPersonaUrl("English/american-hero.png"),
+      x: 485,
+      y: 4,
+      width: 330,
+      height: 446,
       zIndex: 2,
     },
     {
       id: "text-top",
       type: "TEXT",
       text: "LEARN FAST",
-      x: 370,
-      y: 45,
-      width: 400,
-      height: 80,
+      x: 34,
+      y: 58,
+      width: 470,
+      height: 92,
       zIndex: 4,
-      fontFamily: "Impact",
-      fontSize: 64,
+      fontFamily: THUMBNAIL_FONT,
+      fontSize: 66,
       color: "#ffffff",
       strokeColor: "#000000",
-      strokeWidth: 8,
-      fontWeight: "bold",
-      fontStyle: "italic",
+      strokeWidth: 5,
+      fontWeight: "900",
+      fontStyle: "normal",
       rotation: 0,
     },
     {
       id: "text-bottom",
       type: "TEXT",
       text: "IN 10 MINS",
-      x: 370,
-      y: 125,
-      width: 400,
-      height: 80,
+      x: 34,
+      y: 145,
+      width: 470,
+      height: 92,
       zIndex: 5,
-      fontFamily: "Impact",
-      fontSize: 64,
+      fontFamily: THUMBNAIL_FONT,
+      fontSize: 66,
       color: "#ffffff",
       strokeColor: "#000000",
-      strokeWidth: 8,
-      fontWeight: "bold",
-      fontStyle: "italic",
+      strokeWidth: 5,
+      fontWeight: "900",
+      fontStyle: "normal",
       rotation: 0,
     },
     {
       id: "logo-1",
       type: "LOGO",
       url: "/app_logos_png/notion.png",
-      x: 450,
-      y: 230,
-      width: 150,
-      height: 150,
+      x: 48,
+      y: 276,
+      width: 128,
+      height: 128,
       zIndex: 3,
       bgColor: "#ffffff",
       borderRadius: "50%",
@@ -632,14 +585,141 @@ function initialElements(): ThumbnailElement[] {
       id: "arrow-1",
       type: "SYMBOL",
       url: "/bulk_symbols_110_colored/curved-arrow.png",
-      x: 620,
-      y: 150,
-      width: 120,
-      height: 120,
+      x: 202,
+      y: 275,
+      width: 112,
+      height: 112,
       zIndex: 6,
       rotation: 0,
     },
   ];
+}
+
+interface ReferenceLayoutPreset {
+  id: string;
+  name: string;
+  references: string;
+  description: string;
+  patches: Record<string, Partial<ThumbnailElement>>;
+}
+
+/**
+ * Editable geometry distilled from the approved archetype examples. These are
+ * layout starting points, not flattened templates: the VA can still drag and
+ * resize every person, line, logo and symbol after applying one.
+ */
+const REFERENCE_LAYOUTS: readonly ReferenceLayoutPreset[] = [
+  {
+    id: "host-right-headline",
+    name: "Host Right · Big Headline",
+    references: "Tutorial 3, Tutorial 4, Tutorial 13",
+    description: "Large host on the right; headline and app mark own the left.",
+    patches: {
+      "person-1": { x: 488, y: 2, width: 330, height: 448 },
+      "text-top": { x: 34, y: 54, width: 470, height: 92 },
+      "text-bottom": { x: 34, y: 142, width: 470, height: 92 },
+      "logo-1": { x: 48, y: 278, width: 128, height: 128 },
+      "arrow-1": { x: 202, y: 280, width: 110, height: 110 },
+    },
+  },
+  {
+    id: "host-left-dashboard",
+    name: "Host Left · Product Detail",
+    references: "Design 2, Comparison 3",
+    description:
+      "Host anchors the left while copy and product proof sit right.",
+    patches: {
+      "person-1": { x: -18, y: 2, width: 360, height: 448 },
+      "text-top": { x: 318, y: 50, width: 455, height: 92 },
+      "text-bottom": { x: 318, y: 138, width: 455, height: 92 },
+      "logo-1": { x: 570, y: 270, width: 142, height: 142 },
+      "arrow-1": { x: 420, y: 285, width: 112, height: 112, rotation: 10 },
+    },
+  },
+  {
+    id: "friendly-card",
+    name: "Friendly Tutorial Card",
+    references: "Charles 1, Design 4, Tutorial 4",
+    description:
+      "Clean text cards and a close host crop for beginner tutorials.",
+    patches: {
+      "person-1": { x: 492, y: -4, width: 340, height: 458 },
+      "text-top": {
+        x: 34,
+        y: 82,
+        width: 470,
+        height: 82,
+        color: "#101114",
+        strokeWidth: 0,
+        bgColor: "rgba(255,255,255,.92)",
+        borderRadius: "12px",
+        padding: "0 16px",
+      },
+      "text-bottom": {
+        x: 34,
+        y: 170,
+        width: 470,
+        height: 82,
+        color: "#101114",
+        strokeWidth: 0,
+        bgColor: "rgba(255,255,255,.92)",
+        borderRadius: "12px",
+        padding: "0 16px",
+      },
+      "logo-1": { x: 56, y: 288, width: 116, height: 116 },
+      "arrow-1": { x: 205, y: 292, width: 104, height: 104 },
+    },
+  },
+  {
+    id: "logo-first",
+    name: "Logo First · Host Right",
+    references: "Design 3, Design 5, Tutorial 8",
+    description: "A strong app mark, compact headline and dominant right host.",
+    patches: {
+      "person-1": { x: 510, y: 0, width: 315, height: 450 },
+      "text-top": { x: 230, y: 48, width: 345, height: 88 },
+      "text-bottom": { x: 230, y: 132, width: 345, height: 88 },
+      "logo-1": { x: 42, y: 45, width: 168, height: 168 },
+      "arrow-1": { x: 295, y: 268, width: 118, height: 118, rotation: -8 },
+    },
+  },
+  {
+    id: "reaction-product",
+    name: "Reaction · Product Focus",
+    references: "Humor 1, Phone 3, Tutorial 7",
+    description:
+      "Product/logo leads high while the reaction and copy stay bold.",
+    patches: {
+      "person-1": { x: 465, y: -8, width: 380, height: 466 },
+      "text-top": { x: 35, y: 220, width: 455, height: 88 },
+      "text-bottom": { x: 35, y: 302, width: 455, height: 88 },
+      "logo-1": { x: 52, y: 42, width: 154, height: 154 },
+      "arrow-1": { x: 242, y: 66, width: 116, height: 116, rotation: 12 },
+    },
+  },
+];
+
+function applyPresetPatches(
+  source: ThumbnailElement[],
+  preset: ReferenceLayoutPreset,
+): ThumbnailElement[] {
+  return source.map((element) => ({
+    ...element,
+    ...(element.type === "TEXT"
+      ? {
+          fontFamily: THUMBNAIL_FONT,
+          fontWeight: "900",
+          fontStyle: "normal",
+          color: "#ffffff",
+          strokeColor: "#000000",
+          strokeWidth: 5,
+          bgColor: "transparent",
+          borderRadius: "0",
+          padding: "0",
+        }
+      : {}),
+    ...(preset.patches[element.id] ?? {}),
+  }));
 }
 
 function logoForTitle(title: string): string | undefined {
@@ -729,13 +809,17 @@ function ThumbnailPreview({
                 overflow: "hidden",
                 whiteSpace: "nowrap",
                 color: element.color || "#fff",
-                fontFamily: element.fontFamily || "Impact",
+                fontFamily: element.fontFamily || THUMBNAIL_FONT,
                 fontStyle: element.fontStyle || "italic",
                 fontWeight: element.fontWeight || 800,
                 fontSize: (element.fontSize || 64) * scale,
                 lineHeight: 1,
                 WebkitTextStroke: `${(element.strokeWidth ?? 8) * scale}px ${element.strokeColor || "#000"}`,
                 paintOrder: "stroke fill",
+                backgroundColor: element.bgColor || "transparent",
+                borderRadius: element.borderRadius || "0",
+                padding: element.padding || "0",
+                boxSizing: "border-box",
               }}
             >
               {element.text}
@@ -760,7 +844,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const layoutsRef = useRef<Record<string, ThumbnailElement[]>>({});
 
-  const [activeTab, setActiveTab] = useState<LibraryTab>("CUSTOM");
+  const [activeTab, setActiveTab] = useState<LibraryTab>("PRESETS");
   const [activeLang, setActiveLang] = useState<string>("English");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
@@ -1076,8 +1160,8 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       url,
       x: 220,
       y: 120,
-      width: type === "LOGO" ? 140 : type === "PERSON" ? 300 : 100,
-      height: type === "LOGO" ? 140 : type === "PERSON" ? 360 : 100,
+      width: type === "LOGO" ? 140 : type === "PERSON" ? 360 : 100,
+      height: type === "LOGO" ? 140 : type === "PERSON" ? 440 : 100,
       zIndex: elements.length + 1,
       rotation: 0,
     };
@@ -1093,6 +1177,11 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     );
   }
 
+  function applyReferenceLayout(preset: ReferenceLayoutPreset) {
+    setElements((previous) => applyPresetPatches(previous, preset));
+    setSelectedId(null);
+  }
+
   function handleAddTextElement() {
     const newText: ThumbnailElement = {
       id: `text_${Date.now()}`,
@@ -1103,13 +1192,13 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       width: 380,
       height: 70,
       zIndex: elements.length + 1,
-      fontFamily: "Impact",
+      fontFamily: THUMBNAIL_FONT,
       fontSize: 56,
       color: "#ffffff",
       strokeColor: "#000000",
       strokeWidth: 6,
-      fontWeight: "bold",
-      fontStyle: "italic",
+      fontWeight: "900",
+      fontStyle: "normal",
       rotation: 0,
     };
     setElements((prev) => [...prev, newText]);
@@ -1763,7 +1852,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           <button
             type="button"
             disabled={
-              isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+              isBatchExporting ||
+              isExporting ||
+              Boolean(bundle && !bundle.ready)
             }
             onClick={handleBatchExportZip}
             style={{
@@ -1778,11 +1869,15 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
               fontSize: 11.5,
               fontWeight: 800,
               cursor:
-                isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+                isBatchExporting ||
+                isExporting ||
+                Boolean(bundle && !bundle.ready)
                   ? "not-allowed"
                   : "pointer",
               opacity:
-                isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+                isBatchExporting ||
+                isExporting ||
+                Boolean(bundle && !bundle.ready)
                   ? 0.6
                   : 1,
             }}
@@ -1957,7 +2052,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(6, 1fr)",
+              gridTemplateColumns: "repeat(7, 1fr)",
               gap: 3,
               padding: 3,
               borderRadius: 8,
@@ -1967,6 +2062,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           >
             {(
               [
+                "PRESETS",
                 "CUSTOM",
                 "PERSONAS",
                 "LOGOS",
@@ -2143,7 +2239,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           )}
 
           {/* Search box */}
-          {activeTab !== "LAYERS" && (
+          {activeTab !== "LAYERS" && activeTab !== "PRESETS" && (
             <div style={{ position: "relative" }}>
               <input
                 type="text"
@@ -2170,6 +2266,62 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
           {/* Content area */}
           <div style={{ flex: 1, overflowY: "auto", paddingRight: 2 }}>
+            {activeTab === "PRESETS" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div
+                  style={{
+                    padding: "8px 9px",
+                    borderRadius: 7,
+                    background: "rgba(var(--v2-accent-rgb),.08)",
+                    color: TEXT_2,
+                    fontSize: 10.5,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Approved archetype geometry, rebuilt as editable layers. Apply
+                  one, then fine-tune the person, copy and logo on the canvas.
+                </div>
+                {REFERENCE_LAYOUTS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyReferenceLayout(preset)}
+                    style={{
+                      padding: 8,
+                      borderRadius: 9,
+                      border: "1px solid rgba(255,255,255,.12)",
+                      background: "rgba(255,255,255,.035)",
+                      color: TEXT_1,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <ThumbnailPreview
+                      elements={applyPresetPatches(elements, preset)}
+                      portrait={aspectRatio === "9:16"}
+                    />
+                    <div
+                      style={{ marginTop: 7, fontSize: 11, fontWeight: 850 }}
+                    >
+                      {preset.name}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 2,
+                        fontSize: 9.5,
+                        color: "var(--v2-accent)",
+                      }}
+                    >
+                      Based on {preset.references}
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 9.5, color: TEXT_2 }}>
+                      {preset.description}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Custom references */}
             {activeTab === "CUSTOM" &&
               (customAssets.length === 0 ? (
@@ -2823,7 +2975,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             fontWeight:
                               (el.fontWeight as React.CSSProperties["fontWeight"]) ||
                               "bold",
-                            fontFamily: el.fontFamily || "Impact",
+                            fontFamily: el.fontFamily || THUMBNAIL_FONT,
                             fontSize: `${el.fontSize || 64}px`,
                             color: el.color || "#ffffff",
                             WebkitTextStroke: `${el.strokeWidth ?? 8}px ${el.strokeColor || "#000000"}`,
@@ -2835,6 +2987,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             backgroundColor: el.bgColor || "transparent",
                             borderRadius: el.borderRadius || "0",
                             padding: el.padding || "0",
+                            boxSizing: "border-box",
                             userSelect: "none",
                             transform: el.rotation
                               ? `rotate(${el.rotation}deg)`
@@ -2975,7 +3128,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                       FONT
                     </span>
                     <select
-                      value={selectedElement.fontFamily || "Impact"}
+                      value={selectedElement.fontFamily || THUMBNAIL_FONT}
                       onChange={(e) =>
                         patchElement(selectedElement.id, {
                           fontFamily: e.target.value,
