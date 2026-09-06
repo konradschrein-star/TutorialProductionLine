@@ -26,6 +26,7 @@ const SYSTEM_RULES = `You write a single image-generation prompt for a YouTube t
 - Aim for a high-CTR, premium, high-contrast, vibrant 16:9 thumbnail.
 - ALWAYS write the human subject in the SINGULAR. Your prompt must state that EXACTLY ONE person appears in the image and must forbid a second person, a second face anywhere in the frame, and extra hands or arms. Plural phrasing ("people", "characters", "the team") makes the model add a crowd — the owner rejected a batch for exactly that.
 - If the topic names a specific software product, your prompt MUST demand that product's official logo, drawn accurately and LARGE (at least a fifth of the frame wide), and must let the product's real brand colour lead the palette. A viewer has to know which software this is from across the room.
+- Text must be black for contrast and have no mistakes. Only one person on the Thumbnail.
 - Output ONLY the prompt text, no preamble.`;
 
 /**

@@ -27,6 +27,7 @@ export interface VAUser {
   email: string;
   role: 'admin' | 'manager' | 'va' | 'viewer';
   assignedChannels: string[];
+  assignedSoftwares?: string[];
 }
 
 export interface KeywordItem {
@@ -40,6 +41,8 @@ export interface KeywordItem {
   targetChannelId?: string;
   status: 'NEW' | 'CLAIMED' | 'IN_PRODUCTION' | 'COMPLETED' | 'REJECTED';
   claimedBy?: string;
+  assignedTo?: string; // Assigned VA user id or email
+  assignedToName?: string; // Human-readable assigned VA name
   dateAdded: string;
   estMinutes?: number;
   /**
@@ -158,6 +161,13 @@ export interface FinishedVideo {
   driveUrl?: string;
   drivePath?: string;
   createdAt: string;
+  /**
+   * Optional VA attribution. When the operator who produced the video is stamped
+   * here (id preferred, name as fallback), per-VA capacity and target progress
+   * become real. Absent on legacy records — metrics degrade to honest zeros.
+   */
+  producedByUserId?: string;
+  producedByName?: string;
 }
 
 /**
@@ -230,6 +240,9 @@ export interface StudioJob {
   error?: string;
   createdAt: string;
   updatedAt: string;
+  /** Optional VA attribution — see FinishedVideo.producedByUserId. */
+  producedByUserId?: string;
+  producedByName?: string;
 }
 
 /**
@@ -241,10 +254,33 @@ export interface VAProductivityStat {
   role: 'admin' | 'manager' | 'va' | 'viewer';
   email: string;
   assignedChannels: string[];
+  /** All-time COMPLETED keyword claims attributed to this VA. */
   completedCount: number;
+  /** Active claims (CLAIMED / IN_PRODUCTION). */
   inProductionCount: number;
+  /** Sum of estMinutes over completed claims (real estimate, 0 when unknown). */
   watchTimeMinutes: number;
+  /** Back-compat field: now mirrors weeklyProgressPct (0 when no data/target). */
   efficiencyRating: number;
+
+  // ---- additive: target tracking & capacity (all optional) ----
+  /** Total keyword claims (any status) attributed to this VA. */
+  claimedTotal?: number;
+  dailyTarget?: number;
+  weeklyTarget?: number;
+  /** Attributed produced videos dated to today. */
+  completedToday?: number;
+  /** Attributed produced videos in the rolling 7-day window. */
+  completedThisWeek?: number;
+  dailyProgressPct?: number;
+  weeklyProgressPct?: number;
+  /** Capacity: avg attributed videos per active (producing) day. */
+  avgPerActiveDay?: number;
+  /** Capacity: observed peak videos produced on a single day. */
+  bestDayCount?: number;
+  bestDayDate?: string;
+  /** Distinct days on which this VA has attributed production. */
+  activeDays?: number;
 }
 
 export interface ProductionMetrics {
@@ -257,6 +293,20 @@ export interface ProductionMetrics {
   vaActivityCounts: Record<string, number>;
   vaProductivityList?: VAProductivityStat[];
   dailyVelocity: { date: string; count: number }[];
+
+  // ---- additive: honest team-wide capacity & recency (all optional) ----
+  /** Number of days the dailyVelocity window spans (default 7). */
+  windowDays?: number;
+  /** Team's single best production day observed across all history. */
+  teamBestDay?: { date: string; count: number };
+  /** Avg produced per active (producing) day across all history. */
+  teamAvgPerActiveDay?: number;
+  /** Distinct days with any production across all history. */
+  teamActiveDays?: number;
+  /** All-time COMPLETED keyword claims across the whole team. */
+  totalClaimedCompleted?: number;
+  producedToday?: number;
+  producedThisWeek?: number;
 }
 
 /**

@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm";
 import type { DrizzleClient } from "@repo/db";
 import {
+  getTutorialJobById,
   tutorialJobs,
   tutorialSettings,
   channels,
@@ -32,7 +33,9 @@ import {
   TUTORIAL_ARCHIVE_FOLDER_NAME,
   TranscriptUnavailableError,
   ensureArtifactRow,
+  getArtifact,
   markSkipped,
+  resetForRetry,
   type FinishedTutorialRow,
 } from "@repo/storage";
 import { logger } from "@repo/logger";
@@ -59,6 +62,8 @@ interface TutorialCandidate extends FinishedTutorialRow {
   output_qa_status: string | null;
   /** TTS length = the EXPECTED finished length. Often null; see passesOutputQa. */
   audio_duration_s: string | number | null;
+  is_uploaded: boolean;
+  source_job_id: string | null;
 }
 
 /**
@@ -140,10 +145,12 @@ async function findTutorialCandidates(
       script_model: tutorialJobs.script_model,
       created_at: tutorialJobs.created_at,
       script_done_at: tutorialJobs.script_done_at,
+      source_job_id: tutorialJobs.source_job_id,
       output_qa_status: tutorialJobs.output_qa_status,
       audio_duration_s: tutorialJobs.audio_duration_s,
       description: tutorialJobs.description,
       tags: tutorialJobs.tags,
+      is_uploaded: tutorialJobs.is_uploaded,
     })
     .from(tutorialJobs)
     .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
@@ -500,6 +507,7 @@ async function backfillLateThumbnails(
       and(
         eq(storageArtifacts.kind, "thumbnail"),
         eq(storageArtifacts.owner_kind, "tutorial_job"),
+        eq(storageArtifacts.state, "uploaded"),
       ),
     );
 
@@ -523,6 +531,8 @@ async function backfillLateThumbnails(
       created_at: tutorialJobs.created_at,
       script_done_at: tutorialJobs.script_done_at,
       thumbnail_path: thumbnails.output_path,
+      source_job_id: tutorialJobs.source_job_id,
+      language: tutorialJobs.language,
     })
     .from(tutorialJobs)
     .innerJoin(
@@ -531,6 +541,8 @@ async function backfillLateThumbnails(
         eq(thumbnails.subject_id, tutorialJobs.id),
         eq(thumbnails.subject_kind, "tutorial_job"),
         eq(thumbnails.status, "completed"),
+        eq(thumbnails.is_selected, true),
+        inArray(thumbnails.review_verdict, ["acceptable", "strong"]),
         isNotNull(thumbnails.output_path),
       ),
     )
@@ -557,7 +569,17 @@ async function backfillLateThumbnails(
       continue;
     }
     const completedAt = row.script_done_at ?? row.created_at;
+    const source = row.source_job_id
+      ? await getTutorialJobById(db, row.source_job_id)
+      : null;
+    const bundleCompletedAt = source?.completed_at ?? source?.created_at ?? completedAt;
     try {
+      const existing = await getArtifact(db, row.id, "thumbnail");
+      if (existing?.error_kind === "thumbnail_replaced" && existing.drive_file_id) {
+        const deleted = await store.deleteArtifactFromDrive(existing.id);
+        if (!deleted) throw new Error("Could not delete the previous Drive thumbnail");
+        await resetForRetry(db, existing.id);
+      }
       const result = await store.putFinalArtifact({
         jobId: row.id,
         channelId: row.channel_id,
@@ -571,7 +593,11 @@ async function backfillLateThumbnails(
           jobId: row.id,
           title: row.title,
           channelName: row.channel_name,
-          completedAt,
+          completedAt: bundleCompletedAt,
+          sourceJobId: source?.id ?? null,
+          sourceTitle: source?.title ?? null,
+          languageCode: row.language ?? "en",
+          bundleFolderName: "Upload Bundles",
         }),
       });
       if (result.outcome === "uploaded") uploaded += 1;
@@ -620,12 +646,20 @@ async function pushTutorial(
 
   const completedAt = tutorialCompletionDate(job);
   const language = job.language ?? "en";
+  const source = job.source_job_id
+    ? await getTutorialJobById(db, job.source_job_id)
+    : null;
+  const bundleCompletedAt = source?.completed_at ?? source?.created_at ?? completedAt;
 
   const plan = planTutorialFolder({
     jobId: job.id,
     title: job.title,
     channelName: job.channel_name,
-    completedAt,
+    completedAt: bundleCompletedAt,
+    sourceJobId: source?.id ?? null,
+    sourceTitle: source?.title ?? null,
+    languageCode: language,
+    bundleFolderName: "Upload Bundles",
   });
 
   // Resolve the thumbnail before collecting artefacts, so it ships alongside
@@ -802,7 +836,12 @@ async function pushTutorial(
   if (allLanded && tally.failed === 0) {
     await db
       .update(tutorialJobs)
-      .set({ delivered_to_drive: true })
+      .set({
+        delivered_to_drive: true,
+        uploader_status: job.is_uploaded
+          ? "uploaded"
+          : "waiting_to_be_uploaded",
+      })
       .where(eq(tutorialJobs.id, job.id));
   }
 

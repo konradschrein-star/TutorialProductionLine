@@ -1,5 +1,14 @@
 import { StorageService } from './storageService';
 import { ThumbnailBrief } from '../types';
+import { KeywordContentType } from '../types/config';
+
+export interface KeywordClassification {
+  keyword: string;
+  verdict: 'APPROVE' | 'REVIEW' | 'REJECT';
+  contentType: KeywordContentType;
+  angle: string;
+  title?: string;
+}
 
 export type ScriptStyle = 'standard' | 'short_60s' | 'deep_dive' | 'troubleshoot';
 
@@ -456,7 +465,9 @@ Output ONLY a JSON object formatted as:
     const timeoutMs = options?.timeoutMs || 45000;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const finalPrompt = prompt.includes('Text must be black')
+      ? prompt
+      : `${prompt.trim()}. Text must be black for contrast and have no mistakes. Only one person on the Thumbnail`;
 
     try {
       if (isVertexExpress) {
@@ -473,7 +484,7 @@ Output ONLY a JSON object formatted as:
             }
           });
         }
-        parts.push({ text: prompt });
+        parts.push({ text: finalPrompt });
 
         const body = {
           contents: [
@@ -521,7 +532,7 @@ Output ONLY a JSON object formatted as:
         // AI Studio fallback / Imagen 3 endpoint
         const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${encodeURIComponent(geminiKey)}`;
         const body = {
-          instances: [{ prompt }],
+          instances: [{ prompt: finalPrompt }],
           parameters: {
             sampleCount: 1,
             aspectRatio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
@@ -556,6 +567,74 @@ Output ONLY a JSON object formatted as:
     } catch (err: any) {
       clearTimeout(timeoutId);
       throw new Error(`Thumbnail Image Generation failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * AI-screens a batch of raw keyword phrases. For each keyword the model
+   * returns a production verdict (APPROVE / REVIEW / REJECT), the best content
+   * type, a one-line production angle, and a suggested title.
+   *
+   * Returns `null` when the LLM is unreachable or produced unparseable output —
+   * the caller MUST treat null as "screening unavailable" and never fabricate
+   * verdicts. Returns [] for an empty input.
+   */
+  static async classifyKeywords(keywords: string[]): Promise<KeywordClassification[] | null> {
+    const clean = keywords.map(k => (k || '').trim()).filter(Boolean).slice(0, 30);
+    if (clean.length === 0) return [];
+
+    const numbered = clean.map((k, i) => `${i + 1}. ${k}`).join('\n');
+
+    const systemPrompt = `You are a senior YouTube tutorial content strategist screening keywords for a software-tutorial channel network.
+For EACH keyword decide:
+- "verdict": "APPROVE" (clear, searchable how-to / tutorial intent worth producing), "REVIEW" (ambiguous, thin, or needs a human decision), or "REJECT" (navigational, branded-login, pricing, nonsensical, or no teachable intent).
+- "contentType": one of "HOW_TO", "FULL_TUTORIAL", "LIST", "REVIEW".
+- "angle": a single concise production angle / hook (max ~12 words).
+- "title": a punchy suggested video title.
+Be strict: REJECT queries that are not teachable tutorials.
+Return ONLY a JSON object of the exact shape:
+{"results":[{"keyword":"...","verdict":"APPROVE","contentType":"HOW_TO","angle":"...","title":"..."}]}
+The "keyword" field MUST echo the input keyword verbatim.`;
+
+    let raw: string | null = null;
+    try {
+      raw = await this.callLLM({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Screen these keywords:\n${numbered}` },
+        ],
+        temperature: 0.2,
+        maxTokens: 2000,
+        jsonMode: true,
+      });
+    } catch (e) {
+      console.warn('classifyKeywords LLM call failed:', e);
+      return null;
+    }
+
+    if (!raw) return null;
+
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : raw);
+      const rows: any[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
+      if (rows.length === 0) return null;
+
+      const validVerdicts = new Set(['APPROVE', 'REVIEW', 'REJECT']);
+      const validTypes = new Set(['HOW_TO', 'FULL_TUTORIAL', 'LIST', 'REVIEW']);
+
+      return rows
+        .filter(r => r && typeof r.keyword === 'string')
+        .map(r => ({
+          keyword: String(r.keyword).trim(),
+          verdict: validVerdicts.has(r.verdict) ? r.verdict : 'REVIEW',
+          contentType: validTypes.has(r.contentType) ? r.contentType : 'HOW_TO',
+          angle: typeof r.angle === 'string' ? r.angle.trim() : '',
+          title: typeof r.title === 'string' ? r.title.trim() : undefined,
+        })) as KeywordClassification[];
+    } catch (e) {
+      console.warn('classifyKeywords JSON parse failed:', e);
+      return null;
     }
   }
 }

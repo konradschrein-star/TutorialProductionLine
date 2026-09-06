@@ -53,6 +53,9 @@ interface ExtraCredential {
   costTier: string;
   sortOrder: number;
   kind: CredentialKind;
+  required?: boolean;
+  description?: string;
+  setupUrl?: string;
 }
 
 const EXTRA_CREDENTIALS: ExtraCredential[] = [
@@ -63,6 +66,10 @@ const EXTRA_CREDENTIALS: ExtraCredential[] = [
     costTier: "delivery",
     sortOrder: 100,
     kind: "delivery",
+    required: true,
+    description:
+      "OAuth application identifier used to access the delivery Drive.",
+    setupUrl: "https://console.cloud.google.com/apis/credentials",
   },
   {
     providerKey: "google_drive_client_secret",
@@ -71,6 +78,9 @@ const EXTRA_CREDENTIALS: ExtraCredential[] = [
     costTier: "delivery",
     sortOrder: 101,
     kind: "delivery",
+    required: true,
+    description: "OAuth client secret paired with the Drive client ID.",
+    setupUrl: "https://console.cloud.google.com/apis/credentials",
   },
   {
     providerKey: "google_drive_refresh_token",
@@ -79,6 +89,9 @@ const EXTRA_CREDENTIALS: ExtraCredential[] = [
     costTier: "delivery",
     sortOrder: 102,
     kind: "delivery",
+    required: true,
+    description:
+      "Long-lived OAuth refresh token for unattended Drive delivery.",
   },
   {
     providerKey: "telegram_bot_token",
@@ -87,6 +100,18 @@ const EXTRA_CREDENTIALS: ExtraCredential[] = [
     costTier: "alerts",
     sortOrder: 110,
     kind: "alerts",
+    description: "Optional token used to send operational alerts to Telegram.",
+  },
+  {
+    providerKey: "uploader_callback_secret",
+    displayName: "Uploader — Connection token",
+    keyEnvVar: "UPLOADER_CALLBACK_SECRET",
+    costTier: "uploader",
+    sortOrder: 120,
+    kind: "delivery",
+    required: true,
+    description:
+      "Shared token for uploader callbacks and runtime configuration. Use a random value of at least 32 characters.",
   },
 ];
 
@@ -95,6 +120,9 @@ export interface TutorialCredentialRow extends CredentialRow {
   /** True for providers surfaced but not used by this deployment. Rendered
    *  muted with a "not needed" chip instead of a red "missing" state. */
   notNeeded?: boolean;
+  required?: boolean;
+  description?: string;
+  setupUrl?: string;
 }
 
 /**
@@ -137,6 +165,14 @@ export async function buildTutorialCredentialRows(): Promise<
       sortOrder: p.sortOrder ?? 0,
       kind: PROVIDER_KINDS[p.key]!,
       notNeeded: NOT_NEEDED_PROVIDERS.has(p.key),
+      required: p.key === "deepseek" || p.key === "fish",
+      description:
+        p.key === "deepseek"
+          ? "Generates scripts, metadata and translations."
+          : p.key === "fish"
+            ? "Generates tutorial narration and localized voices."
+            : "Optional fallback provider.",
+      setupUrl: p.docsUrl ?? undefined,
     };
   });
 
@@ -152,6 +188,9 @@ export async function buildTutorialCredentialRows(): Promise<
       costTier: e.costTier,
       sortOrder: e.sortOrder,
       kind: e.kind,
+      required: e.required,
+      description: e.description,
+      setupUrl: e.setupUrl,
     };
   });
 

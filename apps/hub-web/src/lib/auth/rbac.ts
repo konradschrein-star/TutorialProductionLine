@@ -141,6 +141,32 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   // ships — and nothing else. The Tutorial Studio route opens for the
   // Thumbnails tab only; every production API still checks view:production.
   UPLOADER_VA: ["manage:thumbnails"],
+  // Sales/customer demo. Every grant is read-only; mutation routes require a
+  // create/edit/manage/delete permission and therefore remain forbidden.
+  VIEWER: [
+    "view:dashboard",
+    "view:jobs",
+    "view:job-detail",
+    "view:upload-queue",
+    "view:analytics",
+    "view:channels",
+    "view:system-health",
+    "view:team",
+    "view:settings",
+    "view:production",
+  ],
+  TUTORIAL_VISITOR: [
+    "view:dashboard",
+    "view:jobs",
+    "view:job-detail",
+    "view:upload-queue",
+    "view:analytics",
+    "view:channels",
+    "view:system-health",
+    "view:team",
+    "view:settings",
+    "view:production",
+  ],
 };
 
 

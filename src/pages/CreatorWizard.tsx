@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { 
-  ArrowRight, 
-  ArrowLeft, 
-  RefreshCw, 
-  Upload, 
-  Volume2, 
-  CheckCircle2, 
-  Send, 
-  ExternalLink, 
-  Search, 
-  Video, 
-  StopCircle, 
-  Pause, 
-  Play, 
-  Globe, 
+import {
+  ArrowRight,
+  ArrowLeft,
+  RefreshCw,
+  Upload,
+  Volume2,
+  CheckCircle2,
+  Send,
+  ExternalLink,
+  Search,
+  Video,
+  StopCircle,
+  Pause,
+  Play,
+  Globe,
   Sparkles,
   Copy,
   Check,
@@ -22,7 +22,10 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
-  AlertCircle
+  AlertCircle,
+  Gauge,
+  Target,
+  Languages
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StepBar } from '../components/StepBar';
@@ -31,23 +34,125 @@ import { TeleprompterModal } from '../components/TeleprompterModal';
 import { AIService, ScriptStyle } from '../services/aiService';
 import { TTSService, AVAILABLE_VOICES } from '../services/ttsService';
 import { KeywordService } from '../services/keywordService';
-import { StorageService, DEFAULT_CHANNELS } from '../services/storageService';
+import { StorageService } from '../services/storageService';
 import { GoogleDriveService } from '../services/googleDriveService';
 import { uploadManager } from '../services/uploadManager';
 import { screenRecorder } from '../services/screenRecorder';
+import { languageByCode } from '../data/languages';
+import { useToast, useConfirm } from '../components/ui/Feedback';
+import { useConfig, useFinishedVideos } from '../hooks/useStore';
 import { Channel, KeywordItem, VAUser } from '../types';
 
-const BATCH_LANGUAGES = [
-  { code: 'de', name: 'German', flag: '🇩🇪' },
-  { code: 'es', name: 'Spanish', flag: '🇪🇸' },
-  { code: 'fr', name: 'French', flag: '🇫🇷' },
-  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
-  { code: 'it', name: 'Italian', flag: '🇮🇹' },
-  { code: 'nl', name: 'Dutch', flag: '🇳🇱' },
-  { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
-  { code: 'ko', name: 'Korean', flag: '🇰🇷' },
-  { code: 'sv', name: 'Swedish', flag: '🇸🇪' }
-];
+type RefineAction = 'add_pauses' | 'punch_hook' | 'shorten_fluff';
+
+/** Format a whole-second count as m:ss. */
+const formatSeconds = (secs: number): string => {
+  const m = Math.floor(secs / 60);
+  const s = Math.max(0, Math.round(secs % 60));
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+const countWords = (text: string): number => text.split(/\s+/).filter(Boolean).length;
+
+// ───────────────────────────────────────────────────────────────────────────
+// Single-source-of-truth script editor. Every step that shows the narration
+// script renders THIS component, bound to the same `script`/`onChange` state —
+// so it is always unambiguous which edit drives audio + dispatch.
+// ───────────────────────────────────────────────────────────────────────────
+interface ScriptEditorProps {
+  script: string;
+  onChange: (value: string) => void;
+  targetMinutes: number;
+  rows?: number;
+  placeholder?: string;
+  copied: boolean;
+  onCopy: () => void;
+  onRefine?: (action: RefineAction) => void;
+  refining?: boolean;
+  /** Extra controls (e.g. re-synthesize) rendered on the right of the toolbar. */
+  trailing?: React.ReactNode;
+}
+
+const ScriptEditor: React.FC<ScriptEditorProps> = ({
+  script,
+  onChange,
+  targetMinutes,
+  rows = 10,
+  placeholder = 'Type or paste narration script here...',
+  copied,
+  onCopy,
+  onRefine,
+  refining,
+  trailing
+}) => {
+  const words = countWords(script);
+  const estSeconds = Math.round(words / 2.5);
+  const targetSeconds = Math.round(targetMinutes * 60);
+  // "On target" when within ±25% of the configured length.
+  const ratio = targetSeconds > 0 ? estSeconds / targetSeconds : 1;
+  const onTarget = ratio >= 0.75 && ratio <= 1.25;
+
+  return (
+    <div className="space-y-2.5">
+      <textarea
+        rows={rows}
+        value={script}
+        onChange={(e) => onChange(e.target.value)}
+        className="pro-input w-full rounded-lg p-3 text-xs text-foreground font-mono leading-relaxed resize-y focus:ring-1 focus:ring-foreground/30"
+        placeholder={placeholder}
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className={`text-[11px] font-mono px-2 py-1 rounded bg-surface-200 border border-border font-bold ${
+              onTarget ? 'text-success' : 'text-muted'
+            }`}
+            title={`Estimated spoken length vs. configured target of ${targetMinutes} min`}
+          >
+            {words} words · ~{formatSeconds(estSeconds)} / target {targetMinutes}m
+          </span>
+
+          <button
+            onClick={onCopy}
+            className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] font-semibold text-foreground border border-border flex items-center gap-1"
+          >
+            {copied ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+
+          {onRefine && (
+            <>
+              <button
+                disabled={refining}
+                onClick={() => onRefine('add_pauses')}
+                className="px-2 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border disabled:opacity-50"
+              >
+                + Add Spoken Pauses
+              </button>
+              <button
+                disabled={refining}
+                onClick={() => onRefine('punch_hook')}
+                className="px-2 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border disabled:opacity-50"
+              >
+                ⚡ Punch Up Hook
+              </button>
+              <button
+                disabled={refining}
+                onClick={() => onRefine('shorten_fluff')}
+                className="px-2 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border disabled:opacity-50"
+              >
+                ✂️ Cut Fluff
+              </button>
+            </>
+          )}
+        </div>
+
+        {trailing && <div className="flex items-center gap-2">{trailing}</div>}
+      </div>
+    </div>
+  );
+};
 
 interface CreatorWizardProps {
   activeChannel: Channel;
@@ -57,6 +162,10 @@ interface CreatorWizardProps {
 export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, activeUser }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const config = useConfig();
+  const finishedVideos = useFinishedVideos();
 
   // Wizard Navigation
   const [step, setStep] = useState<number>(1);
@@ -79,8 +188,11 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
   // Step 3 State
   const [selectedVoice, setSelectedVoice] = useState<string>(activeChannel.defaultVoiceId || 'fish-paul-neutral');
+  const [voiceSpeed, setVoiceSpeed] = useState<number>(config.defaultSpeed);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [lastSynthesizedScript, setLastSynthesizedScript] = useState<string>('');
+  const [lastSynthesizedVoice, setLastSynthesizedVoice] = useState<string>('');
+  const [lastSynthesizedSpeed, setLastSynthesizedSpeed] = useState<number>(0);
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [synthProgress, setSynthProgress] = useState<number>(0);
   const [isStep3ScriptOpen, setIsStep3ScriptOpen] = useState<boolean>(true);
@@ -105,10 +217,11 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const [dispatchedSuccess, setDispatchedSuccess] = useState<boolean>(false);
   const [isStep5ScriptOpen, setIsStep5ScriptOpen] = useState<boolean>(false);
 
-  // Batch Multi-Language Localization Suite State
-  const [selectedBatchLangs, setSelectedBatchLangs] = useState<string[]>(['de', 'es', 'fr', 'pt', 'it']);
+  // Batch Multi-Language Localization State (real AI translation)
+  const [selectedBatchLangs, setSelectedBatchLangs] = useState<string[]>(config.standardLanguages);
   const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
   const [batchProgress, setBatchProgress] = useState<number>(0);
+  const [batchStatus, setBatchStatus] = useState<string>('');
 
   // Load Claimed Keywords
   useEffect(() => {
@@ -116,16 +229,29 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     setClaimedKeywords(list);
   }, [activeUser.name]);
 
-  // Handle route state if navigated from Keyword Hub
+  // Handle route state if navigated from the Keyword Hub / deep-links.
+  // Supports the rich shape { topic, keywordId, channelId, software, contentType, angle }
+  // and stays backward-compatible with { topic } / { title }.
   useEffect(() => {
-    if (location.state?.topic) {
-      const initTopic = location.state.topic;
-      setTopic(initTopic);
-      if (location.state.keywordId) setKeywordId(location.state.keywordId);
-      if (location.state.channelId) setSelectedChannelId(location.state.channelId);
-      handleGenerateScript(initTopic);
-      window.history.replaceState({}, document.title);
-    }
+    const st: any = location.state;
+    const initTopic: string | undefined = st?.topic || st?.title;
+    if (!initTopic) return;
+
+    setTopic(initTopic);
+    if (st.keywordId) setKeywordId(st.keywordId);
+    if (st.channelId) setSelectedChannelId(st.channelId);
+
+    // Seed the generation prompt with any angle/software/format context provided.
+    const seedParts: string[] = [];
+    if (st.angle) seedParts.push(`Angle: ${st.angle}`);
+    if (st.software) seedParts.push(`Software: ${st.software}`);
+    if (st.contentType) seedParts.push(`Format: ${st.contentType}`);
+    const seed = seedParts.join('. ');
+    if (seed) setRegenPrompt(seed);
+
+    handleGenerateScript(initTopic, undefined, seed || undefined);
+    window.history.replaceState({}, document.title);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
   // Advance highest step
@@ -146,6 +272,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     }
   }, [topic, step]);
 
+  // ── Today strip: this VA's daily target vs. what's finished today ──────────
+  const todayStr = new Date().toISOString().split('T')[0];
+  const vaTarget = StorageService.getVATarget(activeUser.id);
+  const producedToday = finishedVideos.filter((v) => v.createdAt === todayStr).length;
+  const dailyTarget = vaTarget.dailyTarget || config.defaultDailyTarget || 0;
+  const todayPct = dailyTarget > 0 ? Math.min(100, Math.round((producedToday / dailyTarget) * 100)) : 0;
+
   // Copy helper
   const handleCopyScript = () => {
     if (!script) return;
@@ -155,14 +288,15 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   };
 
   // Step 1 ➔ 2: Generate Script
-  const handleGenerateScript = async (customTopic?: string, customStyle?: ScriptStyle) => {
+  const handleGenerateScript = async (customTopic?: string, customStyle?: ScriptStyle, promptOverride?: string) => {
     const t = customTopic || topic;
     const s = customStyle || scriptStyle;
+    const p = promptOverride !== undefined ? promptOverride : regenPrompt;
     if (!t.trim()) return;
 
     setIsGeneratingScript(true);
     try {
-      const generated = await AIService.generateScript(t, regenPrompt, s);
+      const generated = await AIService.generateScript(t, p, s);
       setScript(generated);
 
       const meta = AIService.generateMetadata(t, generated, activeChannel.name);
@@ -174,21 +308,21 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       setRegenPrompt('');
     } catch (err: any) {
       console.error(err);
-      alert('Script generation failed: ' + err.message);
+      toast('Script generation failed: ' + (err?.message || 'Unknown error'), 'error', 'AI Script');
     } finally {
       setIsGeneratingScript(false);
     }
   };
 
   // Quick Refine Action
-  const handleRefine = async (action: 'add_pauses' | 'punch_hook' | 'shorten_fluff') => {
+  const handleRefine = async (action: RefineAction) => {
     if (!script.trim()) return;
     setIsGeneratingScript(true);
     try {
       const refined = await AIService.refineScript(script, action);
       setScript(refined);
     } catch (e: any) {
-      alert('Refine failed: ' + e.message);
+      toast('Refine failed: ' + (e?.message || 'Unknown error'), 'error');
     } finally {
       setIsGeneratingScript(false);
     }
@@ -198,23 +332,31 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   const handleSynthesizeVoice = async (overrideScript?: string, overrideVoice?: string) => {
     const textToSynthesize = overrideScript !== undefined ? overrideScript : script;
     const voiceToUse = overrideVoice || selectedVoice;
-    if (!textToSynthesize.trim()) return;
+    if (!textToSynthesize.trim()) {
+      toast('Nothing to synthesize — the script is empty.', 'warning');
+      return;
+    }
 
     setIsSynthesizing(true);
     setSynthProgress(15);
 
     try {
-      const { blob } = await TTSService.synthesizeVoice(
+      const { blob, isPlaceholder, warning } = await TTSService.synthesizeVoice(
         textToSynthesize,
         voiceToUse,
-        1.0,
+        voiceSpeed,
         (pct) => setSynthProgress(pct)
       );
       setAudioBlob(blob);
       setLastSynthesizedScript(textToSynthesize);
+      setLastSynthesizedVoice(voiceToUse);
+      setLastSynthesizedSpeed(voiceSpeed);
+      if (isPlaceholder) {
+        toast(warning || 'No TTS provider configured — this is a placeholder track, not real narration.', 'warning', 'Placeholder audio');
+      }
     } catch (err: any) {
       console.error(err);
-      alert('Voice synthesis failed: ' + err.message);
+      toast('Voice synthesis failed: ' + (err?.message || 'Unknown error'), 'error', 'TTS');
     } finally {
       setIsSynthesizing(false);
     }
@@ -238,10 +380,16 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       setRecordingTime(0);
 
       timerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
+        setRecordingTime((prev) => prev + 1);
       }, 1000);
     } catch (err: any) {
       console.warn('Screen recording cancelled or failed:', err);
+      const msg = (err?.message || '').toLowerCase();
+      if (err?.name === 'NotAllowedError' || msg.includes('permission') || msg.includes('denied')) {
+        toast('Screen capture permission was denied. Allow screen + mic access and try again.', 'error', 'Recorder');
+      } else {
+        toast('Could not start screen recording. ' + (err?.message || 'Please try again.'), 'error', 'Recorder');
+      }
     }
   };
 
@@ -255,8 +403,10 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       if (videoUrl) URL.revokeObjectURL(videoUrl);
       setVideoFile(file);
       setVideoUrl(url);
-    } catch (e) {
+      toast('Screen recording captured and attached.', 'success');
+    } catch (e: any) {
       console.error(e);
+      toast('Failed to finalize the recording: ' + (e?.message || 'Unknown error'), 'error', 'Recorder');
     }
   };
 
@@ -273,7 +423,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
   // Video File Select
   const handleVideoSelect = (file: File) => {
     if (!file.type.startsWith('video/')) {
-      alert('Please upload a valid MP4 or WebM video file.');
+      toast('Please upload a valid MP4 or WebM video file.', 'error');
       return;
     }
     if (videoUrl) URL.revokeObjectURL(videoUrl);
@@ -281,45 +431,76 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     setVideoUrl(URL.createObjectURL(file));
   };
 
+  // Guarded advance from Step 4 → Step 5 (dispatch integrity: no video, no Review).
+  const handleAdvanceToReview = () => {
+    if (!videoFile) {
+      toast('Record or upload a screen recording before continuing to Review.', 'warning', 'Video required');
+      return;
+    }
+    setStep(5);
+  };
+
   // Step 5: Push Single Video to Stealth Queue
-  const handleDispatchToStealthQueue = () => {
+  const handleDispatchToStealthQueue = async () => {
+    // Integrity guard — never enqueue an empty job or fake success.
+    if (!videoFile) {
+      toast('No video attached. Go back to Step 4 and record or upload a recording first.', 'error', 'Nothing to dispatch');
+      return;
+    }
+
     setIsDispatching(true);
 
     try {
       const jobId = `job_${Date.now()}`;
-      
-      if (videoFile) {
-        uploadManager.enqueue({
-          jobId,
-          jobTitle: videoTitle || topic,
-          channelName: activeChannel.name,
-          file: videoFile,
-          thumbnailUrl,
-        });
-      }
+      const finalTitle = videoTitle || topic;
+      const finalDuration = formatSeconds(Math.round(countWords(script) / 2.5)) || '0:00';
 
-      // Auto-dispatch to Google Drive if configured
+      uploadManager.enqueue({
+        jobId,
+        jobTitle: finalTitle,
+        channelName: activeChannel.name,
+        file: videoFile,
+        thumbnailUrl,
+      });
+
+      // Auto-dispatch to Google Drive only if the operator enabled it AND Drive
+      // is actually connected. The finished-video status reflects the REAL
+      // delivery outcome — never a blanket "Uploaded to Drive".
       const driveConfig = StorageService.getGoogleDriveConfig();
-      if (driveConfig.autoUploadOnRender) {
-        GoogleDriveService.dispatchUpload({
-          jobId,
-          title: videoTitle || topic,
-          topic,
-          channelName: activeChannel.name,
-          fileSize: videoFile ? videoFile.size : 45 * 1024 * 1024
-        });
+      let deliveredToDrive = false;
+      let driveUrl: string | undefined;
+      let drivePath: string | undefined;
+      if (driveConfig.enabled && driveConfig.autoUploadOnRender && driveConfig.isConnected) {
+        try {
+          const delivery = await GoogleDriveService.dispatchUpload({
+            jobId,
+            title: finalTitle,
+            topic,
+            channelName: activeChannel.name,
+            fileSize: videoFile.size,
+          });
+          deliveredToDrive = delivery.status === 'IN_GOOGLE_DRIVE';
+          driveUrl = delivery.viewUrl;
+          drivePath = delivery.drivePath;
+        } catch {
+          deliveredToDrive = false;
+        }
       }
 
       StorageService.addFinishedVideo({
         id: jobId,
-        title: videoTitle || topic,
+        title: finalTitle,
         channel: activeChannel.name,
-        status: driveConfig.autoUploadOnRender ? 'Uploaded to Drive' : 'Queued for Stealth Upload',
+        status: deliveredToDrive ? 'Uploaded to Drive' : 'Queued for Stealth Upload',
         thumbnailUrl: thumbnailUrl || '/background/bg-gradient-1.png',
-        duration: '3:45',
+        duration: finalDuration,
         script,
-        tags: videoTags.split(',').map(t => t.trim()),
-        createdAt: new Date().toISOString().split('T')[0]
+        tags: videoTags.split(',').map((t) => t.trim()).filter(Boolean),
+        driveUrl,
+        drivePath,
+        createdAt: todayStr,
+        producedByUserId: activeUser.id,
+        producedByName: activeUser.name,
       });
 
       if (keywordId) {
@@ -327,57 +508,98 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       }
 
       confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
+      toast('Video queued for upload.', 'success', 'Dispatched');
       setDispatchedSuccess(true);
       setTimeout(() => navigate('/finished'), 1800);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      toast('Dispatch failed: ' + (e?.message || 'Unknown error'), 'error');
     } finally {
       setIsDispatching(false);
     }
   };
 
-  // Step 5: Batch Localize to 5+ Languages (Hetzner Engine)
+  // Step 5: Real batch translation → queue localized uploads (honest; no fake renders)
   const handleBatchLocalizeAndDispatch = async () => {
+    if (!videoFile) {
+      toast('Attach or record a video before batch-localizing.', 'error', 'Video required');
+      return;
+    }
+    if (!script.trim()) {
+      toast('There is no script to translate.', 'error');
+      return;
+    }
     if (selectedBatchLangs.length === 0) {
-      alert('Please select at least one target language.');
+      toast('Select at least one target language.', 'warning');
       return;
     }
 
+    const ok = await confirm({
+      title: 'Translate & queue localized uploads?',
+      message: `This will translate the narration script into ${selectedBatchLangs.length} language(s) with AI and queue this video for a localized upload in each. Voiceover re-recording still happens on the render box.`,
+      confirmLabel: `Translate ${selectedBatchLangs.length}×`,
+    });
+    if (!ok) return;
+
     setIsBatchProcessing(true);
-    setBatchProgress(10);
+    setBatchProgress(5);
+    let staged = 0;
 
     try {
-      for (let i = 0; i < selectedBatchLangs.length; i++) {
-        const langCode = selectedBatchLangs[i];
-        const langInfo = BATCH_LANGUAGES.find(l => l.code === langCode);
-        const localizedJobId = `batch_${langCode}_${Date.now()}`;
+      const finalDuration = formatSeconds(Math.round(countWords(script) / 2.5)) || '0:00';
 
-        // Save localized finished item
+      for (let i = 0; i < selectedBatchLangs.length; i++) {
+        const code = selectedBatchLangs[i];
+        const langInfo = languageByCode(code);
+        if (!langInfo) continue;
+
+        setBatchStatus(`Translating script into ${langInfo.name}...`);
+
+        let translated = '';
+        try {
+          translated = await AIService.translateScript(script, langInfo.name);
+        } catch (e: any) {
+          toast(`Translation to ${langInfo.name} failed: ${e?.message || 'error'}`, 'error');
+          setBatchProgress(Math.round(((i + 1) / selectedBatchLangs.length) * 100));
+          continue;
+        }
+        if (!translated.trim()) {
+          toast(`Translation to ${langInfo.name} returned empty output — skipped.`, 'warning');
+          setBatchProgress(Math.round(((i + 1) / selectedBatchLangs.length) * 100));
+          continue;
+        }
+
+        const localizedJobId = `batch_${code}_${Date.now()}`;
+
         StorageService.addFinishedVideo({
           id: localizedJobId,
-          title: `[${langInfo?.name}] ${videoTitle || topic}`,
+          title: `[${langInfo.name}] ${videoTitle || topic}`,
           channel: activeChannel.name,
           status: 'Queued for Stealth Upload',
           thumbnailUrl: thumbnailUrl || '/background/bg-gradient-1.png',
-          duration: '3:45',
-          script: `Localized ${langInfo?.name} narration generated via Groq LLaMA 3.3 / DeepSeek Flash and FFmpeg stream-copy remuxer.`,
-          tags: [`${topic} ${langInfo?.name}`, ...videoTags.split(',').map(t => t.trim())],
-          createdAt: new Date().toISOString().split('T')[0]
+          duration: finalDuration,
+          script: translated,
+          tags: [`${topic} ${langInfo.name}`, ...videoTags.split(',').map((t) => t.trim()).filter(Boolean)],
+          createdAt: todayStr,
         });
 
-        // Enqueue into upload manager if video attached
-        if (videoFile) {
-          uploadManager.enqueue({
-            jobId: localizedJobId,
-            jobTitle: `[${langInfo?.name}] ${videoTitle || topic}`,
-            channelName: activeChannel.name,
-            file: videoFile,
-            thumbnailUrl
-          });
-        }
+        uploadManager.enqueue({
+          jobId: localizedJobId,
+          jobTitle: `[${langInfo.name}] ${videoTitle || topic}`,
+          channelName: activeChannel.name,
+          file: videoFile,
+          thumbnailUrl,
+        });
 
+        staged++;
         setBatchProgress(Math.round(((i + 1) / selectedBatchLangs.length) * 100));
-        await new Promise(r => setTimeout(r, 400));
+      }
+
+      setBatchStatus('');
+
+      if (staged === 0) {
+        toast('No languages were localized — nothing was queued.', 'error');
+        return;
       }
 
       if (keywordId) {
@@ -385,25 +607,27 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       }
 
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+      toast(`Translated & queued ${staged} localized ${staged === 1 ? 'upload' : 'uploads'}.`, 'success', 'Localized');
       setTimeout(() => navigate('/finished'), 1500);
-
     } catch (e: any) {
       console.error(e);
-      alert('Batch localization failed: ' + e.message);
+      toast('Batch localization failed: ' + (e?.message || 'Unknown error'), 'error');
     } finally {
       setIsBatchProcessing(false);
+      setBatchStatus('');
     }
   };
 
   const handleGenerateAiThumbnail = async () => {
-    const prompt = `High-CTR YouTube thumbnail background for tutorial on ${videoTitle || topic || 'Software Tutorial'}, dramatic lighting, clean modern 3D composition, bold style, 16:9`;
+    const prompt = `High-CTR YouTube thumbnail background for tutorial on ${videoTitle || topic || 'Software Tutorial'}, dramatic lighting, clean modern 3D composition, bold style, 16:9. Text must be black for contrast and have no mistakes. Only one person on the Thumbnail`;
     setIsGeneratingAiThumb(true);
     try {
       const dataUri = await AIService.generateThumbnailImage(prompt, { aspectRatio: '16:9' });
       setThumbnailUrl(dataUri);
+      toast('AI thumbnail generated.', 'success');
     } catch (e: any) {
       console.error('AI thumbnail generation failed:', e);
-      alert('AI thumbnail generation failed: ' + e.message);
+      toast('AI thumbnail generation failed: ' + (e?.message || 'Unknown error'), 'error', 'Thumbnail');
     } finally {
       setIsGeneratingAiThumb(false);
     }
@@ -420,13 +644,25 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     reader.readAsDataURL(file);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    const dirty = topic.trim() || script.trim() || videoFile || audioBlob;
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Reset the conveyor?',
+        message: 'This clears the current topic, script, voiceover and attached video so you can start a new tutorial.',
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setStep(1);
     setHighestStep(1);
     setTopic('');
     setKeywordId('');
     setScript('');
     setLastSynthesizedScript('');
+    setLastSynthesizedVoice('');
+    setLastSynthesizedSpeed(0);
     setAudioBlob(null);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     setVideoFile(null);
@@ -434,13 +670,16 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
     setDispatchedSuccess(false);
   };
 
-  const wordCount = script.split(/\s+/).filter(Boolean).length;
-  const estimatedSeconds = Math.round(wordCount / 2.5);
-  const isScriptModified = audioBlob !== null && script !== lastSynthesizedScript;
+  const wordCount = countWords(script);
+  const needsResynth =
+    audioBlob !== null &&
+    (script !== lastSynthesizedScript ||
+      selectedVoice !== lastSynthesizedVoice ||
+      voiceSpeed !== lastSynthesizedSpeed);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-      
+
       {/* Header & Step Stepper */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -449,17 +688,46 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               Conveyor Workspace
             </h1>
             <p className="text-xs text-muted">
-              DaVinci Resolve video factory: Script ➔ Voice ➔ Screen Recording ➔ Batch Multi-Lang Render.
+              Tutorial production line: Script ➔ Voice ➔ Screen Recording ➔ Review & Dispatch.
             </p>
           </div>
 
           <button
             onClick={handleReset}
-            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 focus-ring"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Reset Conveyor
           </button>
+        </div>
+
+        {/* Today strip — active VA daily target vs. produced today */}
+        <div className="pro-panel rounded-xl px-4 py-2.5 flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-md bg-accent-soft text-accent flex items-center justify-center flex-shrink-0">
+              <Target className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-muted leading-none">Today</div>
+              <div className="text-xs font-bold text-foreground truncate">{activeUser.name}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-1 min-w-[180px]">
+            <div className="flex-1 h-1.5 rounded-full bg-surface-300 overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-500"
+                style={{ width: `${todayPct}%` }}
+              />
+            </div>
+            <span className="text-xs font-mono font-bold text-foreground whitespace-nowrap">
+              {producedToday}
+              <span className="text-muted"> / {dailyTarget || '—'}</span>
+            </span>
+            {dailyTarget > 0 && producedToday >= dailyTarget && (
+              <span className="badge badge-success">Target hit</span>
+            )}
+          </div>
         </div>
 
         <StepBar
@@ -472,7 +740,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       {/* ══════════════════ STEP 1: TOPIC & CLAIMED KEYWORDS ══════════════════ */}
       {step === 1 && (
         <div className="space-y-4">
-          
+
           <div className="pro-panel p-4 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">
@@ -489,7 +757,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {claimedKeywords.map(kw => (
+                {claimedKeywords.map((kw) => (
                   <div
                     key={kw.id}
                     className={`p-3 rounded-lg border transition-all flex items-center justify-between gap-2.5 ${
@@ -514,9 +782,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                         if (kw.targetChannelId) setSelectedChannelId(kw.targetChannelId);
                       }}
                       className={`px-2.5 py-1 rounded text-xs font-semibold transition-all flex-shrink-0 ${
-                        keywordId === kw.id
-                          ? 'btn-solid'
-                          : 'btn-outline'
+                        keywordId === kw.id ? 'btn-solid' : 'btn-outline'
                       }`}
                     >
                       {keywordId === kw.id ? 'Selected' : 'Use'}
@@ -608,78 +874,44 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   </span>
                 </div>
                 <p className="text-xs text-muted mt-0.5">
-                  Directly edit or fine-tune spoken wording and pause markers ("...") for voiceover sync.
+                  This is the single source of truth for the script — the same text drives audio and dispatch.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopyScript}
-                  className="btn-outline px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1"
-                  title="Copy script to clipboard"
-                >
-                  {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copiedScript ? 'Copied' : 'Copy'}
-                </button>
-
-                <button
-                  onClick={() => setIsTeleprompterOpen(true)}
-                  className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
-                >
-                  <Video className="w-3.5 h-3.5" />
-                  Teleprompter Pro
-                </button>
-                
-                <span className="text-[11px] font-mono px-2 py-1 rounded bg-surface-200 border border-border text-muted font-bold">
-                  {wordCount} words (~{estimatedSeconds}s)
-                </span>
-              </div>
+              <button
+                onClick={() => setIsTeleprompterOpen(true)}
+                className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
+              >
+                <Video className="w-3.5 h-3.5" />
+                Teleprompter Pro
+              </button>
             </div>
 
-            <textarea
+            <ScriptEditor
+              script={script}
+              onChange={setScript}
+              targetMinutes={config.defaultTargetMinutes}
               rows={12}
-              value={script}
-              onChange={(e) => setScript(e.target.value)}
-              className="pro-input w-full rounded-lg p-3.5 text-xs text-foreground font-mono leading-relaxed resize-y focus:ring-1 focus:ring-foreground/30"
-              placeholder="Type or paste narration script here..."
+              copied={copiedScript}
+              onCopy={handleCopyScript}
+              onRefine={handleRefine}
+              refining={isGeneratingScript}
             />
 
-            {/* Quick Refine & Tuning Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-surface-200/60 border border-border">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-mono uppercase text-muted font-bold">AI Refine:</span>
-                <button
-                  onClick={() => handleRefine('add_pauses')}
-                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
-                >
-                  + Add Spoken Pauses
-                </button>
-                <button
-                  onClick={() => handleRefine('punch_hook')}
-                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
-                >
-                  ⚡ Punch Up Hook
-                </button>
-                <button
-                  onClick={() => handleRefine('shorten_fluff')}
-                  className="px-2 py-0.5 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
-                >
-                  ✂️ Cut Fluff
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 flex-1 max-w-xs">
+            {/* Custom Regen Prompt (step-2 specific) */}
+            <div className="flex flex-wrap items-center justify-end gap-2 p-2.5 rounded-lg bg-surface-200/60 border border-border">
+              <div className="flex items-center gap-2 flex-1 max-w-md">
                 <input
                   type="text"
                   value={regenPrompt}
                   onChange={(e) => setRegenPrompt(e.target.value)}
-                  placeholder="Custom regen prompt..."
+                  placeholder="Custom regen prompt (angle, tone, must-mention...)"
                   className="pro-input flex-1 rounded-md px-2.5 py-1 text-xs font-sans"
                 />
                 <button
                   disabled={isGeneratingScript}
                   onClick={() => handleGenerateScript()}
-                  className="btn-outline px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 flex-shrink-0"
+                  className="btn-outline px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${isGeneratingScript ? 'animate-spin' : ''}`} />
                   Regen
@@ -713,7 +945,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       {step === 3 && (
         <div className="space-y-4">
           <div className="pro-panel p-5 rounded-xl space-y-4">
-            
+
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-foreground">Step 3: Neural Voice Synthesis &amp; Polish</h3>
@@ -722,26 +954,21 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsTeleprompterOpen(true)}
-                  className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
-                >
-                  <Video className="w-3.5 h-3.5" />
-                  Teleprompter Pro
-                </button>
-              </div>
+              <button
+                onClick={() => setIsTeleprompterOpen(true)}
+                className="btn-outline px-3 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5"
+              >
+                <Video className="w-3.5 h-3.5" />
+                Teleprompter Pro
+              </button>
             </div>
 
             {/* Voice Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {AVAILABLE_VOICES.map(voice => (
+              {AVAILABLE_VOICES.map((voice) => (
                 <div
                   key={voice.id}
-                  onClick={() => {
-                    setSelectedVoice(voice.id);
-                    // If user switches voice, they can click Re-synthesize
-                  }}
+                  onClick={() => setSelectedVoice(voice.id)}
                   className={`p-3 rounded-lg border cursor-pointer transition-all ${
                     selectedVoice === voice.id
                       ? 'bg-surface-300 border-foreground/40 shadow-subtle'
@@ -753,12 +980,32 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                       <div className="text-xs font-bold text-foreground">{voice.name}</div>
                       <div className="text-[10px] font-mono text-muted mt-0.5">{voice.accent}</div>
                     </div>
-                    <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-surface-300 text-muted font-bold">
+                    <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-surface-300 text-muted font-bold">
                       {voice.provider}
                     </span>
                   </div>
                   <p className="text-[11px] text-muted mt-1.5 line-clamp-2">{voice.description}</p>
                 </div>
+              ))}
+            </div>
+
+            {/* Voice speed control (config-driven presets) */}
+            <div className="flex items-center gap-2 flex-wrap p-2.5 rounded-lg bg-surface-200/60 border border-border">
+              <span className="text-[10px] font-mono uppercase text-muted font-bold flex items-center gap-1">
+                <Gauge className="w-3.5 h-3.5" /> Narration Speed
+              </span>
+              {config.speedPresets.map((sp) => (
+                <button
+                  key={sp}
+                  onClick={() => setVoiceSpeed(sp)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-mono font-bold border transition-all ${
+                    voiceSpeed === sp
+                      ? 'bg-surface-300 border-foreground text-foreground shadow-subtle'
+                      : 'bg-surface-100 border-border text-muted hover:border-border-strong'
+                  }`}
+                >
+                  {sp.toFixed(2)}×
+                </button>
               ))}
             </div>
 
@@ -770,68 +1017,48 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   <span className="text-xs font-bold text-foreground">
                     Narration Script (Edit &amp; Re-synthesize Audio)
                   </span>
-                  {isScriptModified && (
-                    <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> Modified - Click Re-synthesize
+                  {needsResynth && (
+                    <span className="px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Changed — Re-synthesize
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-muted">
-                    {wordCount} words (~{estimatedSeconds}s)
-                  </span>
-                  <button
-                    onClick={() => setIsStep3ScriptOpen(!isStep3ScriptOpen)}
-                    className="p-1 rounded hover:bg-surface-300 text-muted hover:text-foreground"
-                    title={isStep3ScriptOpen ? 'Collapse script' : 'Expand script'}
-                  >
-                    {isStep3ScriptOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
+                <button
+                  onClick={() => setIsStep3ScriptOpen(!isStep3ScriptOpen)}
+                  className="p-1 rounded hover:bg-surface-300 text-muted hover:text-foreground"
+                  title={isStep3ScriptOpen ? 'Collapse script' : 'Expand script'}
+                >
+                  {isStep3ScriptOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
 
               {isStep3ScriptOpen && (
-                <div className="space-y-2.5">
-                  <textarea
-                    rows={6}
-                    value={script}
-                    onChange={(e) => setScript(e.target.value)}
-                    className="pro-input w-full rounded-lg p-3 text-xs text-foreground font-mono leading-relaxed resize-y focus:ring-1 focus:ring-foreground/30"
-                    placeholder="Edit narration script here..."
-                  />
-
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={handleCopyScript}
-                        className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] font-semibold text-foreground border border-border flex items-center gap-1"
-                      >
-                        {copiedScript ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                        {copiedScript ? 'Copied' : 'Copy Script'}
-                      </button>
-                      <button
-                        onClick={() => handleRefine('add_pauses')}
-                        className="px-2 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[11px] text-foreground border border-border"
-                      >
-                        + Add Pauses
-                      </button>
-                    </div>
-
+                <ScriptEditor
+                  script={script}
+                  onChange={setScript}
+                  targetMinutes={config.defaultTargetMinutes}
+                  rows={6}
+                  placeholder="Edit narration script here..."
+                  copied={copiedScript}
+                  onCopy={handleCopyScript}
+                  onRefine={handleRefine}
+                  refining={isGeneratingScript}
+                  trailing={
                     <button
                       disabled={isSynthesizing || !script.trim()}
                       onClick={() => handleSynthesizeVoice()}
-                      className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-subtle ${
-                        isScriptModified
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-subtle disabled:opacity-50 ${
+                        needsResynth
                           ? 'bg-foreground text-background hover:opacity-90 ring-2 ring-foreground/40'
                           : 'btn-outline'
                       }`}
                     >
                       <RefreshCw className={`w-3 h-3 ${isSynthesizing ? 'animate-spin' : ''}`} />
-                      {isSynthesizing ? 'Synthesizing...' : isScriptModified ? '⚡ Re-synthesize Audio with Changes' : 'Re-synthesize Voice'}
+                      {isSynthesizing ? 'Synthesizing...' : needsResynth ? '⚡ Re-synthesize with Changes' : 'Re-synthesize Voice'}
                     </button>
-                  </div>
-                </div>
+                  }
+                />
               )}
             </div>
 
@@ -852,7 +1079,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               <div className="space-y-2">
                 <div className="text-xs font-bold text-foreground flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Audio Ready
+                    <CheckCircle2 className="w-3.5 h-3.5 text-success" /> Audio Ready
                   </span>
                   <button
                     onClick={() => handleSynthesizeVoice()}
@@ -891,12 +1118,12 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
       {step === 4 && (
         <div className="space-y-4">
           <div className="pro-panel p-5 rounded-xl space-y-4">
-            
+
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-foreground">Step 4: Screen Recording Attachment</h3>
                 <p className="text-xs text-muted">
-                  Record directly in-browser or drag &amp; drop an existing recording.
+                  Record directly in-browser or drag &amp; drop an existing recording. A video is required to reach Review.
                 </p>
               </div>
 
@@ -914,14 +1141,14 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                     onClick={handleStartScreenRecording}
                     className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
                   >
-                    <Video className="w-3.5 h-3.5 text-red-500" />
+                    <Video className="w-3.5 h-3.5 text-danger" />
                     Record Screen &amp; Mic
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Optional Collapsible Script Reference Drawer for VA */}
+            {/* Collapsible Script Reference Drawer (same single source of truth) */}
             <div className="p-3 rounded-lg bg-surface-200/50 border border-border">
               <div
                 onClick={() => setIsStep4ScriptOpen(!isStep4ScriptOpen)}
@@ -938,23 +1165,16 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </div>
 
               {isStep4ScriptOpen && (
-                <div className="mt-2.5 pt-2 border-t border-border space-y-2">
-                  <textarea
+                <div className="mt-2.5 pt-2 border-t border-border">
+                  <ScriptEditor
+                    script={script}
+                    onChange={setScript}
+                    targetMinutes={config.defaultTargetMinutes}
                     rows={5}
-                    value={script}
-                    onChange={(e) => setScript(e.target.value)}
-                    className="pro-input w-full rounded-lg p-2.5 text-xs font-mono leading-relaxed resize-y"
                     placeholder="Script text..."
+                    copied={copiedScript}
+                    onCopy={handleCopyScript}
                   />
-                  <div className="flex justify-end">
-                    <button
-                      onClick={handleCopyScript}
-                      className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-300 text-[10px] font-mono text-foreground border border-border flex items-center gap-1"
-                    >
-                      {copiedScript ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                      {copiedScript ? 'Copied' : 'Copy Script'}
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
@@ -963,7 +1183,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
             {isRecordingScreen && (
               <div className="p-5 rounded-xl bg-surface-200 border border-border text-center space-y-3">
                 <div className="flex items-center justify-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+                  <span className="w-3 h-3 rounded-full bg-danger animate-ping" />
                   <span className="text-xs font-bold text-foreground font-mono">
                     RECORDING LIVE: {Math.floor(recordingTime / 60).toString().padStart(2, '0')}:{(recordingTime % 60).toString().padStart(2, '0')}
                   </span>
@@ -983,7 +1203,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
                   <button
                     onClick={handleStopScreenRecording}
-                    className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-red-600 text-white"
+                    className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 bg-danger text-white"
                   >
                     <StopCircle className="w-4 h-4" />
                     Stop &amp; Attach
@@ -1071,34 +1291,42 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 <ArrowLeft className="w-3.5 h-3.5" /> Back to Voice
               </button>
 
-              <button
-                onClick={() => setStep(5)}
-                className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5"
-              >
-                Next: Review &amp; Queue
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {!videoFile && (
+                  <span className="text-[11px] text-muted font-mono hidden sm:inline">
+                    Attach a recording to continue
+                  </span>
+                )}
+                <button
+                  disabled={!videoFile}
+                  onClick={handleAdvanceToReview}
+                  className="btn-solid px-5 py-2 rounded-lg text-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  Next: Review &amp; Queue
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
           </div>
         </div>
       )}
 
-      {/* ══════════════════ STEP 5: REVIEW & DISPATCH & 5X BATCH MULTI-LANG ══════════════════ */}
+      {/* ══════════════════ STEP 5: REVIEW & DISPATCH & BATCH MULTI-LANG ══════════════════ */}
       {step === 5 && (
         <div className="space-y-4">
-          
+
           {/* Main Review Panel */}
           <div className="pro-panel p-5 rounded-xl space-y-4">
             <div>
               <h3 className="text-sm font-bold text-foreground">Step 5: Review &amp; Dispatch to Stealth Uploader</h3>
               <p className="text-xs text-muted">
-                Final metadata audit, channel routing, and batch localization suite.
+                Final metadata audit, channel routing, and batch localization.
               </p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              
+
               <div className="lg:col-span-2 space-y-3">
                 <div>
                   <label className="block text-xs font-bold text-foreground mb-1">YouTube Title</label>
@@ -1130,7 +1358,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   />
                 </div>
 
-                {/* Final Script Review Drawer */}
+                {/* Final Script Review Drawer (same single source of truth) */}
                 <div className="p-3 rounded-lg bg-surface-200/50 border border-border">
                   <div
                     onClick={() => setIsStep5ScriptOpen(!isStep5ScriptOpen)}
@@ -1147,13 +1375,15 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   </div>
 
                   {isStep5ScriptOpen && (
-                    <div className="mt-2.5 pt-2 border-t border-border space-y-2">
-                      <textarea
+                    <div className="mt-2.5 pt-2 border-t border-border">
+                      <ScriptEditor
+                        script={script}
+                        onChange={setScript}
+                        targetMinutes={config.defaultTargetMinutes}
                         rows={5}
-                        value={script}
-                        onChange={(e) => setScript(e.target.value)}
-                        className="pro-input w-full rounded-lg p-2.5 text-xs font-mono leading-relaxed resize-y"
                         placeholder="Final script narration..."
+                        copied={copiedScript}
+                        onCopy={handleCopyScript}
                       />
                     </div>
                   )}
@@ -1165,6 +1395,21 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   <div className="text-xs font-bold text-foreground">Target Channel</div>
                   <div className="text-xs font-semibold text-foreground">{activeChannel.name}</div>
                   <div className="text-[11px] text-muted">{activeChannel.niche}</div>
+                </div>
+
+                {/* Attached video confirmation */}
+                <div className={`p-3 rounded-lg border space-y-1 ${videoFile ? 'bg-surface-200 border-border' : 'bg-danger/5 border-danger/30'}`}>
+                  <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    {videoFile ? <CheckCircle2 className="w-3.5 h-3.5 text-success" /> : <AlertCircle className="w-3.5 h-3.5 text-danger" />}
+                    Attached Recording
+                  </div>
+                  {videoFile ? (
+                    <div className="text-[11px] text-muted font-mono truncate">
+                      {videoFile.name} · {(videoFile.size / (1024 * 1024)).toFixed(1)} MB
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-danger">No video attached — go back to Step 4.</div>
+                  )}
                 </div>
 
                 <div className="p-3 rounded-lg bg-surface-200 border border-border space-y-2.5">
@@ -1196,7 +1441,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                     <button
                       onClick={handleGenerateAiThumbnail}
                       disabled={isGeneratingAiThumb}
-                      className="btn-solid py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1"
+                      className="btn-solid py-1.5 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 disabled:opacity-50"
                     >
                       {isGeneratingAiThumb ? (
                         <>
@@ -1205,7 +1450,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                         </>
                       ) : (
                         <>
-                          <Sparkles className="w-3 h-3 text-blue-300" />
+                          <Sparkles className="w-3 h-3 text-info" />
                           <span>AI Auto</span>
                         </>
                       )}
@@ -1237,13 +1482,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </button>
 
               <button
-                disabled={isDispatching || dispatchedSuccess}
+                disabled={isDispatching || dispatchedSuccess || !videoFile}
                 onClick={handleDispatchToStealthQueue}
-                className="btn-outline px-5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"
+                className="btn-solid px-5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
               >
                 {dispatchedSuccess ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    <CheckCircle2 className="w-4 h-4 text-success" />
                     Queued Single Video!
                   </>
                 ) : isDispatching ? (
@@ -1262,7 +1507,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
 
           </div>
 
-          {/* ⚡ BATCH 5+ MULTI-LANGUAGE HETZNER LOCALIZATION FACTORY CARD */}
+          {/* ══ BATCH MULTI-LANGUAGE TRANSLATION (honest: real AI translation → queued uploads) ══ */}
           <div className="pro-panel p-5 rounded-xl space-y-4 border-2 border-foreground/20 bg-surface-200/50">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1270,11 +1515,13 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                   <Globe className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-bold text-foreground font-mono uppercase tracking-wider">
-                    ⚡ Batch 5+ Multi-Language Factory (Hetzner Engine)
+                  <h3 className="text-xs font-bold text-foreground font-mono uppercase tracking-wider flex items-center gap-1.5">
+                    <Languages className="w-3.5 h-3.5" />
+                    Batch Translate &amp; Queue Localized Uploads
                   </h3>
                   <p className="text-[11px] text-muted">
-                    Auto-translates script, synthesizes voiceovers, and remuxes 1080p MP4s in RAM Disk across 5+ languages.
+                    Translates the narration script into each language with AI, then queues this video for a localized
+                    upload. Voiceover re-recording happens on the render box — nothing is rendered here.
                   </p>
                 </div>
               </div>
@@ -1284,19 +1531,21 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               </span>
             </div>
 
-            {/* Language Checkbox Grid */}
+            {/* Language Checkbox Grid (from config.standardLanguages) */}
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-              {BATCH_LANGUAGES.map(lang => {
-                const isSelected = selectedBatchLangs.includes(lang.code);
+              {config.standardLanguages.map((code) => {
+                const lang = languageByCode(code);
+                if (!lang) return null;
+                const isSelected = selectedBatchLangs.includes(code);
                 return (
                   <button
-                    key={lang.code}
+                    key={code}
                     type="button"
                     onClick={() => {
                       if (isSelected) {
-                        setSelectedBatchLangs(selectedBatchLangs.filter(c => c !== lang.code));
+                        setSelectedBatchLangs(selectedBatchLangs.filter((c) => c !== code));
                       } else {
-                        setSelectedBatchLangs([...selectedBatchLangs, lang.code]);
+                        setSelectedBatchLangs([...selectedBatchLangs, code]);
                       }
                     }}
                     className={`p-2.5 rounded-lg border text-left flex items-center justify-between transition-all ${
@@ -1320,7 +1569,7 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
               <div className="p-4 rounded-lg bg-surface-100 border border-border text-center space-y-2">
                 <div className="text-xs font-bold text-foreground flex items-center justify-center gap-2">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Generating &amp; Remuxing {selectedBatchLangs.length}x Localized Videos in RAM Disk...
+                  {batchStatus || `Translating ${selectedBatchLangs.length} language(s)...`}
                 </div>
                 <div className="w-64 max-w-full bg-surface-300 h-1.5 rounded-full overflow-hidden mx-auto">
                   <div
@@ -1331,13 +1580,17 @@ export const CreatorWizard: React.FC<CreatorWizardProps> = ({ activeChannel, act
                 <div className="text-[10px] font-mono text-muted">{batchProgress}% completed</div>
               </div>
             ) : (
-              <div className="flex items-center justify-end pt-1">
+              <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
+                {!videoFile && (
+                  <span className="text-[11px] text-danger font-mono">Attach a video (Step 4) to enable batch localization.</span>
+                )}
                 <button
+                  disabled={!videoFile || selectedBatchLangs.length === 0}
                   onClick={handleBatchLocalizeAndDispatch}
-                  className="btn-solid px-6 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-subtle"
+                  className="btn-solid px-6 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-subtle disabled:opacity-50 ml-auto"
                 >
                   <Sparkles className="w-4 h-4" />
-                  Generate &amp; Stage {selectedBatchLangs.length}x Localized Videos (1-Click)
+                  Translate &amp; Queue {selectedBatchLangs.length}× Localized
                 </button>
               </div>
             )}

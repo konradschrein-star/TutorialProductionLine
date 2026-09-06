@@ -1,109 +1,188 @@
 import React, { useState } from 'react';
-import { 
-  Key, 
-  Check, 
-  Save, 
-  Tv, 
-  Activity, 
-  RefreshCw, 
-  Server, 
-  Shield, 
-  Download, 
-  Upload, 
-  FolderCheck, 
-  HardDrive, 
-  Plus, 
-  Trash2, 
-  Edit2, 
-  UserCircle, 
+import { Link } from 'react-router-dom';
+import {
+  Key,
+  Check,
+  Save,
+  Tv,
+  RefreshCw,
+  Server,
+  Shield,
+  Download,
+  Upload,
+  FolderCheck,
+  HardDrive,
+  Plus,
+  Trash2,
+  Edit2,
+  UserCircle,
   ExternalLink,
-  HelpCircle,
   Users,
   ShieldCheck,
-  UserCheck
+  UserCheck,
+  Eye,
+  EyeOff,
+  Lock,
 } from 'lucide-react';
-import { StorageService, DEFAULT_CHANNELS, DEFAULT_USERS } from '../services/storageService';
+import { StorageService } from '../services/storageService';
 import { GoogleDriveService } from '../services/googleDriveService';
 import { Channel, GoogleDriveConfig, VAUser } from '../types';
+import { useChannels, useUsers, useActiveUser } from '../hooks/useStore';
+import { useRole } from '../context/RoleContext';
+import { useToast, useConfirm } from '../components/ui/Feedback';
+import { Modal } from '../components/ui/Modal';
+
+const SERVER_URL_KEY = 'server_url';
+const DEFAULT_SERVER_URL = 'http://localhost:3001';
+
+// --- Small reusable secret input with a show/hide toggle ----------------------
+const SecretInput: React.FC<{
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  id?: string;
+}> = ({ value, onChange, placeholder, id }) => {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="pro-input w-full rounded-lg px-3 py-2 pr-10 text-xs font-mono"
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground focus-ring rounded p-0.5"
+        aria-label={show ? 'Hide value' : 'Show value'}
+        title={show ? 'Hide' : 'Show'}
+      >
+        {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+};
+
+// --- Note shown in place of a section the current role may not access ---------
+const LockedNote: React.FC<{ id: string; title: string; note: string }> = ({ id, title, note }) => (
+  <div id={id} className="pro-panel p-4 rounded-xl scroll-mt-28 opacity-80">
+    <div className="flex items-center gap-2">
+      <Lock className="w-4 h-4 text-muted" />
+      <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">{title}</h3>
+      <span className="badge badge-neutral">Restricted</span>
+    </div>
+    <p className="text-xs text-muted mt-2">{note}</p>
+  </div>
+);
+
+const roleBadgeClass = (role: string) =>
+  role === 'admin'
+    ? 'badge-accent'
+    : role === 'manager'
+      ? 'badge-info'
+      : role === 'va'
+        ? 'badge-success'
+        : 'badge-neutral';
 
 export const Settings: React.FC = () => {
-  // API Keys
+  const { can } = useRole();
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  const canTeam = can('manageTeam');
+  const canChannels = can('manageChannels');
+  const canKeys = can('manageApiKeys');
+  const canReset = can('factoryReset');
+
+  // Reactive domain data (updates live when the store changes here or elsewhere)
+  const channels = useChannels();
+  const users = useUsers();
+  const activeUser = useActiveUser();
+
+  // --- Edit buffers (persisted on Save) --------------------------------------
   const [geminiKey, setGeminiKey] = useState<string>(() => StorageService.getApiKey('gemini'));
   const [groqKey, setGroqKey] = useState<string>(() => StorageService.getApiKey('groq'));
   const [deepseekKey, setDeepseekKey] = useState<string>(() => StorageService.getApiKey('deepseek'));
   const [elevenKey, setElevenKey] = useState<string>(() => StorageService.getApiKey('elevenlabs'));
   const [fishKey, setFishKey] = useState<string>(() => StorageService.getApiKey('fishaudio'));
   const [openAiKey, setOpenAiKey] = useState<string>(() => StorageService.getApiKey('openai'));
-  const [serverUrl, setServerUrl] = useState<string>('http://localhost:3001');
 
-  // Optional external keyword source (the operator's OWN keyword tool). Empty = self-contained.
-  const [externalKeywordApi, setExternalKeywordApi] = useState<string>(() => StorageService.getExternalKeywordApi());
+  const [serverUrl, setServerUrl] = useState<string>(() =>
+    StorageService.get<string>(SERVER_URL_KEY, DEFAULT_SERVER_URL)
+  );
+  const [externalKeywordApi, setExternalKeywordApi] = useState<string>(() =>
+    StorageService.getExternalKeywordApi()
+  );
 
-  // Google Drive Config State
-  const [driveConfig, setDriveConfig] = useState<GoogleDriveConfig>(() => StorageService.getGoogleDriveConfig());
+  const [driveConfig, setDriveConfig] = useState<GoogleDriveConfig>(() =>
+    StorageService.getGoogleDriveConfig()
+  );
 
-  // Channels Dynamic State
-  const [channels, setChannels] = useState<Channel[]>(() => StorageService.getChannels());
+  // --- Modals ----------------------------------------------------------------
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState<boolean>(false);
-
-  // User Profile & Team Management
-  const [users, setUsers] = useState<VAUser[]>(() => StorageService.getUsers());
-  const [activeUser, setActiveUser] = useState<VAUser>(() => StorageService.getActiveUser());
   const [editingUser, setEditingUser] = useState<VAUser | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState<boolean>(false);
 
-  // Status & Pings
+  // --- Status & pings --------------------------------------------------------
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [testingService, setTestingService] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
+  // --- Save (only persists what the current role is allowed to touch) --------
   const handleSaveAll = () => {
-    StorageService.setApiKey('gemini', geminiKey);
-    StorageService.setApiKey('groq', groqKey);
-    StorageService.setApiKey('deepseek', deepseekKey);
-    StorageService.setApiKey('elevenlabs', elevenKey);
-    StorageService.setApiKey('fishaudio', fishKey);
-    StorageService.setApiKey('openai', openAiKey);
-    StorageService.setGoogleDriveConfig(driveConfig);
-    StorageService.setActiveUser(activeUser);
+    if (canKeys) {
+      StorageService.setApiKey('gemini', geminiKey);
+      StorageService.setApiKey('groq', groqKey);
+      StorageService.setApiKey('deepseek', deepseekKey);
+      StorageService.setApiKey('elevenlabs', elevenKey);
+      StorageService.setApiKey('fishaudio', fishKey);
+      StorageService.setApiKey('openai', openAiKey);
+      StorageService.setGoogleDriveConfig(driveConfig);
+    }
+    StorageService.set(SERVER_URL_KEY, serverUrl);
     StorageService.setExternalKeywordApi(externalKeywordApi);
 
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
+    toast('Configuration saved.', 'success', 'Settings');
   };
 
+  // --- Connection tests ------------------------------------------------------
   const handleTestGemini = async () => {
     setTestingService('gemini');
     if (!geminiKey.trim()) {
-      setTestResults(prev => ({ ...prev, gemini: { ok: false, message: 'No API Key Entered' } }));
+      setTestResults((prev) => ({ ...prev, gemini: { ok: false, message: 'No API Key Entered' } }));
       setTestingService(null);
       return;
     }
-
     try {
       const start = Date.now();
       const isVertexExpress = geminiKey.trim().startsWith('AQ.');
       const testUrl = isVertexExpress
         ? `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:countTokens?key=${encodeURIComponent(geminiKey.trim())}`
         : `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(geminiKey.trim())}`;
-
       const res = await fetch(testUrl, {
         method: isVertexExpress ? 'POST' : 'GET',
         headers: { 'Content-Type': 'application/json' },
-        ...(isVertexExpress ? { body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] }) } : {})
+        ...(isVertexExpress
+          ? { body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] }) }
+          : {}),
       });
       const latency = Date.now() - start;
       if (res.ok) {
-        setTestResults(prev => ({
+        setTestResults((prev) => ({
           ...prev,
-          gemini: { ok: true, message: `Connected (${isVertexExpress ? 'Vertex Express' : 'AI Studio'} ${latency}ms)` }
+          gemini: { ok: true, message: `Connected (${isVertexExpress ? 'Vertex Express' : 'AI Studio'} ${latency}ms)` },
         }));
       } else {
-        setTestResults(prev => ({ ...prev, gemini: { ok: false, message: `Auth Failed (${res.status})` } }));
+        setTestResults((prev) => ({ ...prev, gemini: { ok: false, message: `Auth Failed (${res.status})` } }));
       }
     } catch (e: any) {
-      setTestResults(prev => ({ ...prev, gemini: { ok: false, message: e.message } }));
+      setTestResults((prev) => ({ ...prev, gemini: { ok: false, message: e.message } }));
     } finally {
       setTestingService(null);
     }
@@ -112,24 +191,23 @@ export const Settings: React.FC = () => {
   const handleTestGroq = async () => {
     setTestingService('groq');
     if (!groqKey.trim()) {
-      setTestResults(prev => ({ ...prev, groq: { ok: false, message: 'No API Key Entered' } }));
+      setTestResults((prev) => ({ ...prev, groq: { ok: false, message: 'No API Key Entered' } }));
       setTestingService(null);
       return;
     }
-
     try {
       const start = Date.now();
       const res = await fetch('https://api.groq.com/openai/v1/models', {
-        headers: { 'Authorization': `Bearer ${groqKey}` }
+        headers: { Authorization: `Bearer ${groqKey}` },
       });
       const latency = Date.now() - start;
       if (res.ok) {
-        setTestResults(prev => ({ ...prev, groq: { ok: true, message: `Connected (${latency}ms)` } }));
+        setTestResults((prev) => ({ ...prev, groq: { ok: true, message: `Connected (${latency}ms)` } }));
       } else {
-        setTestResults(prev => ({ ...prev, groq: { ok: false, message: `Auth Failed (${res.status})` } }));
+        setTestResults((prev) => ({ ...prev, groq: { ok: false, message: `Auth Failed (${res.status})` } }));
       }
     } catch (e: any) {
-      setTestResults(prev => ({ ...prev, groq: { ok: false, message: e.message } }));
+      setTestResults((prev) => ({ ...prev, groq: { ok: false, message: e.message } }));
     } finally {
       setTestingService(null);
     }
@@ -138,24 +216,23 @@ export const Settings: React.FC = () => {
   const handleTestDeepSeek = async () => {
     setTestingService('deepseek');
     if (!deepseekKey.trim()) {
-      setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: 'No API Key Entered' } }));
+      setTestResults((prev) => ({ ...prev, deepseek: { ok: false, message: 'No API Key Entered' } }));
       setTestingService(null);
       return;
     }
-
     try {
       const start = Date.now();
       const res = await fetch('https://api.deepseek.com/models', {
-        headers: { 'Authorization': `Bearer ${deepseekKey}` }
+        headers: { Authorization: `Bearer ${deepseekKey}` },
       });
       const latency = Date.now() - start;
       if (res.ok) {
-        setTestResults(prev => ({ ...prev, deepseek: { ok: true, message: `Connected (${latency}ms)` } }));
+        setTestResults((prev) => ({ ...prev, deepseek: { ok: true, message: `Connected (${latency}ms)` } }));
       } else {
-        setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: `Auth Failed (${res.status})` } }));
+        setTestResults((prev) => ({ ...prev, deepseek: { ok: false, message: `Auth Failed (${res.status})` } }));
       }
     } catch (e: any) {
-      setTestResults(prev => ({ ...prev, deepseek: { ok: false, message: e.message } }));
+      setTestResults((prev) => ({ ...prev, deepseek: { ok: false, message: e.message } }));
     } finally {
       setTestingService(null);
     }
@@ -165,55 +242,14 @@ export const Settings: React.FC = () => {
     setTestingService('drive');
     try {
       const res = await GoogleDriveService.testConnection(driveConfig);
-      setTestResults(prev => ({
+      setTestResults((prev) => ({
         ...prev,
-        drive: { ok: res.ok, message: `${res.message} (${res.latencyMs}ms)` }
+        drive: { ok: res.ok, message: `${res.message} (${res.latencyMs}ms)` },
       }));
     } catch (e: any) {
-      setTestResults(prev => ({ ...prev, drive: { ok: false, message: e.message } }));
+      setTestResults((prev) => ({ ...prev, drive: { ok: false, message: e.message } }));
     } finally {
       setTestingService(null);
-    }
-  };
-
-  const handleExportBackup = () => {
-    const backup = StorageService.exportFullBackup();
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const dateStr = new Date().toISOString().split('T')[0];
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `tpl_workstation_backup_${dateStr}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        const ok = StorageService.importFullBackup(json);
-        if (ok) {
-          alert('Backup successfully restored! Reloading workstation...');
-          window.location.reload();
-        } else {
-          alert('Invalid backup file format.');
-        }
-      } catch (err: any) {
-        alert('Failed to parse backup JSON: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const handleResetFactoryData = () => {
-    if (window.confirm('Are you sure you want to reset all workstation data to factory defaults? This will clear custom channels, users, finished videos, and local configs.')) {
-      StorageService.resetFactoryData();
-      alert('Workstation reset to defaults. Reloading...');
-      window.location.reload();
     }
   };
 
@@ -225,501 +261,372 @@ export const Settings: React.FC = () => {
       const latency = Date.now() - start;
       if (res.ok) {
         const data = await res.json();
-        setTestResults(prev => ({
+        setTestResults((prev) => ({
           ...prev,
-          server: { ok: true, message: `Active: RAM Disk=${data.isRamDisk ? 'Yes' : 'No'} (${latency}ms)` }
+          server: { ok: true, message: `Active: RAM Disk=${data.isRamDisk ? 'Yes' : 'No'} (${latency}ms)` },
         }));
       } else {
-        setTestResults(prev => ({ ...prev, server: { ok: false, message: `HTTP ${res.status}` } }));
+        setTestResults((prev) => ({ ...prev, server: { ok: false, message: `HTTP ${res.status}` } }));
       }
-    } catch (e: any) {
-      setTestResults(prev => ({ ...prev, server: { ok: false, message: 'Server Offline' } }));
+    } catch {
+      setTestResults((prev) => ({ ...prev, server: { ok: false, message: 'Server Offline' } }));
     } finally {
       setTestingService(null);
     }
   };
 
-  // Channel Operations
+  // --- Consolidated backup / restore / reset ---------------------------------
+  const handleExportBackup = () => {
+    const backup = StorageService.exportFullBackup();
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const dateStr = new Date().toISOString().split('T')[0];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tutorial_studio_backup_${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('Backup exported.', 'success', 'Backup');
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        const ok = StorageService.importFullBackup(json);
+        if (ok) {
+          toast('Backup restored. Data updated live.', 'success', 'Restore');
+        } else {
+          toast('Invalid backup file format.', 'error', 'Restore');
+        }
+      } catch (err: any) {
+        toast('Failed to parse backup JSON: ' + err.message, 'error', 'Restore');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleResetFactoryData = async () => {
+    const ok = await confirm({
+      title: 'Reset to factory defaults?',
+      message:
+        'This clears custom channels, users, finished videos, and local configuration on this workstation. This cannot be undone.',
+      confirmLabel: 'Reset everything',
+      cancelLabel: 'Keep my data',
+      danger: true,
+    });
+    if (!ok) return;
+    StorageService.resetFactoryData();
+    toast('Workstation reset to defaults.', 'success', 'Reset');
+  };
+
+  // --- Channel operations ----------------------------------------------------
   const handleSaveChannel = (channel: Channel) => {
     StorageService.saveChannel(channel);
-    setChannels(StorageService.getChannels());
     setIsChannelModalOpen(false);
     setEditingChannel(null);
+    toast('Channel saved.', 'success', 'Channels');
   };
 
-  const handleDeleteChannel = (id: string) => {
-    if (confirm('Are you sure you want to delete this channel?')) {
-      StorageService.deleteChannel(id);
-      setChannels(StorageService.getChannels());
-    }
+  const handleDeleteChannel = async (id: string) => {
+    const ok = await confirm({
+      title: 'Delete channel?',
+      message: 'This channel profile will be permanently removed.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    StorageService.deleteChannel(id);
+    toast('Channel deleted.', 'success', 'Channels');
   };
 
-  // User & Account Operations
+  // --- User / account operations ---------------------------------------------
   const handleSaveUser = (user: VAUser) => {
     StorageService.saveUser(user);
-    setUsers(StorageService.getUsers());
     if (user.id === activeUser.id) {
-      setActiveUser(user);
       StorageService.setActiveUser(user);
     }
     setIsUserModalOpen(false);
     setEditingUser(null);
+    toast('Account saved.', 'success', 'Team');
   };
 
-  const handleDeleteUser = (id: string) => {
+  const handleDeleteUser = async (id: string) => {
     if (users.length <= 1) {
-      alert('Cannot delete the only remaining account.');
+      toast('Cannot delete the only remaining account.', 'warning', 'Team');
       return;
     }
-    if (confirm('Are you sure you want to delete this account?')) {
-      StorageService.deleteUser(id);
-      const updated = StorageService.getUsers();
-      setUsers(updated);
-      if (activeUser.id === id) {
-        setActiveUser(updated[0]);
-      }
-    }
+    const ok = await confirm({
+      title: 'Delete account?',
+      message: 'This operator account will be permanently removed.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    StorageService.deleteUser(id);
+    toast('Account deleted.', 'success', 'Team');
   };
 
   const handleSwitchActiveUser = (user: VAUser) => {
-    setActiveUser(user);
     StorageService.setActiveUser(user);
+    toast(`Switched to ${user.name || user.email}.`, 'info', 'Active session');
   };
 
-  // Config Backup & Restore
-  const handleExportConfig = () => {
-    const backup = {
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-      channels: StorageService.getChannels(),
-      users: StorageService.getUsers(),
-      googleDriveConfig: StorageService.getGoogleDriveConfig(),
-      customThumbnailAssets: StorageService.getCustomThumbnailAssets()
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `tutorial_line_config_backup_${Date.now()}.json`;
-    a.click();
-  };
-
-  const handleImportConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const backup = JSON.parse(evt.target?.result as string);
-        if (backup.channels) localStorage.setItem('tpl_custom_channels', JSON.stringify(backup.channels));
-        if (backup.users) localStorage.setItem('tpl_custom_users', JSON.stringify(backup.users));
-        if (backup.googleDriveConfig) localStorage.setItem('tpl_google_drive_config', JSON.stringify(backup.googleDriveConfig));
-        if (backup.customThumbnailAssets) localStorage.setItem('tpl_custom_thumbnail_assets', JSON.stringify(backup.customThumbnailAssets));
-        alert('Configuration backup restored successfully! Reloading...');
-        window.location.reload();
-      } catch (err: any) {
-        alert('Invalid configuration file: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  // Folder template token resolver preview
+  // --- Drive template previews -----------------------------------------------
   const folderPreview = GoogleDriveService.resolveFolderPath(
     { channelName: channels[0]?.name || 'Entrepreneurs Skool', topic: 'How to Automate Invoices', title: 'Automate Invoices' },
     driveConfig.folderStructureTemplate
   );
-
   const filePreview = GoogleDriveService.resolveFileName(
     { channelName: channels[0]?.name || 'Entrepreneurs Skool', topic: 'How to Automate Invoices', title: 'Automate_Invoices', lang: 'en', extension: 'mp4' },
     driveConfig.fileNamingTemplate
   );
 
+  // --- Section navigation ----------------------------------------------------
+  const navItems = [
+    canTeam && { id: 'sec-team', label: 'Team', icon: Users },
+    { id: 'sec-channels', label: 'Channels', icon: Tv },
+    canKeys && { id: 'sec-apikeys', label: 'API Keys', icon: Key },
+    canKeys && { id: 'sec-drive', label: 'Drive', icon: FolderCheck },
+    { id: 'sec-backend', label: 'Backend', icon: Server },
+    canReset && { id: 'sec-backup', label: 'Backup', icon: HardDrive },
+  ].filter(Boolean) as { id: string; label: string; icon: typeof Users }[];
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const resultCls = (ok: boolean) => (ok ? 'text-success' : 'text-danger');
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6 animate-fadeIn">
-      
       {/* Header Bar */}
       <div className="pro-panel p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-foreground" />
-            <h1 className="text-sm font-bold font-display text-foreground">
-              Workstation Settings &amp; Cloud Integration
-            </h1>
+            <h1 className="text-sm font-bold font-display text-foreground">Workstation Settings &amp; Cloud Integration</h1>
           </div>
           <p className="text-[11px] text-muted mt-0.5">
-            Configure Team Accounts, Google Drive Cloud Sync, Channel Profiles, and API Keys.
+            Team accounts, channels, provider API keys, Google Drive delivery, backend health, and backup.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportConfig}
-            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
-            title="Export all channels and settings to JSON"
-          >
-            <Download className="w-3.5 h-3.5" /> Backup (.json)
-          </button>
-
-          <label className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
-            <Upload className="w-3.5 h-3.5" /> Restore
-            <input
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={handleImportConfig}
-            />
-          </label>
-
-          <button
-            onClick={handleSaveAll}
-            className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
-          >
-            {savedSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {savedSuccess ? 'Saved All!' : 'Save Configuration'}
-          </button>
-        </div>
+        <button
+          onClick={handleSaveAll}
+          className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-subtle"
+        >
+          {savedSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+          {savedSuccess ? 'Saved!' : 'Save Configuration'}
+        </button>
       </div>
 
-      {/* Team & Admin Account Management Suite */}
-      <div className="pro-panel p-4 rounded-xl space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-foreground" />
-            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-              Team &amp; Account Management
-            </h3>
-            <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-surface-200 text-foreground border border-border">
-              {users.length} Operator Accounts
-            </span>
-          </div>
-
-          <button
-            onClick={() => {
-              setEditingUser({
-                id: `usr_${Date.now()}`,
-                name: '',
-                email: '',
-                role: 'va',
-                assignedChannels: [channels[0]?.id || 'virtualfd']
-              });
-              setIsUserModalOpen(true);
-            }}
-            className="btn-solid px-3 py-1 rounded text-xs font-semibold flex items-center gap-1"
-          >
-            <Plus className="w-3 h-3" /> Add Account
-          </button>
-        </div>
-
-        <p className="text-xs text-muted">
-          Manage administrator, manager, and VA operator profiles with granular channel access. No external code needed.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {users.map(u => {
-            const isActive = activeUser.id === u.id;
-            return (
-              <div 
-                key={u.id} 
-                className={`p-3.5 rounded-xl border flex flex-col justify-between space-y-3 transition-all ${
-                  isActive ? 'bg-surface-200 border-foreground/50 shadow-subtle' : 'bg-surface-100 border-border hover:bg-surface-200/50'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 truncate">
-                      <UserCircle className="w-4 h-4 text-muted flex-shrink-0" />
-                      <h4 className="text-xs font-bold text-foreground truncate">{u.name}</h4>
-                    </div>
-                    
-                    <span className={`text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded border ${
-                      u.role === 'admin' 
-                        ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                        : u.role === 'manager'
-                          ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                    }`}>
-                      {u.role}
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] font-mono text-muted truncate">{u.email}</p>
-
-                  <div className="flex items-center gap-1 flex-wrap pt-1">
-                    <span className="text-[10px] font-mono text-muted">Channels:</span>
-                    {u.assignedChannels?.map(chId => {
-                      const chObj = channels.find(c => c.id === chId);
-                      return (
-                        <span key={chId} className="px-1.5 py-0.2 rounded bg-surface-300 text-[10px] font-mono text-foreground">
-                          {chObj ? chObj.name : chId}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-border flex items-center justify-between">
-                  {isActive ? (
-                    <span className="text-[10px] font-mono font-bold text-emerald-500 flex items-center gap-1">
-                      <ShieldCheck className="w-3.5 h-3.5" /> Active Session
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => handleSwitchActiveUser(u)}
-                      className="text-[10px] font-mono font-bold text-muted hover:text-foreground underline flex items-center gap-1"
-                    >
-                      <UserCheck className="w-3 h-3" /> Switch to User
-                    </button>
-                  )}
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingUser(u);
-                        setIsUserModalOpen(true);
-                      }}
-                      className="p-1 rounded hover:bg-surface-300 text-muted hover:text-foreground"
-                      title="Edit Account"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteUser(u.id)}
-                      className="p-1 rounded hover:bg-surface-300 text-muted hover:text-red-400"
-                      title="Delete Account"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Google Drive Cloud Integration Panel */}
-      <div className="pro-panel p-4 rounded-xl space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FolderCheck className="w-4 h-4 text-foreground" />
-            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-              Google Drive Cloud Delivery Suite
-            </h3>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {testResults.drive && (
-              <span className={`text-[10px] font-mono font-bold ${testResults.drive.ok ? 'text-emerald-500' : 'text-red-500'}`}>
-                {testResults.drive.message}
-              </span>
-            )}
+      {/* Section navigation (sticky) */}
+      <div className="sticky top-2 z-30 pro-panel rounded-xl px-2 py-1.5 flex items-center gap-1 flex-wrap">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
             <button
-              onClick={handleTestGoogleDrive}
-              disabled={testingService === 'drive'}
-              className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1"
+              key={item.id}
+              onClick={() => scrollToSection(item.id)}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-200 focus-ring flex items-center gap-1.5 transition-colors"
             >
-              {testingService === 'drive' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-              Test Connection
+              <Icon className="w-3.5 h-3.5" />
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Team & Account Management */}
+      {canTeam ? (
+        <div id="sec-team" className="pro-panel p-4 rounded-xl space-y-4 scroll-mt-28">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-foreground" />
+              <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">Team &amp; Account Management</h3>
+              <span className="badge badge-neutral">{users.length} Operator Accounts</span>
+            </div>
+
+            <button
+              onClick={() => {
+                setEditingUser({
+                  id: `usr_${Date.now()}`,
+                  name: '',
+                  email: '',
+                  role: 'va',
+                  assignedChannels: [channels[0]?.id || 'virtualfd'],
+                  assignedSoftwares: [],
+                });
+                setIsUserModalOpen(true);
+              }}
+              className="btn-solid px-3 py-1 rounded text-xs font-semibold flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" /> Add Account
             </button>
           </div>
-        </div>
 
-        <p className="text-xs text-muted">
-          Configure how the Virtual Assistant and render engine automatically delivers finished tutorial files and thumbnails to Google Drive.
-        </p>
+          <p className="text-xs text-muted">
+            Manage administrator, manager, and VA operator profiles with granular channel access and software specializations.
+          </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Connection Mode & Credentials */}
-          <div className="space-y-3 p-3.5 rounded-lg bg-surface-200/50 border border-border">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-foreground">Authentication Method</label>
-              <div className="flex items-center gap-1">
-                {(['service_account', 'oauth', 'api_key'] as const).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => setDriveConfig({ ...driveConfig, connectionMode: mode })}
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition-all ${
-                      driveConfig.connectionMode === mode
-                        ? 'bg-foreground text-background shadow-subtle'
-                        : 'bg-surface-200 text-muted hover:text-foreground'
-                    }`}
-                  >
-                    {mode.replace('_', ' ')}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {users.map((u) => {
+              const isActive = activeUser.id === u.id;
+              return (
+                <div
+                  key={u.id}
+                  className={`p-3.5 rounded-xl border flex flex-col justify-between space-y-3 transition-all ${
+                    isActive ? 'bg-surface-200 border-foreground/50 shadow-subtle' : 'bg-surface-100 border-border hover:bg-surface-200/50'
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <UserCircle className="w-4 h-4 text-muted flex-shrink-0" />
+                        <h4 className="text-xs font-bold text-foreground truncate">{u.name}</h4>
+                      </div>
+                      <span className={`badge ${roleBadgeClass(u.role)} uppercase`}>{u.role}</span>
+                    </div>
 
-            {driveConfig.connectionMode === 'service_account' ? (
-              <div>
-                <label className="block text-[11px] font-mono text-muted mb-1">
-                  Service Account JSON (paste raw Google Cloud credentials JSON)
-                </label>
-                <textarea
-                  rows={4}
-                  value={driveConfig.serviceAccountJson || ''}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, serviceAccountJson: e.target.value })}
-                  placeholder={`{\n  "type": "service_account",\n  "client_email": "tutorial-bot@project.iam.gserviceaccount.com",\n  "private_key": "-----BEGIN PRIVATE KEY-----..."\n}`}
-                  className="pro-input w-full rounded-lg p-2 text-[11px] font-mono resize-y leading-relaxed"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="block text-[11px] font-mono text-muted mb-1">
-                  Google Cloud API Key / Token
-                </label>
-                <input
-                  type="password"
-                  value={driveConfig.apiKey || ''}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, apiKey: e.target.value })}
-                  placeholder="AIzaSy..."
-                  className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
-                />
-              </div>
-            )}
+                    <p className="text-[11px] font-mono text-muted truncate">{u.email}</p>
 
-            <div>
-              <label className="block text-[11px] font-mono text-muted mb-1">
-                Root Destination Folder ID (optional, defaults to 'root')
-              </label>
-              <input
-                type="text"
-                value={driveConfig.rootFolderId || ''}
-                onChange={(e) => setDriveConfig({ ...driveConfig, rootFolderId: e.target.value })}
-                placeholder="1aBcDeFgHiJkLmNoPqRsTuVwXyZ"
-                className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
-              />
-            </div>
-          </div>
+                    <div className="flex items-center gap-1 flex-wrap pt-1">
+                      <span className="text-[10px] font-mono text-muted">Channels:</span>
+                      {u.assignedChannels?.map((chId) => {
+                        const chObj = channels.find((c) => c.id === chId);
+                        return (
+                          <span key={chId} className="px-1.5 py-0.5 rounded bg-surface-300 text-[10px] font-mono text-foreground">
+                            {chObj ? chObj.name : chId}
+                          </span>
+                        );
+                      })}
+                    </div>
 
-          {/* Folder & Naming Hierarchy Builder */}
-          <div className="space-y-3 p-3.5 rounded-lg bg-surface-200/50 border border-border">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-foreground">Folder Structure Template</label>
-                <span className="text-[10px] font-mono text-muted">Tokens: {'{channel}'}, {'{year}'}, {'{month}'}, {'{topic_slug}'}</span>
-              </div>
-              <input
-                type="text"
-                value={driveConfig.folderStructureTemplate || '{channel}/{year}_{month}/{topic_slug}/'}
-                onChange={(e) => setDriveConfig({ ...driveConfig, folderStructureTemplate: e.target.value })}
-                className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
-              />
-              <div className="mt-1 p-2 rounded bg-surface-100 border border-border text-[11px] font-mono text-muted truncate">
-                Preview: <strong className="text-emerald-500">{folderPreview}</strong>
-              </div>
-            </div>
+                    {u.assignedSoftwares && u.assignedSoftwares.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                        <span className="text-[10px] font-mono text-muted">Softwares:</span>
+                        {u.assignedSoftwares.map((soft) => (
+                          <span key={soft} className="px-1.5 py-0.5 rounded bg-surface-300 text-[10px] font-mono text-foreground border border-border">
+                            {soft}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-foreground">File Naming Template</label>
-                <span className="text-[10px] font-mono text-muted">Tokens: {'{date}'}, {'{title}'}, {'{lang}'}</span>
-              </div>
-              <input
-                type="text"
-                value={driveConfig.fileNamingTemplate || '{date}_{title}_{lang}.mp4'}
-                onChange={(e) => setDriveConfig({ ...driveConfig, fileNamingTemplate: e.target.value })}
-                className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
-              />
-              <div className="mt-1 p-2 rounded bg-surface-100 border border-border text-[11px] font-mono text-muted truncate">
-                Preview: <strong className="text-emerald-500">{filePreview}</strong>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 pt-1">
-              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
-                <input
-                  type="checkbox"
-                  checked={driveConfig.autoUploadOnRender}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, autoUploadOnRender: e.target.checked })}
-                  className="rounded accent-foreground"
-                />
-                <span>Automatically dispatch upload when video is rendered / spliced</span>
-              </label>
-
-              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
-                <input
-                  type="checkbox"
-                  checked={driveConfig.uploadThumbnail}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, uploadThumbnail: e.target.checked })}
-                  className="rounded accent-foreground"
-                />
-                <span>Also upload generated Thumbnail PNG alongside video</span>
-              </label>
-            </div>
-
-          </div>
-
-        </div>
-      </div>
-
-      {/* Dynamic Channels Manager */}
-      <div className="pro-panel p-4 rounded-xl space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Tv className="w-4 h-4 text-foreground" />
-            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-              Channel Profiles &amp; Niches
-            </h3>
-            <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-surface-200 text-foreground border border-border">
-              {channels.length} Configured
-            </span>
-          </div>
-
-          <button
-            onClick={() => {
-              setEditingChannel({
-                id: `chan_${Date.now()}`,
-                name: '',
-                niche: '',
-                description: '',
-                badgeColor: '#00e5ff',
-                defaultVoiceId: 'fish-paul-neutral',
-                targetCategory: 'Tutorials',
-                driveFolder: 'Tutorials/'
-              });
-              setIsChannelModalOpen(true);
-            }}
-            className="btn-solid px-3 py-1 rounded text-xs font-semibold flex items-center gap-1"
-          >
-            <Plus className="w-3 h-3" /> Add Channel
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {channels.map(c => (
-            <div key={c.id} className="p-3.5 rounded-xl bg-surface-100 border border-border flex flex-col justify-between space-y-3">
-              <div>
-                <div className="flex items-center justify-between">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: c.badgeColor || '#00e5ff' }}
-                  />
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingChannel(c);
-                        setIsChannelModalOpen(true);
-                      }}
-                      className="p-1 rounded hover:bg-surface-200 text-muted hover:text-foreground"
-                      title="Edit Channel"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </button>
-                    {channels.length > 1 && (
+                  <div className="pt-2 border-t border-border flex items-center justify-between">
+                    {isActive ? (
+                      <span className="text-[10px] font-mono font-bold text-success flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5" /> Active Session
+                      </span>
+                    ) : (
                       <button
-                        onClick={() => handleDeleteChannel(c.id)}
-                        className="p-1 rounded hover:bg-surface-200 text-muted hover:text-red-400"
-                        title="Delete Channel"
+                        onClick={() => handleSwitchActiveUser(u)}
+                        className="text-[10px] font-mono font-bold text-muted hover:text-foreground underline flex items-center gap-1"
+                      >
+                        <UserCheck className="w-3 h-3" /> Switch to User
+                      </button>
+                    )}
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setEditingUser(u);
+                          setIsUserModalOpen(true);
+                        }}
+                        className="p-1 rounded hover:bg-surface-300 text-muted hover:text-foreground"
+                        title="Edit Account"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(u.id)}
+                        className="p-1 rounded hover:bg-surface-300 text-muted hover:text-danger"
+                        title="Delete Account"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
-                    )}
+                    </div>
                   </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <LockedNote
+          id="sec-team"
+          title="Team & Account Management"
+          note="Managing operator accounts requires the Team Management permission. Ask an administrator for access."
+        />
+      )}
+
+      {/* Channels */}
+      <div id="sec-channels" className="pro-panel p-4 rounded-xl space-y-4 scroll-mt-28">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Tv className="w-4 h-4 text-foreground" />
+            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">Channel Profiles &amp; Niches</h3>
+            <span className="badge badge-neutral">{channels.length} Configured</span>
+            {!canChannels && <span className="badge badge-warning">Read-only</span>}
+          </div>
+
+          {canChannels && (
+            <button
+              onClick={() => {
+                setEditingChannel({
+                  id: `chan_${Date.now()}`,
+                  name: '',
+                  niche: '',
+                  description: '',
+                  badgeColor: '#00e5ff',
+                  defaultVoiceId: 'fish-paul-neutral',
+                  targetCategory: 'Tutorials',
+                  driveFolder: 'Tutorials/',
+                });
+                setIsChannelModalOpen(true);
+              }}
+              className="btn-solid px-3 py-1 rounded text-xs font-semibold flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" /> Add Channel
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {channels.map((c) => (
+            <div key={c.id} className="p-3.5 rounded-xl bg-surface-100 border border-border flex flex-col justify-between space-y-3">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: c.badgeColor || '#00e5ff' }} />
+                  {canChannels && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setEditingChannel(c);
+                          setIsChannelModalOpen(true);
+                        }}
+                        className="p-1 rounded hover:bg-surface-200 text-muted hover:text-foreground"
+                        title="Edit Channel"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                      {channels.length > 1 && (
+                        <button
+                          onClick={() => handleDeleteChannel(c.id)}
+                          className="p-1 rounded hover:bg-surface-200 text-muted hover:text-danger"
+                          title="Delete Channel"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <h4 className="text-xs font-bold text-foreground mt-1">{c.name}</h4>
@@ -736,171 +643,295 @@ export const Settings: React.FC = () => {
         </div>
       </div>
 
-      {/* API Keys Vault */}
-      <div className="pro-panel p-4 rounded-xl space-y-4">
-        <div className="flex items-center gap-2">
-          <Key className="w-4 h-4 text-foreground" />
-          <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-            API Keys &amp; Intelligence Models
-          </h3>
+      {/* API Keys */}
+      {canKeys ? (
+        <div id="sec-apikeys" className="pro-panel p-4 rounded-xl space-y-4 scroll-mt-28">
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-foreground" />
+            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">API Keys &amp; Intelligence Models</h3>
+          </div>
+          <p className="text-[11px] text-muted">
+            Keys are stored locally in this browser only. A server-side key proxy is a known future improvement.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Google AI Studio (Gemini) */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border md:col-span-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-bold text-foreground">Google AI Studio API Key (Gemini 2.0 Flash / Pro)</label>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-mono text-info hover:underline flex items-center gap-0.5"
+                  >
+                    Get Key <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {testResults.gemini && (
+                    <span className={`text-[10px] font-mono font-bold ${resultCls(testResults.gemini.ok)}`}>
+                      {testResults.gemini.message}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleTestGemini}
+                    disabled={testingService === 'gemini'}
+                    className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
+                  >
+                    {testingService === 'gemini' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                    Test Ping
+                  </button>
+                </div>
+              </div>
+              <SecretInput value={geminiKey} onChange={setGeminiKey} placeholder="AIzaSy..." />
+              <p className="text-[10px] text-muted font-mono">
+                Primary high-speed LLM engine for spoken tutorial scripts, metadata generation, and multilingual translations.
+              </p>
+            </div>
+
+            {/* Groq */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-foreground">Groq API Key (LLaMA 3.3 70B Failover)</label>
+                <div className="flex items-center gap-1.5">
+                  {testResults.groq && (
+                    <span className={`text-[10px] font-mono font-bold ${resultCls(testResults.groq.ok)}`}>{testResults.groq.message}</span>
+                  )}
+                  <button
+                    onClick={handleTestGroq}
+                    disabled={testingService === 'groq'}
+                    className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
+                  >
+                    {testingService === 'groq' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                    Test Ping
+                  </button>
+                </div>
+              </div>
+              <SecretInput value={groqKey} onChange={setGroqKey} placeholder="gsk_..." />
+            </div>
+
+            {/* DeepSeek */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-foreground">DeepSeek Flash API Key (deepseek-chat Fallback)</label>
+                <div className="flex items-center gap-1.5">
+                  {testResults.deepseek && (
+                    <span className={`text-[10px] font-mono font-bold ${resultCls(testResults.deepseek.ok)}`}>{testResults.deepseek.message}</span>
+                  )}
+                  <button
+                    onClick={handleTestDeepSeek}
+                    disabled={testingService === 'deepseek'}
+                    className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
+                  >
+                    {testingService === 'deepseek' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                    Test Ping
+                  </button>
+                </div>
+              </div>
+              <SecretInput value={deepseekKey} onChange={setDeepseekKey} placeholder="sk-..." />
+            </div>
+
+            {/* ElevenLabs */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
+              <label className="block text-xs font-bold text-foreground">ElevenLabs API Key (Neural Voice)</label>
+              <SecretInput value={elevenKey} onChange={setElevenKey} placeholder="xi-api-key..." />
+            </div>
+
+            {/* Fish Audio */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
+              <label className="block text-xs font-bold text-foreground">Fish Audio API Key</label>
+              <SecretInput value={fishKey} onChange={setFishKey} placeholder="fish-api-key..." />
+            </div>
+
+            {/* OpenAI */}
+            <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border md:col-span-2">
+              <label className="block text-xs font-bold text-foreground">OpenAI API Key (TTS &amp; Embeddings)</label>
+              <SecretInput value={openAiKey} onChange={setOpenAiKey} placeholder="sk-proj-..." />
+            </div>
+          </div>
         </div>
+      ) : (
+        <LockedNote
+          id="sec-apikeys"
+          title="API Keys & Intelligence Models"
+          note="Provider API keys are restricted to roles with the API Keys permission (administrators)."
+        />
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Google AI Studio (Gemini 2.0 Flash) */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border md:col-span-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-foreground">Google AI Studio API Key (Gemini 2.0 Flash / Pro)</label>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] font-mono text-blue-400 hover:underline flex items-center gap-0.5"
-                >
-                  Get Key <ExternalLink className="w-2.5 h-2.5" />
-                </a>
+      {/* Google Drive */}
+      {canKeys ? (
+        <div id="sec-drive" className="pro-panel p-4 rounded-xl space-y-4 scroll-mt-28">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FolderCheck className="w-4 h-4 text-foreground" />
+              <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">Google Drive Cloud Delivery Suite</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {testResults.drive && (
+                <span className={`text-[10px] font-mono font-bold ${resultCls(testResults.drive.ok)}`}>{testResults.drive.message}</span>
+              )}
+              <button
+                onClick={handleTestGoogleDrive}
+                disabled={testingService === 'drive'}
+                className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1"
+              >
+                {testingService === 'drive' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                Test Connection
+              </button>
+              <Link
+                to="/finished"
+                className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-accent hover:text-foreground"
+                title="Open Google Drive Cloud Folders & Tracking Overview"
+              >
+                <FolderCheck className="w-3 h-3" />
+                Folder Overview
+              </Link>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted">
+            Configure how the render engine automatically delivers finished tutorial files and thumbnails to Google Drive.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Connection Mode & Credentials */}
+            <div className="space-y-3 p-3.5 rounded-lg bg-surface-200/50 border border-border">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-foreground">Authentication Method</label>
+                <div className="flex items-center gap-1">
+                  {(['service_account', 'oauth', 'api_key'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setDriveConfig({ ...driveConfig, connectionMode: mode })}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase transition-all ${
+                        driveConfig.connectionMode === mode ? 'bg-foreground text-background shadow-subtle' : 'bg-surface-200 text-muted hover:text-foreground'
+                      }`}
+                    >
+                      {mode.replace('_', ' ')}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex items-center gap-1.5">
-                {testResults.gemini && (
-                  <span className={`text-[10px] font-mono font-bold ${testResults.gemini.ok ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {testResults.gemini.message}
-                  </span>
-                )}
-                <button
-                  onClick={handleTestGemini}
-                  disabled={testingService === 'gemini'}
-                  className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
-                >
-                  {testingService === 'gemini' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                  Test Ping
-                </button>
+
+              {driveConfig.connectionMode === 'service_account' ? (
+                <div>
+                  <label className="block text-[11px] font-mono text-muted mb-1">
+                    Service Account JSON (paste raw Google Cloud credentials JSON)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={driveConfig.serviceAccountJson || ''}
+                    onChange={(e) => setDriveConfig({ ...driveConfig, serviceAccountJson: e.target.value })}
+                    placeholder={`{\n  "type": "service_account",\n  "client_email": "tutorial-bot@project.iam.gserviceaccount.com",\n  "private_key": "-----BEGIN PRIVATE KEY-----..."\n}`}
+                    className="pro-input w-full rounded-lg p-2 text-[11px] font-mono resize-y leading-relaxed"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[11px] font-mono text-muted mb-1">Google Cloud API Key / Token</label>
+                  <SecretInput
+                    value={driveConfig.apiKey || ''}
+                    onChange={(v) => setDriveConfig({ ...driveConfig, apiKey: v })}
+                    placeholder="AIzaSy..."
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-mono text-muted mb-1">Root Destination Folder ID (optional, defaults to 'root')</label>
+                <input
+                  type="text"
+                  value={driveConfig.rootFolderId || ''}
+                  onChange={(e) => setDriveConfig({ ...driveConfig, rootFolderId: e.target.value })}
+                  placeholder="1aBcDeFgHiJkLmNoPqRsTuVwXyZ"
+                  className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
+                />
               </div>
             </div>
-            <input
-              type="password"
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
-            <p className="text-[10px] text-muted font-mono">
-              Primary high-speed LLM engine for spoken tutorial scripts, metadata generation, and multilingual translations.
-            </p>
-          </div>
 
-          {/* Groq LLaMA 3.3 70B */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-foreground">Groq API Key (LLaMA 3.3 70B Failover)</label>
-              <div className="flex items-center gap-1.5">
-                {testResults.groq && (
-                  <span className={`text-[10px] font-mono font-bold ${testResults.groq.ok ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {testResults.groq.message}
+            {/* Folder & Naming Hierarchy Builder */}
+            <div className="space-y-3 p-3.5 rounded-lg bg-surface-200/50 border border-border">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-foreground">Folder Structure Template</label>
+                  <span className="text-[10px] font-mono text-muted">
+                    Tokens: {'{channel}'}, {'{year}'}, {'{month}'}, {'{topic_slug}'}
                   </span>
-                )}
-                <button
-                  onClick={handleTestGroq}
-                  disabled={testingService === 'groq'}
-                  className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
-                >
-                  {testingService === 'groq' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                  Test Ping
-                </button>
+                </div>
+                <input
+                  type="text"
+                  value={driveConfig.folderStructureTemplate || '{channel}/{year}_{month}/{topic_slug}/'}
+                  onChange={(e) => setDriveConfig({ ...driveConfig, folderStructureTemplate: e.target.value })}
+                  className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
+                />
+                <div className="mt-1 p-2 rounded bg-surface-100 border border-border text-[11px] font-mono text-muted truncate">
+                  Preview: <strong className="text-success">{folderPreview}</strong>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-foreground">File Naming Template</label>
+                  <span className="text-[10px] font-mono text-muted">
+                    Tokens: {'{date}'}, {'{title}'}, {'{lang}'}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={driveConfig.fileNamingTemplate || '{date}_{title}_{lang}.mp4'}
+                  onChange={(e) => setDriveConfig({ ...driveConfig, fileNamingTemplate: e.target.value })}
+                  className="pro-input w-full rounded-lg px-3 py-1.5 text-xs font-mono"
+                />
+                <div className="mt-1 p-2 rounded bg-surface-100 border border-border text-[11px] font-mono text-muted truncate">
+                  Preview: <strong className="text-success">{filePreview}</strong>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={driveConfig.autoUploadOnRender}
+                    onChange={(e) => setDriveConfig({ ...driveConfig, autoUploadOnRender: e.target.checked })}
+                    className="rounded accent-foreground"
+                  />
+                  <span>Automatically dispatch upload when video is rendered / spliced</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={driveConfig.uploadThumbnail}
+                    onChange={(e) => setDriveConfig({ ...driveConfig, uploadThumbnail: e.target.checked })}
+                    className="rounded accent-foreground"
+                  />
+                  <span>Also upload generated Thumbnail PNG alongside video</span>
+                </label>
               </div>
             </div>
-            <input
-              type="password"
-              value={groqKey}
-              onChange={(e) => setGroqKey(e.target.value)}
-              placeholder="gsk_..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
           </div>
-
-          {/* DeepSeek Flash Fallback */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-foreground">DeepSeek Flash API Key (deepseek-chat Fallback)</label>
-              <div className="flex items-center gap-1.5">
-                {testResults.deepseek && (
-                  <span className={`text-[10px] font-mono font-bold ${testResults.deepseek.ok ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {testResults.deepseek.message}
-                  </span>
-                )}
-                <button
-                  onClick={handleTestDeepSeek}
-                  disabled={testingService === 'deepseek'}
-                  className="text-[10px] font-mono text-muted hover:text-foreground underline flex items-center gap-1"
-                >
-                  {testingService === 'deepseek' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                  Test Ping
-                </button>
-              </div>
-            </div>
-            <input
-              type="password"
-              value={deepseekKey}
-              onChange={(e) => setDeepseekKey(e.target.value)}
-              placeholder="sk-..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
-          </div>
-
-          {/* ElevenLabs API Key */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
-            <label className="block text-xs font-bold text-foreground">ElevenLabs API Key (Neural Voice)</label>
-            <input
-              type="password"
-              value={elevenKey}
-              onChange={(e) => setElevenKey(e.target.value)}
-              placeholder="xi-api-key..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
-          </div>
-
-          {/* Fish Audio API Key */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border">
-            <label className="block text-xs font-bold text-foreground">Fish Audio API Key</label>
-            <input
-              type="password"
-              value={fishKey}
-              onChange={(e) => setFishKey(e.target.value)}
-              placeholder="fish-api-key..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
-          </div>
-
-          {/* OpenAI API Key */}
-          <div className="space-y-1.5 p-3 rounded-lg bg-surface-200/50 border border-border md:col-span-2">
-            <label className="block text-xs font-bold text-foreground">OpenAI API Key (TTS &amp; Embeddings)</label>
-            <input
-              type="password"
-              value={openAiKey}
-              onChange={(e) => setOpenAiKey(e.target.value)}
-              placeholder="sk-proj-..."
-              className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-            />
-          </div>
-
         </div>
-      </div>
+      ) : (
+        <LockedNote
+          id="sec-drive"
+          title="Google Drive Cloud Delivery Suite"
+          note="Google Drive credentials are restricted to roles with the API Keys permission (administrators)."
+        />
+      )}
 
-      {/* Backend API Server Health */}
-      <div className="pro-panel p-4 rounded-xl space-y-3">
+      {/* Backend Server Health */}
+      <div id="sec-backend" className="pro-panel p-4 rounded-xl space-y-3 scroll-mt-28">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Server className="w-3.5 h-3.5 text-muted" />
-            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-              Backend Render Pipeline Server
-            </h3>
+            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">Backend Render Pipeline Server</h3>
           </div>
 
           <div className="flex items-center gap-2">
             {testResults.server && (
-              <span className={`text-[10px] font-mono font-bold ${testResults.server.ok ? 'text-emerald-500' : 'text-red-500'}`}>
-                {testResults.server.message}
-              </span>
+              <span className={`text-[10px] font-mono font-bold ${resultCls(testResults.server.ok)}`}>{testResults.server.message}</span>
             )}
             <button
               onClick={handleTestServer}
@@ -914,16 +945,15 @@ export const Settings: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1">
-            Backend API Endpoint URL
-          </label>
+          <label className="block text-xs font-semibold text-foreground mb-1">Backend API Endpoint URL</label>
           <input
             type="text"
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="http://localhost:3001"
+            placeholder={DEFAULT_SERVER_URL}
             className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
           />
+          <p className="text-[10px] text-muted mt-1 font-mono">Saved with "Save Configuration".</p>
         </div>
 
         <div>
@@ -938,249 +968,331 @@ export const Settings: React.FC = () => {
             className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
           />
           <p className="text-[10px] text-muted mt-1 font-mono">
-            Point this at your <strong>own</strong> keyword tool to pull live topics into the
-            "My Keywords" pool. Leave blank to run self-contained on the Starter List + CSV imports.
+            Point this at your <strong>own</strong> keyword tool to pull live topics into the "My Keywords" pool. Leave blank to run
+            self-contained on the Starter List + CSV imports.
           </p>
         </div>
       </div>
 
-      {/* Database Backup, Migration & Factory Reset */}
-      <div className="pro-panel p-4 rounded-xl space-y-3">
-        <div className="flex items-center gap-2">
-          <HardDrive className="w-4 h-4 text-foreground" />
-          <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">
-            Workstation Data Backup &amp; Migration
-          </h3>
+      {/* Backup / Restore / Reset */}
+      {canReset ? (
+        <div id="sec-backup" className="pro-panel p-4 rounded-xl space-y-3 scroll-mt-28">
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-foreground" />
+            <h3 className="text-xs font-bold font-mono text-foreground uppercase tracking-wider">Workstation Data Backup &amp; Migration</h3>
+          </div>
+          <p className="text-xs text-muted">
+            Export the entire workstation database (channels, users, config, targets, presets, finished videos, drive config) to a
+            single JSON file, restore it on another machine, or reset to factory defaults.
+          </p>
+
+          <div className="flex items-center gap-3 flex-wrap pt-1">
+            <button
+              onClick={handleExportBackup}
+              className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export Backup (.json)
+            </button>
+
+            <label className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import &amp; Restore (.json)</span>
+              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+            </label>
+
+            <button
+              onClick={handleResetFactoryData}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-danger hover:bg-danger/10 border border-danger/30 flex items-center gap-1.5 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Reset to Factory Defaults
+            </button>
+          </div>
         </div>
-        <p className="text-xs text-muted">
-          Export your entire workstation database (channels, finished video records, team profiles, drive configs, and active settings) to transfer between machines or backup locally.
-        </p>
-
-        <div className="flex items-center gap-3 flex-wrap pt-1">
-          <button
-            onClick={handleExportBackup}
-            className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export Backup (.json)
-          </button>
-
-          <label className="btn-outline px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
-            <Upload className="w-3.5 h-3.5" />
-            <span>Import &amp; Restore (.json)</span>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImportBackup}
-              className="hidden"
-            />
-          </label>
-
-          <button
-            onClick={handleResetFactoryData}
-            className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 flex items-center gap-1.5 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Reset to Factory Defaults
-          </button>
-        </div>
-      </div>
+      ) : (
+        <LockedNote
+          id="sec-backup"
+          title="Workstation Data Backup & Migration"
+          note="Backup, restore, and factory reset are restricted to roles with the Factory Reset permission (administrators)."
+        />
+      )}
 
       {/* User Account Edit / Create Modal */}
-      {isUserModalOpen && editingUser && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-surface-100 border border-border rounded-xl max-w-md w-full p-5 space-y-4 shadow-elevation animate-fadeIn">
-            <h3 className="text-sm font-bold text-foreground font-display">
-              {users.some(u => u.id === editingUser.id) ? 'Edit Operator Account' : 'Add Operator Account'}
-            </h3>
+      <Modal
+        isOpen={isUserModalOpen && !!editingUser}
+        onClose={() => {
+          setIsUserModalOpen(false);
+          setEditingUser(null);
+        }}
+        title={editingUser && users.some((u) => u.id === editingUser.id) ? 'Edit Operator Account' : 'Add Operator Account'}
+        size="md"
+        footer={
+          <>
+            <button
+              onClick={() => {
+                setIsUserModalOpen(false);
+                setEditingUser(null);
+              }}
+              className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold"
+            >
+              Cancel
+            </button>
+            <button onClick={() => editingUser && handleSaveUser(editingUser)} className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold">
+              Save Account
+            </button>
+          </>
+        }
+      >
+        {editingUser && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Operator Name</label>
+              <input
+                type="text"
+                value={editingUser.name}
+                onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+                placeholder="e.g. Alex (VA)"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs"
+              />
+            </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Operator Name</label>
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Email Address</label>
+              <input
+                type="email"
+                value={editingUser.email}
+                onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                placeholder="e.g. alex@production.team"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Role Permission</label>
+              <select
+                value={editingUser.role}
+                onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value as VAUser['role'] })}
+                className="pro-input w-full rounded-lg px-2.5 py-1.5 text-xs"
+              >
+                <option value="admin">Administrator (Full Access)</option>
+                <option value="manager">Manager (Production Lead)</option>
+                <option value="va">Virtual Assistant (Recording &amp; Conveyor)</option>
+                <option value="viewer">Viewer (Read-only)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Accessible Channels</label>
+              <div className="space-y-1 max-h-32 overflow-y-auto p-2 rounded bg-surface-200 border border-border">
+                {channels.map((ch) => {
+                  const isChecked = editingUser.assignedChannels?.includes(ch.id);
+                  return (
+                    <label key={ch.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const current = editingUser.assignedChannels || [];
+                          const updated = e.target.checked ? [...current, ch.id] : current.filter((id) => id !== ch.id);
+                          setEditingUser({ ...editingUser, assignedChannels: updated });
+                        }}
+                        className="rounded accent-foreground"
+                      />
+                      <span className="text-foreground">{ch.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-foreground">Assigned Softwares (VA Specialization)</label>
+                <span className="text-[10px] font-mono text-muted">Filter keywords by these topics</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 max-h-36 overflow-y-auto p-2 rounded bg-surface-200 border border-border mb-2">
+                {[
+                  'Excel', 'Word', 'PowerPoint', 'Power BI', 'Outlook',
+                  'Notion', 'Figma', 'Canva', 'Photoshop', 'Illustrator',
+                  'Premiere Pro', 'Blender', 'Google Sheets', 'Google Docs',
+                  'Slack', 'Trello', 'Zapier', 'Make'
+                ].map((software) => {
+                  const isChecked = editingUser.assignedSoftwares?.includes(software);
+                  return (
+                    <label key={software} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const current = editingUser.assignedSoftwares || [];
+                          const updated = e.target.checked ? [...current, software] : current.filter((s) => s !== software);
+                          setEditingUser({ ...editingUser, assignedSoftwares: updated });
+                        }}
+                        className="rounded accent-foreground"
+                      />
+                      <span className="text-foreground text-[11px] truncate">{software}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex gap-1.5">
                 <input
                   type="text"
-                  value={editingUser.name}
-                  onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
-                  placeholder="e.g. Alex (VA)"
-                  className="pro-input w-full rounded-lg px-3 py-2 text-xs"
+                  placeholder="Add custom software (e.g. QuickBooks)..."
+                  className="pro-input flex-1 rounded px-2.5 py-1 text-xs"
+                  id="setting_custom_soft_input"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const val = (e.currentTarget.value || '').trim();
+                      if (val && !editingUser.assignedSoftwares?.includes(val)) {
+                        setEditingUser({
+                          ...editingUser,
+                          assignedSoftwares: [...(editingUser.assignedSoftwares || []), val]
+                        });
+                        e.currentTarget.value = '';
+                      }
+                    }
+                  }}
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Email Address</label>
-                <input
-                  type="email"
-                  value={editingUser.email}
-                  onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
-                  placeholder="e.g. alex@production.team"
-                  className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Role Permission</label>
-                <select
-                  value={editingUser.role}
-                  onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value as any })}
-                  className="pro-input w-full rounded-lg px-2.5 py-1.5 text-xs"
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.getElementById('setting_custom_soft_input') as HTMLInputElement;
+                    const val = input?.value.trim();
+                    if (val && !editingUser.assignedSoftwares?.includes(val)) {
+                      setEditingUser({
+                        ...editingUser,
+                        assignedSoftwares: [...(editingUser.assignedSoftwares || []), val]
+                      });
+                      input.value = '';
+                    }
+                  }}
+                  className="btn-outline px-3 py-1 rounded text-xs font-semibold"
                 >
-                  <option value="admin">Administrator (Full Access)</option>
-                  <option value="manager">Manager (Production Lead)</option>
-                  <option value="va">Virtual Assistant (Recording &amp; Conveyor)</option>
-                </select>
+                  Add
+                </button>
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Accessible Channels</label>
-                <div className="space-y-1 max-h-32 overflow-y-auto p-2 rounded bg-surface-200 border border-border">
-                  {channels.map(ch => {
-                    const isChecked = editingUser.assignedChannels?.includes(ch.id);
-                    return (
-                      <label key={ch.id} className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={(e) => {
-                            const current = editingUser.assignedChannels || [];
-                            const updated = e.target.checked
-                              ? [...current, ch.id]
-                              : current.filter(id => id !== ch.id);
-                            setEditingUser({ ...editingUser, assignedChannels: updated });
-                          }}
-                          className="rounded accent-foreground"
-                        />
-                        <span className="text-foreground">{ch.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-              <button
-                onClick={() => {
-                  setIsUserModalOpen(false);
-                  setEditingUser(null);
-                }}
-                className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleSaveUser(editingUser)}
-                className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold"
-              >
-                Save Account
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Channel Edit / Create Modal */}
-      {isChannelModalOpen && editingChannel && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-surface-100 border border-border rounded-xl max-w-lg w-full p-5 space-y-4 shadow-elevation animate-fadeIn">
-            <h3 className="text-sm font-bold text-foreground font-display">
-              {channels.some(c => c.id === editingChannel.id) ? 'Edit Channel Profile' : 'Create New Channel'}
-            </h3>
+      <Modal
+        isOpen={isChannelModalOpen && !!editingChannel}
+        onClose={() => {
+          setIsChannelModalOpen(false);
+          setEditingChannel(null);
+        }}
+        title={editingChannel && channels.some((c) => c.id === editingChannel.id) ? 'Edit Channel Profile' : 'Create New Channel'}
+        size="lg"
+        footer={
+          <>
+            <button
+              onClick={() => {
+                setIsChannelModalOpen(false);
+                setEditingChannel(null);
+              }}
+              className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => editingChannel && handleSaveChannel(editingChannel)}
+              className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold"
+            >
+              Save Channel
+            </button>
+          </>
+        }
+      >
+        {editingChannel && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Channel Name</label>
+              <input
+                type="text"
+                value={editingChannel.name}
+                onChange={(e) => setEditingChannel({ ...editingChannel, name: e.target.value })}
+                placeholder="e.g. Masterclass Tutorials"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs"
+              />
+            </div>
 
-            <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Niche / Topic Focus</label>
+              <input
+                type="text"
+                value={editingChannel.niche}
+                onChange={(e) => setEditingChannel({ ...editingChannel, niche: e.target.value })}
+                placeholder="e.g. Productivity &amp; Notion Workflows"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Channel Description</label>
+              <textarea
+                rows={2}
+                value={editingChannel.description}
+                onChange={(e) => setEditingChannel({ ...editingChannel, description: e.target.value })}
+                placeholder="Describe the style and audience of this channel..."
+                className="pro-input w-full rounded-lg p-2.5 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Channel Name</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">Badge Accent Color</label>
                 <input
-                  type="text"
-                  value={editingChannel.name}
-                  onChange={(e) => setEditingChannel({ ...editingChannel, name: e.target.value })}
-                  placeholder="e.g. Masterclass Tutorials"
-                  className="pro-input w-full rounded-lg px-3 py-2 text-xs"
+                  type="color"
+                  value={editingChannel.badgeColor}
+                  onChange={(e) => setEditingChannel({ ...editingChannel, badgeColor: e.target.value })}
+                  className="w-full h-8 rounded border border-border cursor-pointer bg-surface-200"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Niche / Topic Focus</label>
-                <input
-                  type="text"
-                  value={editingChannel.niche}
-                  onChange={(e) => setEditingChannel({ ...editingChannel, niche: e.target.value })}
-                  placeholder="e.g. Productivity &amp; Notion Workflows"
-                  className="pro-input w-full rounded-lg px-3 py-2 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Channel Description</label>
-                <textarea
-                  rows={2}
-                  value={editingChannel.description}
-                  onChange={(e) => setEditingChannel({ ...editingChannel, description: e.target.value })}
-                  placeholder="Describe the style and audience of this channel..."
-                  className="pro-input w-full rounded-lg p-2.5 text-xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1">Badge Accent Color</label>
-                  <input
-                    type="color"
-                    value={editingChannel.badgeColor}
-                    onChange={(e) => setEditingChannel({ ...editingChannel, badgeColor: e.target.value })}
-                    className="w-full h-8 rounded border border-border cursor-pointer bg-surface-200"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1">Default Neural Voice</label>
-                  <select
-                    value={editingChannel.defaultVoiceId}
-                    onChange={(e) => setEditingChannel({ ...editingChannel, defaultVoiceId: e.target.value })}
-                    className="pro-input w-full rounded-lg px-2.5 py-1.5 text-xs"
-                  >
-                    <option value="fish-paul-neutral">Paul (Neutral Professional)</option>
-                    <option value="fish-adam-punchy">Adam (Punchy / Energetic)</option>
-                    <option value="fish-sarah-calm">Sarah (Calm / Authoritative)</option>
-                    <option value="eleven-rachel">Rachel (ElevenLabs Natural)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">
-                  Custom AI Prompting Rules (Tone &amp; Style)
-                </label>
-                <input
-                  type="text"
-                  value={editingChannel.customPromptRules || ''}
-                  onChange={(e) => setEditingChannel({ ...editingChannel, customPromptRules: e.target.value })}
-                  placeholder="e.g. Fast-paced, zero fluff, concise steps"
-                  className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
-                />
+                <label className="block text-xs font-semibold text-foreground mb-1">Default Neural Voice</label>
+                <select
+                  value={editingChannel.defaultVoiceId}
+                  onChange={(e) => setEditingChannel({ ...editingChannel, defaultVoiceId: e.target.value })}
+                  className="pro-input w-full rounded-lg px-2.5 py-1.5 text-xs"
+                >
+                  <option value="fish-paul-neutral">Paul (Neutral Professional)</option>
+                  <option value="fish-adam-punchy">Adam (Punchy / Energetic)</option>
+                  <option value="fish-sarah-calm">Sarah (Calm / Authoritative)</option>
+                  <option value="eleven-rachel">Rachel (ElevenLabs Natural)</option>
+                </select>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-              <button
-                onClick={() => {
-                  setIsChannelModalOpen(false);
-                  setEditingChannel(null);
-                }}
-                className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleSaveChannel(editingChannel)}
-                className="btn-solid px-4 py-1.5 rounded-lg text-xs font-bold"
-              >
-                Save Channel
-              </button>
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Drive Destination Folder</label>
+              <input
+                type="text"
+                value={editingChannel.driveFolder || ''}
+                onChange={(e) => setEditingChannel({ ...editingChannel, driveFolder: e.target.value })}
+                placeholder="e.g. Tutorials/"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">Custom AI Prompting Rules (Tone &amp; Style)</label>
+              <input
+                type="text"
+                value={editingChannel.customPromptRules || ''}
+                onChange={(e) => setEditingChannel({ ...editingChannel, customPromptRules: e.target.value })}
+                placeholder="e.g. Fast-paced, zero fluff, concise steps"
+                className="pro-input w-full rounded-lg px-3 py-2 text-xs font-mono"
+              />
             </div>
           </div>
-        </div>
-      )}
-
+        )}
+      </Modal>
     </div>
   );
 };

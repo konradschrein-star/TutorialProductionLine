@@ -16,6 +16,8 @@ import { getHubConfig } from "@/lib/config";
 import { ttsVoices, musicLibrary, channels, users } from "@repo/db/schema";
 import { DriveArchiveCard } from "@/components/settings/sections/drive-archive-card";
 import type { PgTable } from "drizzle-orm/pg-core";
+import { SetupReadinessCard } from "@/components/settings/setup-readiness-card";
+import { UploaderSettingsSchema } from "@repo/contracts";
 
 /**
  * Settings — reworked (§3.3). Only three things do something now: Credentials
@@ -100,6 +102,7 @@ export default async function SettingsPage() {
         "notifications",
         row?.notifications ?? null,
       ),
+      uploader: resolveSectionById("uploader", row?.uploader ?? null),
     };
   } catch (error) {
     console.error("[settings] Failed to load settings:", error);
@@ -108,6 +111,7 @@ export default async function SettingsPage() {
     initialData = {
       storage: resolveSectionById("storage", null),
       notifications: resolveSectionById("notifications", null),
+      uploader: resolveSectionById("uploader", null),
     };
   }
 
@@ -165,6 +169,68 @@ export default async function SettingsPage() {
       count: userCount,
       countLabel: "accounts",
       hint: "unavailable",
+    },
+  ];
+
+  const credentialReady = (kind: string) =>
+    credentials.some(
+      (row) => row.kind === kind && row.required && row.source !== "none",
+    );
+  const driveCredentialCount = credentials.filter(
+    (row) =>
+      row.providerKey.startsWith("google_drive") && row.source !== "none",
+  ).length;
+  const uploaderSettings = UploaderSettingsSchema.parse(
+    initialData.uploader ?? {},
+  );
+  const handoffChecks = [
+    {
+      id: "channels",
+      label: "Channels",
+      ready: (channelCount ?? 0) >= 5,
+      detail: `${channelCount ?? 0} configured; 5 required`,
+      href: "/channels",
+    },
+    {
+      id: "accounts",
+      label: "Team access",
+      ready: (userCount ?? 0) >= 2,
+      detail: `${userCount ?? 0} accounts configured`,
+      href: "/team",
+    },
+    {
+      id: "script",
+      label: "Script provider",
+      ready: credentialReady("script"),
+      detail: credentialReady("script")
+        ? "Connected"
+        : "Add a required API key below",
+      href: "#connections",
+    },
+    {
+      id: "tts",
+      label: "Voice provider",
+      ready: credentialReady("tts"),
+      detail: credentialReady("tts")
+        ? "Connected"
+        : "Add a required API key below",
+      href: "#connections",
+    },
+    {
+      id: "drive",
+      label: "Google Drive",
+      ready: driveCredentialCount === 3,
+      detail: `${driveCredentialCount}/3 OAuth values saved`,
+      href: "#connections",
+    },
+    {
+      id: "uploader",
+      label: "Uploader safety",
+      ready: uploaderSettings.executionMode === "dry_run",
+      detail: uploaderSettings.enabled
+        ? uploaderSettings.executionMode
+        : "Disabled (safe)",
+      href: "#uploader",
     },
   ];
 
@@ -264,6 +330,8 @@ export default async function SettingsPage() {
 
       <ConfigMap tiles={tiles} />
 
+      <SetupReadinessCard checks={handoffChecks} />
+
       {/* Appearance */}
       <GlassCard
         style={{
@@ -305,18 +373,20 @@ export default async function SettingsPage() {
         <ThemeSelector currentTheme={currentTheme} />
       </GlassCard>
 
-      <SettingsShell
-        initialData={initialData}
-        credentials={credentials}
-        canEdit={canEdit}
-        canManageCredentials={canManageCredentials}
-        storageStat={storageStat}
-      />
+      <div id="connections">
+        <SettingsShell
+          initialData={initialData}
+          credentials={credentials}
+          canEdit={canEdit}
+          canManageCredentials={canManageCredentials}
+          storageStat={storageStat}
+        />
+      </div>
 
       {/* Google Drive delivery status. Paste the Drive Client ID / Secret /
           Refresh token into Credentials above to connect; this card then shows
           real quota + last-upload truth. */}
-      <GlassCard style={{ padding: 16 }}>
+      <GlassCard style={{ padding: 16, display: "none" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
             className="material-symbols-outlined"

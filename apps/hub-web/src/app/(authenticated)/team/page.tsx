@@ -22,6 +22,13 @@ function getUserInitial(name: string, email: string): string {
   return "?";
 }
 
+function humanOnlineTime(seconds: number): string {
+  const minutes = Math.floor(Math.max(0, seconds) / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 export default async function V2TeamPage() {
   const session = await getSession();
 
@@ -141,14 +148,14 @@ export default async function V2TeamPage() {
           style={{
             display: "grid",
             gridTemplateColumns:
-              "2fr 1fr 80px 80px 80px 80px" + (canEditUsers ? " 100px" : ""),
+              "minmax(220px,2fr) 120px 80px 80px 70px 70px 80px 100px" + (canEditUsers ? " 90px" : ""),
             gap: 0,
             padding: "10px 24px",
             borderBottom: "1px solid rgba(75,68,85,0.2)",
             background: "rgba(19,19,19,0.5)",
           }}
         >
-          {["Member", "Role", "Status", "Done", "Active", "Avg Time"].map(
+          {["Member", "Role", "Account", "Live", "Done", "Active", "Working", "Time online"].map(
             (h) => (
               <span
                 key={h}
@@ -201,8 +208,8 @@ export default async function V2TeamPage() {
               style={{
                 display: "grid",
                 gridTemplateColumns:
-                  "2fr 1fr 80px 80px 80px 80px" +
-                  (canEditUsers ? " 100px" : ""),
+                  "minmax(220px,2fr) 120px 80px 80px 70px 70px 80px 100px" +
+                  (canEditUsers ? " 90px" : ""),
                 gap: 0,
                 padding: "14px 24px",
                 alignItems: "center",
@@ -286,6 +293,14 @@ export default async function V2TeamPage() {
                 </span>
               </div>
 
+              {/* Live presence is separate from whether the account is enabled. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: user.is_online ? "#4ade80" : "#4b4455", boxShadow: user.is_online ? "0 0 7px rgba(74,222,128,.65)" : "none" }} />
+                <span style={{ fontSize: 10, color: user.is_online ? "#4ade80" : "rgba(205,195,215,.45)" }}>
+                  {user.is_online ? "Online" : "Offline"}
+                </span>
+              </div>
+
               {/* Completed */}
               <span style={{ fontSize: 12, color: "#e5e2e1", fontWeight: 600 }}>
                 {user.jobs_completed}
@@ -296,11 +311,13 @@ export default async function V2TeamPage() {
                 {user.jobs_in_progress}
               </span>
 
-              {/* Avg Time */}
+              <span style={{ fontSize: 12, color: user.jobs_working_now > 0 ? "#facc15" : "rgba(205,195,215,.55)", fontWeight: 700 }}>
+                {user.jobs_working_now}
+              </span>
+
+              {/* Accumulated foreground session time */}
               <span style={{ fontSize: 12, color: "rgba(205,195,215,0.6)" }}>
-                {user.avg_time_per_job_hours != null
-                  ? `${user.avg_time_per_job_hours.toFixed(1)}h`
-                  : "—"}
+                {humanOnlineTime(user.online_seconds_total)}
               </span>
 
               {/* Actions */}

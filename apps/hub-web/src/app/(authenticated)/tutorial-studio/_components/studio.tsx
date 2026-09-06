@@ -128,16 +128,23 @@ function isTranslationChild(j: TutorialJob): boolean {
 }
 
 
-/** Terminal statuses — a finished (or dead) job the VA no longer needs to act
- * on. Mirrors page-client.tsx's TERMINAL set. Hidden from the worklist by
- * default so completed/failed work doesn't clutter the VA's active queue. */
-const TERMINAL_STATUSES = new Set([
-  "COMPLETED",
+/** Successfully-finished / intentionally-stopped jobs. These are safe to hide
+ * from the active worklist by default (behind the "show completed" toggle) —
+ * the work is done and needs no action. */
+const DONE_STATUSES = new Set(["COMPLETED", "CANCELLED"]);
+
+/** FAILED jobs need the VA's attention (retry), so they must NEVER be silently
+ * hidden. A failed splice used to be lumped in with completed work and dropped
+ * out of the worklist with no error — the video just "disappeared". These now
+ * always stay visible, flagged red, until the VA retries or deletes them. */
+const FAILED_STATUSES = new Set([
   "FAILED_SCRIPT",
   "FAILED_AUDIO",
   "FAILED_SPLICE",
-  "CANCELLED",
 ]);
+
+/** Terminal = done OR failed. Used only for the "hidden count" affordance. */
+const TERMINAL_STATUSES = new Set([...DONE_STATUSES, ...FAILED_STATUSES]);
 
 /** Which pipeline stage a retry re-runs. */
 type RetryTarget = "script" | "audio" | "splice";
@@ -717,7 +724,7 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
               ? "Regenerate"
               : "Generate"}
         </V2Button>
-        <a href="/thumbnails" style={{ textDecoration: "none" }}>
+        <a href={`/thumbnails?jobId=${jobId}`} style={{ textDecoration: "none" }}>
           <V2Button variant="ghost" size="md">
             <span
               className="material-symbols-outlined"
@@ -752,13 +759,15 @@ export function ProductionStudio({
   const topLevelJobs = jobs.filter(
     (j) => !isSegmentChild(j) && !isTranslationChild(j),
   );
+  // Only DONE (completed/cancelled) work is hideable behind the toggle. FAILED
+  // jobs always stay in the list so a failure can never silently vanish.
   const hiddenCompletedCount = topLevelJobs.filter((j) =>
-
-    TERMINAL_STATUSES.has(j.status),
+    DONE_STATUSES.has(j.status),
   ).length;
+  const failedJobs = topLevelJobs.filter((j) => FAILED_STATUSES.has(j.status));
   const readyJobs = showCompleted
     ? topLevelJobs
-    : topLevelJobs.filter((j) => !TERMINAL_STATUSES.has(j.status));
+    : topLevelJobs.filter((j) => !DONE_STATUSES.has(j.status));
 
   const router = useRouter();
   const [selected, setSelected] = useState<TutorialJob | null>(null);
@@ -1331,7 +1340,7 @@ export function ProductionStudio({
               title={
                 showCompleted
                   ? "Hide finished jobs"
-                  : "Show finished (completed/failed/cancelled) jobs"
+                  : "Show finished (completed/cancelled) jobs"
               }
               style={{
                 display: "inline-flex",
@@ -1364,6 +1373,36 @@ export function ProductionStudio({
             </button>
           )}
         </div>
+
+        {failedJobs.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              marginBottom: 12,
+              borderRadius: 8,
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.4)",
+            }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 16, color: "#ef4444" }}
+            >
+              error
+            </span>
+            <span
+              style={{ fontSize: 12, color: "var(--v2-text-1)", fontWeight: 600 }}
+            >
+              {failedJobs.length}{" "}
+              {failedJobs.length === 1 ? "video" : "videos"} failed to
+              process — open {failedJobs.length === 1 ? "it" : "them"} below to
+              see why and retry. Nothing was silently lost.
+            </span>
+          </div>
+        )}
 
         {readyJobs.length === 0 ? (
           <div

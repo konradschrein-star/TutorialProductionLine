@@ -147,6 +147,7 @@ export {
   DEFAULT_MAX_UPLOAD_BYTES,
   AlertsSettingsSchema,
   NotificationsSettingsSchema,
+  UploaderSettingsSchema,
   SETTINGS_SECTION_IDS,
   SETTINGS_SECTIONS,
   getSchemaForSection,
@@ -155,6 +156,7 @@ export type {
   StorageSettings,
   AlertsSettings,
   NotificationsSettings,
+  UploaderSettings,
   SettingsSectionId,
 } from "./schemas/system-settings.js";
 

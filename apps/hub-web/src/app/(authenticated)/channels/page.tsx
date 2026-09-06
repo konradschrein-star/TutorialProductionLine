@@ -67,14 +67,13 @@ export default async function V2ChannelsPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: `2fr 2fr 80px${canManage ? " 120px" : ""}`,
+            gridTemplateColumns: `minmax(170px,2fr) minmax(180px,1.5fr) 70px 90px 90px 90px minmax(170px,1fr)`,
             padding: "10px 24px",
             background: "#131313",
             borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.10)",
           }}
         >
-          {["Channel", "YouTube ID", "Jobs", canManage ? "Actions" : null]
-            .filter(Boolean)
+          {["Channel", "YouTube ID", "Jobs", "Scheduled", "Uploaded", "Verified", "Actions"]
             .map((h) => (
               <span
                 key={h as string}
@@ -123,7 +122,7 @@ export default async function V2ChannelsPage() {
               key={channel.id}
               style={{
                 display: "grid",
-                gridTemplateColumns: `2fr 2fr 80px${canManage ? " 120px" : ""}`,
+                gridTemplateColumns: `minmax(170px,2fr) minmax(180px,1.5fr) 70px 90px 90px 90px minmax(170px,1fr)`,
                 padding: "14px 24px",
                 alignItems: "center",
                 borderBottom:
@@ -160,9 +159,34 @@ export default async function V2ChannelsPage() {
                 {channel.job_count}
               </span>
 
+              <span style={{ fontSize: 12, color: "#facc15", fontWeight: 700 }}>
+                {channel.scheduled_count}
+              </span>
+              <span style={{ fontSize: 12, color: "#e5e2e1", fontWeight: 700 }}>
+                {channel.uploaded_count}
+              </span>
+              <span
+                title={channel.uploaded_count !== channel.verified_upload_count ? "Internal uploaded count differs from verified YouTube receipts" : "Counts match"}
+                style={{
+                  fontSize: 12,
+                  color: channel.uploaded_count !== channel.verified_upload_count ? "#f87171" : "#4ade80",
+                  fontWeight: 800,
+                }}
+              >
+                {channel.verified_upload_count}
+                {channel.uploaded_count !== channel.verified_upload_count ? " ⚠" : " ✓"}
+              </span>
+
               {/* Actions */}
-              {canManage && (
-                <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {!channel.youtube_channel_id.startsWith("pending-") && (
+                  <>
+                    <a href={`https://www.youtube.com/channel/${channel.youtube_channel_id}`} target="_blank" rel="noreferrer" className="v2-btn-outline" style={{ padding: "4px 8px", textDecoration: "none" }}>Channel ↗</a>
+                    <a href={`https://studio.youtube.com/channel/${channel.youtube_channel_id}`} target="_blank" rel="noreferrer" className="v2-btn-outline" style={{ padding: "4px 8px", textDecoration: "none" }}>Studio ↗</a>
+                  </>
+                )}
+                {canManage && (
+                  <>
                   <Link
                     href={`/channels/${channel.id}`}
                     className="v2-btn-outline"
@@ -186,8 +210,9 @@ export default async function V2ChannelsPage() {
                     channelName={channel.name}
                     jobCount={channel.job_count}
                   />
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           ))
         )}

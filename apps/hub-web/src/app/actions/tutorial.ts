@@ -124,6 +124,9 @@ const UpdateSettingsSchema = z.object({
   default_playback_speed: z.number().min(0.5).max(2.5).optional(),
   record_hotkey: z.string().min(1).optional(),
   retention_hours: z.number().int().min(1).max(720).optional(),
+  thumbnail_generation_mode: z.enum(["ai", "manual"]).optional(),
+  thumbnail_background_rotation: z.array(z.string().max(120)).max(50).optional(),
+  thumbnail_persona_rotation: z.record(z.string(), z.array(z.string().max(300)).max(30)).optional(),
   default_voice_settings: VoiceSettingsSchema.optional(),
 });
 

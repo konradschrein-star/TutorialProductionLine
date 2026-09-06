@@ -110,29 +110,41 @@ export class GoogleDriveService {
 
     await new Promise(r => setTimeout(r, 300));
 
+    // Client-side validation fallback (no backend reachable). This validates the
+    // CONFIGURATION honestly — it does NOT perform a live Google handshake, and
+    // it does not report success when credentials are missing.
+    const note = ' (config check only — live upload needs the backend Drive service running)';
+
     if (config.connectionMode === 'service_account') {
       if (!config.serviceAccountJson || config.serviceAccountJson.trim() === '') {
-        return { ok: true, message: 'Google Cloud Service Account Active (Simulated Pipeline)', latencyMs: Date.now() - start };
+        return { ok: false, message: 'No service account JSON provided. Paste your Google Cloud service account key.', latencyMs: Date.now() - start };
       }
       try {
         const parsed = JSON.parse(config.serviceAccountJson);
         if (parsed.client_email && (parsed.private_key || parsed.private_key_id)) {
-          return { ok: true, message: `Connected as ${parsed.client_email}`, latencyMs: Date.now() - start };
+          return { ok: true, message: `Service account looks valid: ${parsed.client_email}${note}`, latencyMs: Date.now() - start };
         }
-        return { ok: false, message: 'Invalid Service Account JSON (Missing client_email or private_key)', latencyMs: Date.now() - start };
+        return { ok: false, message: 'Invalid service account JSON (missing client_email or private_key).', latencyMs: Date.now() - start };
       } catch (e: any) {
-        return { ok: false, message: 'Invalid JSON Syntax: ' + e.message, latencyMs: Date.now() - start };
+        return { ok: false, message: 'Invalid JSON syntax: ' + e.message, latencyMs: Date.now() - start };
       }
     }
 
-    if (config.connectionMode === 'api_key' || config.connectionMode === 'oauth') {
+    if (config.connectionMode === 'api_key') {
       if (config.apiKey && config.apiKey.length > 5) {
-        return { ok: true, message: 'Google Drive API Key Authorized', latencyMs: Date.now() - start };
+        return { ok: true, message: `API key present${note}`, latencyMs: Date.now() - start };
       }
-      return { ok: true, message: 'Google Drive OAuth Ready', latencyMs: Date.now() - start };
+      return { ok: false, message: 'No Google Drive API key provided.', latencyMs: Date.now() - start };
     }
 
-    return { ok: true, message: 'Google Drive Storage Ready', latencyMs: Date.now() - start };
+    if (config.connectionMode === 'oauth') {
+      if (config.clientId && config.clientSecret) {
+        return { ok: true, message: `OAuth client configured${note}`, latencyMs: Date.now() - start };
+      }
+      return { ok: false, message: 'OAuth not configured. Provide a client ID and secret.', latencyMs: Date.now() - start };
+    }
+
+    return { ok: false, message: 'Select a connection mode and provide credentials.', latencyMs: Date.now() - start };
   }
 
   /**
@@ -149,9 +161,12 @@ export class GoogleDriveService {
     const drivePath = this.resolveFolderPath(params);
     const fileName = this.resolveFileName({ ...params, extension: 'mp4' });
 
-    let viewUrl = `https://drive.google.com/drive/folders/auto_${encodeURIComponent(params.channelName || 'tutorials')}`;
+    // Only claim a real Google Drive upload when a backend actually confirms one.
+    // Without a reachable backend we record the delivery as PENDING (status
+    // 'DELIVERING') with NO fabricated view URL — never a fake "in Drive" + dead link.
+    let viewUrl: string | undefined;
+    let confirmed = false;
 
-    // Try backend upload endpoint if reachable
     try {
       const res = await fetch('/api/drive/upload', {
         method: 'POST',
@@ -165,10 +180,13 @@ export class GoogleDriveService {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.viewUrl) viewUrl = data.viewUrl;
+        if (data && data.viewUrl && data.confirmed !== false) {
+          viewUrl = data.viewUrl;
+          confirmed = true;
+        }
       }
     } catch {
-      // Local fallback
+      // No backend reachable — remains pending.
     }
 
     const deliveryItem: DriveDeliveryItem = {
@@ -178,9 +196,9 @@ export class GoogleDriveService {
       channel: params.channelName || 'General',
       fileName,
       drivePath,
-      fileSize: params.fileSize || 42 * 1024 * 1024,
+      fileSize: params.fileSize || 0,
       uploadedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      status: 'IN_GOOGLE_DRIVE',
+      status: confirmed ? 'IN_GOOGLE_DRIVE' : 'DELIVERING',
       viewUrl
     };
 

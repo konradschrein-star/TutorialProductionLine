@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { storageArtifacts, type DrizzleClient } from "@repo/db";
 import { ArtifactStore } from "./artifact-store.js";
-import { loadStorageConfig } from "./config.js";
+import { loadStorageConfigFromDatabase } from "./runtime-config.js";
 import { getUsageBytes } from "./daily-budget.js";
 
 /**
@@ -124,7 +124,7 @@ async function lastError(db: DrizzleClient): Promise<DriveHealth["lastError"]> {
  * load. Reports config/enabled state and the artefact ledger.
  */
 export async function getDriveHealth(db: DrizzleClient): Promise<DriveHealth> {
-  const config = loadStorageConfig();
+  const config = await loadStorageConfigFromDatabase(db);
   const now = new Date().toISOString();
 
   const [byState, lastUpload, err, usedBytes] = await Promise.all([
@@ -138,7 +138,7 @@ export async function getDriveHealth(db: DrizzleClient): Promise<DriveHealth> {
     ? config.drive.dailyByteBudget
     : 500 * 1024 * 1024 * 1024;
 
-  const switchedOn = process.env["STORAGE_DRIVE_ENABLED"] === "true";
+  const switchedOn = config.enabled || !config.reason.includes("not 'true'");
   const neverUploaded = lastUpload === null;
   const status: DriveStatus = !switchedOn
     ? "off"
@@ -179,7 +179,7 @@ export async function probeDriveHealth(
   const base = await getDriveHealth(db);
   if (!base.enabled) return base;
 
-  const created = ArtifactStore.create(db);
+  const created = await ArtifactStore.createFromDatabase(db);
   if (!created.ok) {
     return {
       ...base,

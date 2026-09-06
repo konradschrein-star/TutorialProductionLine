@@ -21,6 +21,7 @@ import {
 
 const TEXT_1 = "#e5e2e1";
 const TEXT_2 = "#cdc3d7";
+const PAGE_SIZE = 36;
 
 interface Props {
   channels: ChannelOption[];
@@ -44,27 +45,30 @@ export function LibraryPanel({ channels, archetypes }: Props) {
     [channels],
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (append = false) => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(
-        `/api/thumbnails/library?scope=${encodeURIComponent(scope)}&limit=120`,
+        `/api/thumbnails/library?scope=${encodeURIComponent(scope)}&limit=${PAGE_SIZE}&offset=${append ? rows.length : 0}`,
       );
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const json = await res.json();
-      setRows(json.thumbnails ?? []);
+      setRows((previous) => append ? [...previous, ...(json.thumbnails ?? [])] : (json.thumbnails ?? []));
       setTotal(json.total ?? 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load library");
     } finally {
       setLoading(false);
     }
-  }, [scope]);
+  }, [scope, rows.length]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(false);
+    // Loading is intentionally keyed only to scope. Depending on `load` here
+    // would re-fetch after every appended page because its offset changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   const visible = rows.filter((r) => status === "all" || r.status === status);
   const failedCount = rows.filter((r) => r.status === "failed").length;
@@ -93,6 +97,8 @@ export function LibraryPanel({ channels, archetypes }: Props) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <GlassCard
         style={{
+          position: "relative",
+          zIndex: 20,
           padding: 12,
           display: "grid",
           gridTemplateColumns:
@@ -132,7 +138,7 @@ export function LibraryPanel({ channels, archetypes }: Props) {
         </div>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => void load(false)}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -352,6 +358,15 @@ export function LibraryPanel({ channels, archetypes }: Props) {
           </GlassCard>
         ))}
       </div>
+      {!loading && rows.length < total && (
+        <button
+          type="button"
+          onClick={() => void load(true)}
+          style={{ alignSelf: "center", padding: "9px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,.14)", background: "rgba(255,255,255,.05)", color: TEXT_1, fontWeight: 700, cursor: "pointer" }}
+        >
+          Load {Math.min(PAGE_SIZE, total - rows.length)} more
+        </button>
+      )}
     </div>
   );
 }

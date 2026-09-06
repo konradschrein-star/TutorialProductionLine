@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db } from "@/lib/db";
+import { db, storageArtifacts } from "@/lib/db";
+import { and, eq } from "drizzle-orm";
 import { selectThumbnail, getThumbnailById } from "@repo/db";
 
 /**
@@ -57,5 +58,14 @@ export async function POST(req: NextRequest) {
   }
 
   const thumbnail = await selectThumbnail(db, parsed.data.thumbnailId);
+  if (existing.subject_kind === "tutorial_job") {
+    await db.update(storageArtifacts).set({
+      state: "pending",
+      vps_path: existing.output_path,
+      error_kind: "thumbnail_replaced",
+      error_message: "Selected thumbnail changed; replace Drive copy",
+      updated_at: new Date(),
+    }).where(and(eq(storageArtifacts.job_id, existing.subject_id), eq(storageArtifacts.kind, "thumbnail")));
+  }
   return NextResponse.json({ thumbnail });
 }

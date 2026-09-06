@@ -3,15 +3,16 @@ import {
   StorageSettingsSchema,
   AlertsSettingsSchema,
   NotificationsSettingsSchema,
+  UploaderSettingsSchema,
   SETTINGS_SECTION_IDS,
   getSchemaForSection,
   DEFAULT_MAX_UPLOAD_BYTES,
 } from "../../schemas/system-settings.js";
 
 describe("system-settings (reworked §3.3)", () => {
-  it("only Storage + Alerts sections survive", () => {
+  it("exposes the three operator-configurable sections", () => {
     expect([...SETTINGS_SECTION_IDS].sort()).toEqual(
-      ["notifications", "storage"].sort(),
+      ["notifications", "storage", "uploader"].sort(),
     );
   });
 
@@ -20,6 +21,7 @@ describe("system-settings (reworked §3.3)", () => {
     expect(s.maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
     expect(s.maxUploadBytes).toBe(53_687_091_200);
     expect(s.retentionDays).toBe(90);
+    expect(s.driveEnabled).toBe(false);
   });
 
   it("Storage rejects a zero/negative upload size", () => {
@@ -39,8 +41,17 @@ describe("system-settings (reworked §3.3)", () => {
     expect(NotificationsSettingsSchema).toBe(AlertsSettingsSchema);
   });
 
-  it("getSchemaForSection resolves both surviving ids", () => {
+  it("Uploader defaults to a non-executing safe state", () => {
+    const uploader = UploaderSettingsSchema.parse({});
+    expect(uploader.enabled).toBe(false);
+    expect(uploader.executionMode).toBe("dry_run");
+    expect(uploader.requireManualRelease).toBe(true);
+    expect(uploader.maxConcurrentUploads).toBe(1);
+  });
+
+  it("getSchemaForSection resolves every operator section", () => {
     expect(getSchemaForSection("storage")).toBe(StorageSettingsSchema);
     expect(getSchemaForSection("notifications")).toBe(AlertsSettingsSchema);
+    expect(getSchemaForSection("uploader")).toBe(UploaderSettingsSchema);
   });
 });

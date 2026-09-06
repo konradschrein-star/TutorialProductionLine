@@ -7,13 +7,32 @@ describe('MetricsService Unit Tests', () => {
     localStorage.clear();
   });
 
-  it('should compute production metrics and velocity metrics', () => {
+  it('should honestly report zero on an empty store', () => {
+    // No fabricated demo data — a fresh store produces true zeros.
+    const empty = MetricsService.getMetrics();
+    expect(empty.totalProduced).toBe(0);
+    expect(empty.totalDurationMinutes).toBe(0);
+    expect(empty.dailyVelocity.length).toBe(7);
+    expect(empty.dailyVelocity[0]).toHaveProperty('date');
+    expect(empty.dailyVelocity[0]).toHaveProperty('count');
+  });
+
+  it('should compute production metrics from real records', () => {
+    StorageService.addFinishedVideo({
+      id: 'metric_seed_1',
+      title: 'Seed Video',
+      channel: 'Entrepreneurs Skool',
+      status: 'Uploaded to Drive',
+      thumbnailUrl: '/test.png',
+      duration: '4:12',
+      script: 'Seed script',
+      tags: ['seed'],
+      createdAt: new Date().toISOString()
+    });
     const metrics = MetricsService.getMetrics();
     expect(metrics.totalProduced).toBeGreaterThan(0);
     expect(metrics.totalDurationMinutes).toBeGreaterThan(0);
     expect(metrics.dailyVelocity.length).toBe(7);
-    expect(metrics.dailyVelocity[0]).toHaveProperty('date');
-    expect(metrics.dailyVelocity[0]).toHaveProperty('count');
   });
 
   it('should reflect new finished video additions in metrics and calculate VA productivity', () => {

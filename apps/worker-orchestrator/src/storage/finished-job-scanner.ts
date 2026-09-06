@@ -10,7 +10,13 @@ import {
   type SQL,
 } from "drizzle-orm";
 import type { DrizzleClient } from "@repo/db";
-import { contentJobs, channels, thumbnails, storageArtifacts } from "@repo/db";
+import {
+  contentJobs,
+  channels,
+  thumbnails,
+  storageArtifacts,
+  systemSettings,
+} from "@repo/db";
 import {
   ArtifactStore,
   collectFinishedJobArtifacts,
@@ -96,6 +102,43 @@ export function scannerOptionsFromEnv(): ScannerOptions {
     maxAttemptsPerArtifact: num(
       "STORAGE_MAX_ATTEMPTS_PER_ARTIFACT",
       DEFAULT_SCANNER_OPTIONS.maxAttemptsPerArtifact,
+    ),
+  };
+}
+
+/** Overlay the Settings-page Drive scanner controls onto bootstrap env values. */
+export async function scannerOptionsFromDatabase(
+  db: DrizzleClient,
+): Promise<ScannerOptions> {
+  const base = scannerOptionsFromEnv();
+  let row: { storage: unknown } | undefined;
+  try {
+    [row] = await db
+      .select({ storage: systemSettings.storage })
+      .from(systemSettings)
+      .where(eq(systemSettings.id, "singleton"))
+      .limit(1);
+  } catch {
+    return base;
+  }
+  const s = (
+    row?.storage && typeof row.storage === "object" ? row.storage : {}
+  ) as Record<string, unknown>;
+  const num = (key: string, fallback: number): number => {
+    const value = s[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : fallback;
+  };
+  return {
+    ...base,
+    intervalMs:
+      num("driveScanIntervalMinutes", base.intervalMs / 60_000) * 60_000,
+    batchSize: num("driveBatchSize", base.batchSize),
+    lookbackDays: num("driveLookbackDays", base.lookbackDays),
+    maxAttemptsPerArtifact: num(
+      "driveMaxAttempts",
+      base.maxAttemptsPerArtifact,
     ),
   };
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useRegisterKeybind } from "../_lib/keybinds";
 import { logoutAction } from "@/app/actions/auth";
 import type { JWTPayload } from "@/lib/auth/jwt";
@@ -51,7 +51,7 @@ const NAV_SECTIONS: NavSection[] = [
       // logic below (pathname carries no query), so it will not steal the
       // Tutorial Studio item's highlight.
       { href: "/tutorial-studio?tab=keywords", label: "Keywords", icon: "search" },
-      { href: "/thumbnails", label: "Thumbnails", icon: "image" },
+      { href: "/thumbnails", label: "Thumbnail Studio", icon: "image" },
       { href: "/channels", label: "Channels", icon: "subscriptions" },
     ],
   },
@@ -76,10 +76,8 @@ interface Props {
 export function AppSidebar({ session }: Props) {
   const pathname = usePathname();
   const router = useRouter();
-
-  const currentTab = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("tab")
-    : null;
+  const searchParams = useSearchParams();
+  const currentTab = searchParams.get("tab");
 
   useRegisterKeybind(
     { key: "g+d", description: "Go to Dashboard", category: "Navigation" },

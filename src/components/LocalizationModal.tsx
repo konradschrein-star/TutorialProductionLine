@@ -15,6 +15,7 @@ import { AIService } from '../services/aiService';
 import { TTSService } from '../services/ttsService';
 import { StorageService } from '../services/storageService';
 import { GoogleDriveService } from '../services/googleDriveService';
+import { useToast } from './ui/Feedback';
 
 interface LocalizationModalProps {
   isOpen: boolean;
@@ -59,12 +60,13 @@ export const LocalizationModal: React.FC<LocalizationModalProps> = ({
   const [progress, setProgress] = useState<number>(0);
   const [results, setResults] = useState<LocalizedResult[]>([]);
   const [copiedLang, setCopiedLang] = useState<string | null>(null);
+  const toast = useToast();
 
   if (!isOpen) return null;
 
   const handleStartLocalization = async () => {
     if (selectedLangs.length === 0) {
-      alert('Please select at least one language.');
+      toast('Please select at least one language.', 'warning');
       return;
     }
 
@@ -113,7 +115,7 @@ export const LocalizationModal: React.FC<LocalizationModalProps> = ({
 
       setResults(newResults);
     } catch (e: any) {
-      alert('Localization error: ' + e.message);
+      toast('Localization error: ' + e.message, 'error');
     } finally {
       setIsTranslating(false);
     }

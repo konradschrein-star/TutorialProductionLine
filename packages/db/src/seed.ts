@@ -70,6 +70,30 @@ async function seed() {
       password: "admin123",
     },
     {
+      email: "omar@tutorialstudio.com",
+      name: "Omar",
+      role: "ADMIN" as const,
+      password: "admin123",
+    },
+    {
+      email: "jeen@tutorialstudio.com",
+      name: "Jeen",
+      role: "ADMIN" as const,
+      password: "admin123",
+    },
+    {
+      email: "nalu@tutorialstudio.com",
+      name: "Nalu",
+      role: "TUTORIAL_VA" as const,
+      password: "va1234",
+    },
+    {
+      email: "lorraine@tutorialstudio.com",
+      name: "Lorraine",
+      role: "TUTORIAL_VA" as const,
+      password: "va1234",
+    },
+    {
       email: "manager@content-forge.com",
       name: "Manager User",
       role: "MANAGER" as const,
@@ -128,6 +152,10 @@ async function seed() {
     { email: "va3@yt.com", name: "VA 3", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
     { email: "va4@yt.com", name: "VA 4", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
     { email: "va5@yt.com", name: "VA 5", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
+    { email: "omar@tutorialstudio.com",     name: "Omar",     role: "ADMIN" as const, password: "admin123" },
+    { email: "jeen@tutorialstudio.com",     name: "Jeen",     role: "ADMIN" as const, password: "admin123" },
+    { email: "nalu@tutorialstudio.com",     name: "Nalu",     role: "TUTORIAL_VA" as const, password: "TutorialVA1_2026!" },
+    { email: "lorraine@tutorialstudio.com", name: "Lorraine", role: "TUTORIAL_VA" as const, password: "TutorialVA2_2026!" },
   ];
   for (const u of prodAccounts) {
     const passwordHash = await bcrypt.hash(u.password, 10);

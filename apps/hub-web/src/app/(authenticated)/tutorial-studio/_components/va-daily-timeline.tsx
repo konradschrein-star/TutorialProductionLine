@@ -85,6 +85,16 @@ interface VaSummary {
   days: DaySummary[];
 }
 
+/** Short badge for a VA avatar: initials of a real name ("Nalu" → "NA",
+ * "Anna Lee" → "AL"), or a "VA 1"-style label collapsed to "VA1". */
+function vaInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.replace(/\s+/g, "").slice(0, 2).toUpperCase();
+}
+
 const pad = (n: number) => String(n).padStart(2, "0");
 const localHour = (d: Date) => d.getHours() + d.getMinutes() / 60;
 const localTime = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -128,28 +138,30 @@ export function VaDailyTimeline() {
 
   const todayKey = useMemo(() => dayKey(new Date()), []);
 
-  // Process data and ensure VA 1 and VA 2 always exist
+  // The real, active VA accounts (from the DB via getKnownVAs), by name — e.g.
+  // "Nalu", "Lorraine". These are the operators we always show a card for and
+  // that the "All VAs" filter and per-VA buttons are built from.
+  const knownVaNames = useMemo(
+    () => (data?.vas ?? []).map((v) => v.name),
+    [data],
+  );
+
+  // Process data — one card per known VA (always rendered), plus any other
+  // non-admin producer that shows up in the job data.
   const vaSummaries = useMemo<VaSummary[]>(() => {
     const map = new Map<string, { role: string; email: string; jobs: TimelineJob[] }>();
 
-    // Seed default expected VAs so both always render
-    map.set("VA 1", { role: "PRODUCTION_VA", email: "va1@tutorialstudio.app", jobs: [] });
-    map.set("VA 2", { role: "PRODUCTION_VA", email: "va2@tutorialstudio.app", jobs: [] });
-
-    // Add any other known VAs from API
+    // Seed every known active VA so their card always renders, even at 0 videos.
     for (const v of data?.vas ?? []) {
-      const canonical = v.name === "Virtual Assistant 1" ? "VA 1" : v.name === "Virtual Assistant 2" ? "VA 2" : v.name;
-      if (!map.has(canonical)) {
-        map.set(canonical, { role: v.role, email: v.email, jobs: [] });
+      if (!map.has(v.name)) {
+        map.set(v.name, { role: v.role, email: v.email, jobs: [] });
       }
     }
 
-    // Distribute jobs
+    // Distribute jobs by their real producer name (admins are already excluded
+    // server-side, and every account is now a single canonical identity).
     for (const job of data?.jobs ?? []) {
-      let vaName = job.va ?? "Unknown VA";
-      if (vaName === "Virtual Assistant 1") vaName = "VA 1";
-      if (vaName === "Virtual Assistant 2") vaName = "VA 2";
-
+      const vaName = job.va ?? "Unknown VA";
       if (!map.has(vaName)) {
         map.set(vaName, { role: "USER", email: "", jobs: [] });
       }
@@ -160,14 +172,14 @@ export function VaDailyTimeline() {
 
     map.forEach((val, name) => {
       const dayMap = new Map<string, Ev[]>();
-      let latestTimestamp: Date | null = null;
+      let latestMs = 0;
 
       for (const job of val.jobs) {
         const push = (iso: string | null, type: EventType) => {
           if (!iso) return;
           const d = new Date(iso);
           if (Number.isNaN(d.getTime())) return;
-          if (!latestTimestamp || d > latestTimestamp) latestTimestamp = d;
+          if (d.getTime() > latestMs) latestMs = d.getTime();
 
           const key = dayKey(d);
           const list = dayMap.get(key) ?? [];
@@ -180,9 +192,13 @@ export function VaDailyTimeline() {
           });
           dayMap.set(key, list);
         };
+        // Only the VA's hands-on actions count toward the shift window and
+        // hourly rate: creating/rendering the job and uploading the recording.
+        // "completed" (splice/stitch) is the automated stitcher — the VA spends
+        // no time on it — so it is NOT plotted as VA activity (it used to
+        // inflate the shift window and active hours).
         push(job.createdAt, "created");
         push(job.recordedAt, "recorded");
-        push(job.completedAt, "completed");
       }
 
       // Build sorted days
@@ -273,9 +289,10 @@ export function VaDailyTimeline() {
       const todayEnd = todaySummary && todaySummary.endHour != null ? fmtH(todaySummary.endHour) : null;
       const todayAvgSpeedMin = todaySummary ? todaySummary.avgMinPerVideo : 0;
 
-      const lastActiveMinutesAgo = latestTimestamp
-        ? Math.max(0, Math.round((Date.now() - latestTimestamp.getTime()) / 60000))
-        : null;
+      const lastActiveMinutesAgo =
+        latestMs > 0
+          ? Math.max(0, Math.round((Date.now() - latestMs) / 60000))
+          : null;
 
       summaries.push({
         name,
@@ -296,20 +313,23 @@ export function VaDailyTimeline() {
       });
     });
 
-    // Sort: VAs first (VA 1, VA 2), then others
+    // Sort: known VAs first (in getKnownVAs order), then any other producer by
+    // volume.
+    const rank = (n: string) => {
+      const i = knownVaNames.indexOf(n);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
     return summaries.sort((a, b) => {
-      const aIsVa = a.name.startsWith("VA ");
-      const bIsVa = b.name.startsWith("VA ");
-      if (aIsVa && !bIsVa) return -1;
-      if (!aIsVa && bIsVa) return 1;
-      if (aIsVa && bIsVa) return a.name.localeCompare(b.name);
+      const ra = rank(a.name);
+      const rb = rank(b.name);
+      if (ra !== rb) return ra - rb;
       return b.totalVideos - a.totalVideos;
     });
-  }, [data, todayKey]);
+  }, [data, todayKey, knownVaNames]);
 
   const displayedSummaries = useMemo(() => {
     if (selectedVa === "ALL_VAS") {
-      return vaSummaries.filter((v) => v.name.startsWith("VA "));
+      return vaSummaries.filter((v) => knownVaNames.includes(v.name));
     }
     if (selectedVa === "ALL_USERS") {
       return vaSummaries;
@@ -383,38 +403,28 @@ export function VaDailyTimeline() {
                 color: selectedVa === "ALL_VAS" ? "#000" : "var(--v2-text-2, #888)",
               }}
             >
-              Both VAs (VA 1 &amp; VA 2)
+              {knownVaNames.length > 0
+                ? `All VAs (${knownVaNames.join(" & ")})`
+                : "All VAs"}
             </button>
-            <button
-              onClick={() => setSelectedVa("VA 1")}
-              style={{
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 10px",
-                borderRadius: 6,
-                fontSize: 11,
-                fontWeight: 600,
-                background: selectedVa === "VA 1" ? "var(--v2-accent, #4ade80)" : "transparent",
-                color: selectedVa === "VA 1" ? "#000" : "var(--v2-text-2, #888)",
-              }}
-            >
-              VA 1
-            </button>
-            <button
-              onClick={() => setSelectedVa("VA 2")}
-              style={{
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 10px",
-                borderRadius: 6,
-                fontSize: 11,
-                fontWeight: 600,
-                background: selectedVa === "VA 2" ? "var(--v2-accent, #4ade80)" : "transparent",
-                color: selectedVa === "VA 2" ? "#000" : "var(--v2-text-2, #888)",
-              }}
-            >
-              VA 2
-            </button>
+            {knownVaNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => setSelectedVa(name)}
+                style={{
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: selectedVa === name ? "var(--v2-accent, #4ade80)" : "transparent",
+                  color: selectedVa === name ? "#000" : "var(--v2-text-2, #888)",
+                }}
+              >
+                {name}
+              </button>
+            ))}
             <button
               onClick={() => setSelectedVa("ALL_USERS")}
               style={{
@@ -428,7 +438,7 @@ export function VaDailyTimeline() {
                 color: selectedVa === "ALL_USERS" ? "#000" : "var(--v2-text-2, #888)",
               }}
             >
-              All (incl. Admins)
+              All Producers
             </button>
           </div>
 
@@ -584,12 +594,13 @@ export function VaDailyTimeline() {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: 16,
+                        fontSize: 15,
                         fontWeight: 900,
                         color: "var(--v2-accent, #4ade80)",
+                        letterSpacing: "0.02em",
                       }}
                     >
-                      {va.name.replace("VA ", "VA")}
+                      {vaInitials(va.name)}
                     </div>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

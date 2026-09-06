@@ -140,6 +140,21 @@ export const tutorialJobs = pgTable(
     uploaded_by: text("uploaded_by"),
     youtube_upload_url: text("youtube_upload_url"),
 
+    // External uploader lifecycle. `is_uploaded` remains as a compatibility
+    // projection, while these fields preserve scheduled vs actually public.
+    uploader_status: text("uploader_status"),
+    youtube_visibility: text("youtube_visibility"),
+    scheduled_for: timestamp("scheduled_for", { withTimezone: true }),
+    youtube_published_at: timestamp("youtube_published_at", {
+      withTimezone: true,
+    }),
+    uploader_job_id: text("uploader_job_id"),
+    uploader_event_id: text("uploader_event_id"),
+    uploader_last_callback_at: timestamp("uploader_last_callback_at", {
+      withTimezone: true,
+    }),
+    upload_verified_at: timestamp("upload_verified_at", { withTimezone: true }),
+
     // VA end-of-day review (migration 0066). NULL = not reviewed, and that is
     // a valid, permanent outcome: the gate is non-blocking, so NULL and
     // 'approved' behave identically. Only 'disapproved' destroys anything, and
@@ -182,5 +197,8 @@ export const tutorialJobs = pgTable(
     batchIdx: index("tutorial_jobs_batch_id_idx").on(t.batch_id),
     parentJobIdx: index("tutorial_jobs_parent_job_id_idx").on(t.parent_job_id),
     keywordRefIdx: index("tutorial_jobs_keyword_ref_idx").on(t.keyword_ref),
+    uploaderStatusIdx: index("tutorial_jobs_uploader_status_idx").on(
+      t.uploader_status,
+    ),
   }),
 );

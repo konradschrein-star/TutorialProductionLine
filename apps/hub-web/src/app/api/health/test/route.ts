@@ -6,6 +6,7 @@ import { getSecret, sql } from "@repo/db";
 import { probeDriveHealth } from "@repo/storage";
 import { getAllQueueMetrics } from "@/lib/services/queue-service";
 import { sendTestAlert } from "@/app/actions/alerts";
+import { getUploaderSettings } from "@/lib/uploader/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ const TARGETS = [
   "telegram",
   "redis",
   "db",
+  "uploader",
 ] as const;
 type Target = (typeof TARGETS)[number];
 
@@ -68,7 +70,10 @@ async function timed(
 async function testScript(): Promise<{ ok: boolean; detail: string }> {
   const key = await getSecret(db, "DEEPSEEK_API_KEY").catch(() => "");
   if (!key) {
-    return { ok: false, detail: "DEEPSEEK_API_KEY not set (secrets store or .env)" };
+    return {
+      ok: false,
+      detail: "DEEPSEEK_API_KEY not set (secrets store or .env)",
+    };
   }
   const model = process.env["DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
   const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -97,7 +102,10 @@ async function testScript(): Promise<{ ok: boolean; detail: string }> {
   if (content.trim().length === 0) {
     return { ok: false, detail: `${model} returned 200 but empty content` };
   }
-  return { ok: true, detail: `${model} replied "${content.trim().slice(0, 40)}"` };
+  return {
+    ok: true,
+    detail: `${model} replied "${content.trim().slice(0, 40)}"`,
+  };
 }
 
 /**
@@ -108,7 +116,10 @@ async function testScript(): Promise<{ ok: boolean; detail: string }> {
 async function testTts(): Promise<{ ok: boolean; detail: string }> {
   const key = await getSecret(db, "FISH_API_KEY").catch(() => "");
   if (!key) {
-    return { ok: false, detail: "FISH_API_KEY not set (secrets store or .env)" };
+    return {
+      ok: false,
+      detail: "FISH_API_KEY not set (secrets store or .env)",
+    };
   }
   const base = process.env["FISH_API_BASE"] ?? "https://api.fish.audio";
   const res = await fetch(`${base}/wallet/self/api-credit`, {
@@ -122,7 +133,9 @@ async function testTts(): Promise<{ ok: boolean; detail: string }> {
       detail: `Fish Audio auth HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`,
     };
   }
-  const json = (await res.json().catch(() => ({}))) as { credit?: number | string };
+  const json = (await res.json().catch(() => ({}))) as {
+    credit?: number | string;
+  };
   const credit = json.credit;
   return {
     ok: true,
@@ -195,14 +208,31 @@ async function testDb(): Promise<{ ok: boolean; detail: string }> {
   return { ok: true, detail: "select 1 OK" };
 }
 
-const RUNNERS: Record<Target, () => Promise<{ ok: boolean; detail: string }>> = {
-  script: testScript,
-  tts: testTts,
-  drive: testDrive,
-  telegram: testTelegram,
-  redis: testRedis,
-  db: testDb,
-};
+async function testUploader(): Promise<{ ok: boolean; detail: string }> {
+  const settings = await getUploaderSettings();
+  const response = await fetch(settings.dashboardApiUrl, {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok)
+    return { ok: false, detail: `Uploader dashboard HTTP ${response.status}` };
+  return {
+    ok: true,
+    detail: `Uploader reachable — ${settings.enabled ? settings.executionMode : "disabled"}, ${settings.transport}`,
+  };
+}
+
+const RUNNERS: Record<Target, () => Promise<{ ok: boolean; detail: string }>> =
+  {
+    script: testScript,
+    tts: testTts,
+    drive: testDrive,
+    telegram: testTelegram,
+    redis: testRedis,
+    db: testDb,
+    uploader: testUploader,
+  };
 
 export async function POST(request: NextRequest) {
   const session = await getSession();

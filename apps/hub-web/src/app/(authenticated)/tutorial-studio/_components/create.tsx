@@ -28,13 +28,6 @@ interface CreateProps {
   canManage: boolean;
   channels: Array<{ id: string; name: string; language: string }>;
   onCreated: () => void;
-  /**
-   * A keyword picked from the "Initial Keywords" fallback, waiting to prefill
-   * this form. When set, the title is filled and the job binds to it as
-   * keyword_ref = "seed:<id>". Consumed once via onSeedConsumed.
-   */
-  pendingSeed?: { id: number; title: string } | null;
-  onSeedConsumed?: () => void;
 }
 
 interface BatchJob {
@@ -252,14 +245,8 @@ export function ProductionCreate({
   canManage,
   channels,
   onCreated,
-  pendingSeed,
-  onSeedConsumed,
 }: CreateProps) {
   const [title, setTitle] = useState("");
-  // keyword_ref for a job started from the "Initial Keywords" fallback
-  // ("seed:<id>"). Kept separate from `keyword` (a live Keyword Tool claim)
-  // because the seed set has no board session to advance.
-  const [seedRef, setSeedRef] = useState<string | null>(null);
   const [channelId, setChannelId] = useState("");
   const [steps, setSteps] = useState("");
   // "AUTO" (the default) means: take the length from the reference material,
@@ -365,22 +352,6 @@ export function ProductionCreate({
   const transcriptTokenRef = useRef(0);
   /** Scroll target for "back to the top of Create" after a job is queued. */
   const topRef = useRef<HTMLDivElement>(null);
-
-  /**
-   * Consume a keyword handed over from the "Initial Keywords" fallback. Fill the
-   * title, bind the seed ref, drop any live-board keyword (they are mutually
-   * exclusive sources), scroll to the top, and tell the parent it is done so the
-   * same pick does not re-apply on the next render.
-   */
-  useEffect(() => {
-    if (!pendingSeed) return;
-    setTitle(pendingSeed.title);
-    setSeedRef(`seed:${pendingSeed.id}`);
-    setKeyword(null);
-    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    onSeedConsumed?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSeed]);
 
   /**
    * The length judgement, in one place, from the best evidence available.
@@ -721,10 +692,6 @@ export function ProductionCreate({
       if (keyword) {
         body.keyword_ref = String(keyword.id);
         body.kt_url = keyword.ktUrl;
-      } else if (seedRef) {
-        // From the "Initial Keywords" fallback — bind it so the row shows as
-        // made, but there is no board session to notify (no kt_url).
-        body.keyword_ref = seedRef;
       }
       if (presetId !== "none") body.prompt_preset_id = presetId;
       if (useCustomPrompt && customPrompt.trim())
@@ -766,7 +733,6 @@ export function ProductionCreate({
        */
       setTitle("");
       setKeyword(null);
-      setSeedRef(null);
       setSteps("");
       setSourceMode("FROM_SCRATCH");
       setReferenceUrl("");
@@ -869,7 +835,6 @@ export function ProductionCreate({
 
   const pickKeyword = (k: MyKeyword) => {
     setKeyword(k);
-    setSeedRef(null); // a live-board claim supersedes any fallback pick
     setTitle(k.keyword);
 
     /**

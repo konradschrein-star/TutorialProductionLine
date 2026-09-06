@@ -4,38 +4,56 @@ import { Rnd } from 'react-rnd';
 import { toBlob } from 'html-to-image';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import { 
-  Sparkles, 
-  Download, 
-  Trash2, 
-  Search, 
-  Layers, 
-  Copy, 
-  FolderArchive, 
-  RefreshCw, 
-  Sliders, 
-  Upload, 
-  Plus, 
-  Palette,
+import {
+  Sparkles,
+  Download,
+  Trash2,
+  Search,
+  Layers,
+  Copy,
+  FolderArchive,
+  RefreshCw,
+  Upload,
   Tv,
   ArrowUp,
   ArrowDown,
   Type,
-  Eye,
-  EyeOff,
   Bookmark,
-  RotateCw,
-  Sun,
-  Maximize2,
-  Bold,
-  Italic,
-  Wand2
+  Wand2,
+  User,
+  LayoutGrid,
+  Shapes,
+  Image as ImageIcon,
+  Star
 } from 'lucide-react';
 import { AIService } from '../services/aiService';
 import { StorageService } from '../services/storageService';
+import { useChannels } from '../hooks/useStore';
+import { useToast, useConfirm } from '../components/ui/Feedback';
 import { ThumbnailElement, ThumbnailBrief, CustomThumbnailAsset, Channel } from '../types';
+import {
+  PERSONAS,
+  PERSONA_LANGUAGES,
+  personasForLanguage,
+  STUDIO_HOSTS,
+  STUDIO_HOST_NAMES,
+  LOGOS,
+  SYMBOLS,
+  BACKGROUNDS,
+  REFERENCE_ARCHETYPES,
+  ARCHETYPE_CATEGORIES,
+  ArchetypeCategory,
+  resolveLogoPath,
+  resolveSymbolPath,
+  assetDisplayName,
+  findLogo,
+  DEFAULT_BACKGROUND_URL,
+  DEFAULT_PERSONA_URL,
+  DEFAULT_REFERENCE_URL
+} from '../data/thumbnailAssets';
 
-const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian', 'French', 'Dutch', 'Japanese', 'Korean', 'Swedish'];
+// Language names for the 10-language ZIP pack (kept in sync with persona catalog).
+const LANGUAGES = PERSONA_LANGUAGES;
 
 const FONT_OPTIONS = [
   { label: 'Impact (Standard Bold)', value: 'Impact' },
@@ -47,160 +65,46 @@ const FONT_OPTIONS = [
   { label: 'Inter Black', value: 'Inter' }
 ];
 
-const DEFAULT_BGS = [
-  { name: 'Abstract Gradient Blue', url: '/background/bg_1_1128207.jpg' },
-  { name: 'Dark Corporate Slate', url: '/background/bg_5_4386356.jpg' },
-  { name: 'Neon Glow Studio', url: '/background/bg_6_322338.jpg' },
-  { name: 'Modern Minimal Tech', url: '/background/bg_9_5717314.jpg' }
-];
+type StudioTab = 'AI_GEN' | 'ARCHETYPES' | 'CUSTOM' | 'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS' | 'LAYERS';
 
-const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
-  English: [
-    { name: 'English Host Pro', url: '/English/English.png' },
-    { name: 'English Presenter 1', url: '/English/english_persona_3_1783711821680-removebg-preview.png' },
-    { name: 'English Presenter 2', url: '/English/english_persona_4_1783711831752-removebg-preview.png' },
-    { name: 'English Creator', url: '/English/new_english_persona_1783711373283-removebg-preview.png' }
-  ],
-  Spanish: [
-    { name: 'Spanish Presenter 1', url: '/spanish/spanish_1_1783793169018-removebg-preview.png' },
-    { name: 'Spanish Presenter 2', url: '/spanish/spanish_3_1783793186761-removebg-preview.png' },
-    { name: 'Spanish Presenter 3', url: '/spanish/spanish_4_1783793195747-removebg-preview.png' }
-  ],
-  German: [
-    { name: 'German Host 1', url: '/germanese/german_persona_1_1783711850388-removebg-preview.png' }
-  ],
-  Italian: [
-    { name: 'Italian Host 1', url: '/Italy/italian_persona_1_1783711874987-removebg-preview.png' }
-  ],
-  French: [
-    { name: 'French Host 1', url: '/French/french_1_1783793208007-removebg-preview.png' }
-  ],
-  Portuguese: [
-    { name: 'Portuguese Host 1', url: '/portoguese/portuguese_1_1783793231454-removebg-preview.png' }
-  ],
-  Japanese: [
-    { name: 'Japanese Host 1', url: '/Japanese/japanese_persona_1_1783711894982-removebg-preview.png' }
-  ],
-  Korean: [
-    { name: 'Korean Host 1', url: '/Korean/korean_persona_1_1783711915998-removebg-preview.png' }
-  ],
-  Swedish: [
-    { name: 'Swedish Host 1', url: '/Swedish/swedish_persona_1_1783711936998-removebg-preview.png' }
-  ],
-  Dutch: [
-    { name: 'Dutch Host 1', url: '/English/English.png' }
-  ]
-};
-
-const ALL_APP_LOGOS = [
-  'asana.png', 'blender.png', 'calendly.png', 'cashapp.png', 'ChatGPT-Logo.png',
-  'clickup.png', 'cloudflare.png', 'davinciresolve.png', 'discord.png', 'dropbox.png',
-  'ebay.png', 'epicgames.png', 'etsy.png', 'facebook.png', 'figma.png',
-  'gimp.png', 'github.png', 'gmail.png', 'googlecalendar.png', 'googlechrome.png',
-  'googledocs.png', 'googledrive.png', 'googlemaps.png', 'googlemeet.png', 'googlephotos.png',
-  'googlesheets.png', 'gumroad.png', 'icloud.png', 'imessage.png', 'inkscape.png',
-  'instagram.png', 'krita.png', 'macos.png', 'mailchimp.png', 'namecheap.png',
-  'netflix.png', 'netlify.png', 'notion.png', 'obsidian.png', 'obsstudio.png',
-  'paypal.png', 'pinterest.png', 'playstation.png', 'reddit.png', 'replit.png',
-  'roblox.png', 'safari.png', 'shopify.png', 'snapchat.png', 'spotify.png',
-  'steam.png', 'streamlabs.png', 'stripe.png', 'telegram.png', 'tiktok.png',
-  'todoist.png', 'trello.png', 'twitch.png', 'venmo.png', 'vercel.png',
-  'whatsapp.png', 'wix.png', 'woocommerce.png', 'wordpress.png', 'youtube.png',
-  'youtubestudio.png', 'zapier.png', 'zelle.png', 'zoom.png'
-];
-
-const ALL_SYMBOLS = [
-  'curved-arrow.png', 'alert-circle.png', 'alert-triangle.png', 'badge-check.png',
-  'badge.png', 'bell-ring.png', 'bell.png', 'camera.png', 'check-circle.png',
-  'clock.png', 'cloud.png', 'code.png', 'crown.png', 'database.png',
-  'diamond.png', 'dollar-sign.png', 'eye.png', 'file-text.png', 'flame.png',
-  'gift.png', 'globe.png', 'heart.png', 'key.png', 'laptop.png',
-  'lightbulb.png', 'lock.png', 'megaphone.png', 'mic.png', 'play.png',
-  'rocket.png', 'shield.png', 'sparkle.png', 'sparkles.png', 'star.png',
-  'target.png', 'thumbs-up.png', 'trending-up.png', 'trophy.png', 'tv.png',
-  'video.png', 'wand-sparkles.png', 'zap.png'
-];
-
-const REFERENCE_ARCHETYPES = [
-  { id: 'tut-1', name: 'Tutorial Archetype (Best CTR)', category: 'Tutorials', url: '/reference-thumbnails/tutorial-1-best-archetype.png' },
-  { id: 'tut-3', name: 'Tutorial Modern Slate', category: 'Tutorials', url: '/reference-thumbnails/tutorial-3.png' },
-  { id: 'tut-4', name: 'Tutorial Punchy Grid', category: 'Tutorials', url: '/reference-thumbnails/tutorial-4.png' },
-  { id: 'tut-5', name: 'Tutorial Floating Dashboard', category: 'Tutorials', url: '/reference-thumbnails/tutorial-5.png' },
-  { id: 'tut-6', name: 'Tutorial Step-by-Step 6', category: 'Tutorials', url: '/reference-thumbnails/tutorial-6.jpeg' },
-  { id: 'tut-7', name: 'Tutorial Step-by-Step 7', category: 'Tutorials', url: '/reference-thumbnails/tutorial-7.jpeg' },
-  { id: 'tut-8', name: 'Tutorial Clean Minimal 8', category: 'Tutorials', url: '/reference-thumbnails/tutorial-8.png' },
-  { id: 'tut-9', name: 'Tutorial Highlight 9', category: 'Tutorials', url: '/reference-thumbnails/tutorial-9.png' },
-  { id: 'tut-10', name: 'Tutorial Dark Focus 10', category: 'Tutorials', url: '/reference-thumbnails/tutorial-10.jpeg' },
-  { id: 'tut-11', name: 'Tutorial Master 11', category: 'Tutorials', url: '/reference-thumbnails/tutorial-11.jpeg' },
-  { id: 'tut-12', name: 'Tutorial Simple 12', category: 'Tutorials', url: '/reference-thumbnails/tutorial-12-simple.jpeg' },
-  { id: 'tut-13', name: 'Tutorial Pro 13', category: 'Tutorials', url: '/reference-thumbnails/tutorial-13.jpeg' },
-  { id: 'walk-1', name: 'Walkthrough Detailed 1', category: 'Tutorials', url: '/reference-thumbnails/walktrough-1.jpeg' },
-  { id: 'walk-2', name: 'Walkthrough Detailed 2', category: 'Tutorials', url: '/reference-thumbnails/walktrough-2.jpeg' },
-  { id: 'gfin-1', name: 'Google Finance Excel', category: 'Tutorials', url: '/reference-thumbnails/google-finance-excel.jpg' },
-  { id: 'norm-1', name: 'Normal Tutorial Style', category: 'Tutorials', url: '/reference-thumbnails/normal-tutorial-style.jpeg' },
-  { id: 'tipps-1', name: 'Tips & Tricks Lifehacks', category: 'Tutorials', url: '/reference-thumbnails/tipps-tricks-lifehacks-1.jpeg' },
-  { id: 'cool-1', name: 'Cool Feature Highlight', category: 'Tutorials', url: '/reference-thumbnails/cool-feature-1.jpeg' },
-  { id: 'bad-1', name: 'Software Fix & Troubleshoot', category: 'Tutorials', url: '/reference-thumbnails/bad-software-walktrough-for-hard.jpeg' },
-
-  { id: 'cmp-bat', name: 'Admin Comparison Battle', category: 'Comparisons', url: '/reference-thumbnails/admin-comparison-battle-style.jpeg' },
-  { id: 'cmp-2-1', name: 'Comparison Split 2-1', category: 'Comparisons', url: '/reference-thumbnails/admin-comparison-2-1.jpeg' },
-  { id: 'cmp-ph', name: 'Comparison 3 Phones', category: 'Comparisons', url: '/reference-thumbnails/comparison-1-3-phones.jpeg' },
-  { id: 'cmp-cln', name: 'Comparison Really Clean', category: 'Comparisons', url: '/reference-thumbnails/comparison-2-really-clean.jpeg' },
-  { id: 'cmp-alt', name: 'Comparison Alternatives', category: 'Comparisons', url: '/reference-thumbnails/comparison-3-alternatives.jpeg' },
-  { id: 'comb-1', name: 'Combination Connection', category: 'Comparisons', url: '/reference-thumbnails/combination-connection-1.jpeg' },
-
-  { id: 'adm-dram', name: 'Admin Dramatic Bold', category: 'Modern Tech', url: '/reference-thumbnails/admin-dramatic-bold-style.jpeg' },
-  { id: 'adm-edu', name: 'Admin Educational Friendly', category: 'Modern Tech', url: '/reference-thumbnails/admin-educational-friendly-style.jpeg' },
-  { id: 'adm-nrg', name: 'Admin Energetic Tech', category: 'Modern Tech', url: '/reference-thumbnails/admin-energetic-tech-style.jpeg' },
-  { id: 'adm-prod', name: 'Admin Modern Productivity', category: 'Modern Tech', url: '/reference-thumbnails/admin-modern-productivity-style.jpeg' },
-  { id: 'adm-warn', name: 'Admin Striking Warning', category: 'Modern Tech', url: '/reference-thumbnails/admin-striking-warning-style.jpg' },
-  { id: 'cas-tech', name: 'Casual Tech Style', category: 'Modern Tech', url: '/reference-thumbnails/casual-tech-style.jpeg' },
-  { id: 'news-1', name: 'Breaking News & Updates', category: 'Modern Tech', url: '/reference-thumbnails/news-1.jpeg' },
-  { id: 'nano-gen', name: 'Nano Banana AI Plate', category: 'Modern Tech', url: '/background/nano_banana_key1.png' },
-
-  { id: 'des-1', name: 'Design Minimal 1', category: 'Design & Mobile', url: '/reference-thumbnails/design-1.png' },
-  { id: 'des-2', name: 'Design Card 2', category: 'Design & Mobile', url: '/reference-thumbnails/design-2.png' },
-  { id: 'des-3', name: 'Design Gradient 3', category: 'Design & Mobile', url: '/reference-thumbnails/design-3.png' },
-  { id: 'des-4', name: 'Design Modern 4', category: 'Design & Mobile', url: '/reference-thumbnails/design-4.png' },
-  { id: 'des-5', name: 'Design Sleek 5', category: 'Design & Mobile', url: '/reference-thumbnails/design-5.png' },
-  { id: 'ph-1', name: 'Phone Screen 1', category: 'Design & Mobile', url: '/reference-thumbnails/phone-1.png' },
-  { id: 'ph-2', name: 'Phone Screen 2', category: 'Design & Mobile', url: '/reference-thumbnails/phone-2.png' },
-  { id: 'ph-3', name: 'Phone Screen 3', category: 'Design & Mobile', url: '/reference-thumbnails/phone-3.jpeg' },
-  { id: 'lay-auto', name: 'Layout Automated Grid', category: 'Design & Mobile', url: '/reference-thumbnails/layout-automated.png' },
-  { id: 'lay-edit', name: 'Layout Editorial High-CTR', category: 'Design & Mobile', url: '/reference-thumbnails/layout-editorial.png' },
-
-  { id: 'arch-1', name: 'Classic Archetype 1', category: 'Classics', url: '/reference-thumbnails/Archetype.png' },
-  { id: 'arch-2', name: 'Classic Archetype 2', category: 'Classics', url: '/reference-thumbnails/archetype2.jpg' },
-  { id: 'arch-3', name: 'Classic Archetype 3', category: 'Classics', url: '/reference-thumbnails/archetype3.jpeg' },
-  { id: 'arch-4', name: 'Classic Archetype 4', category: 'Classics', url: '/reference-thumbnails/archetype4.jpeg' },
-  { id: 'arch-5', name: 'Classic Archetype 5', category: 'Classics', url: '/reference-thumbnails/archetype5.jpeg' },
-  { id: 'arch-6', name: 'Classic Archetype 6', category: 'Classics', url: '/reference-thumbnails/archetype6.jpeg' },
-  { id: 'arch-7', name: 'Classic Archetype 7', category: 'Classics', url: '/reference-thumbnails/archetype7.jpeg' },
-  { id: 'hum-1', name: 'Humor & Expressive Face', category: 'Classics', url: '/reference-thumbnails/humor-1.jpg' },
-  { id: 'fh-1', name: 'Forehead Reaction Style', category: 'Classics', url: '/reference-thumbnails/forehead-funny.jpeg' }
+const TABS: { key: StudioTab; label: string; tooltip: string; icon: React.ElementType }[] = [
+  { key: 'AI_GEN', label: 'AI Auto', tooltip: 'AI Nano Banana 2 auto-composer', icon: Wand2 },
+  { key: 'ARCHETYPES', label: 'Refs', tooltip: 'High-CTR reference archetypes', icon: Star },
+  { key: 'CUSTOM', label: 'Custom', tooltip: 'Upload your own faces / logos', icon: Upload },
+  { key: 'PERSONAS', label: 'Hosts', tooltip: 'Persona & host cutouts', icon: User },
+  { key: 'LOGOS', label: 'Logos', tooltip: 'App logo library', icon: LayoutGrid },
+  { key: 'SYMBOLS', label: 'Symbols', tooltip: 'Icon / symbol library', icon: Shapes },
+  { key: 'BGS', label: 'Backgrounds', tooltip: 'Background plates', icon: ImageIcon },
+  { key: 'LAYERS', label: 'Layers', tooltip: 'Layer tree & ordering', icon: Layers }
 ];
 
 export const ThumbnailStudio: React.FC = () => {
   const location = useLocation();
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
 
-  const channels = StorageService.getChannels();
+  const channels = useChannels();
   const [selectedChannelId, setSelectedChannelId] = useState<string>(channels[0]?.id || 'virtualfd');
 
-  const [activeTab, setActiveTab] = useState<'AI_GEN' | 'ARCHETYPES' | 'CUSTOM' | 'PERSONAS' | 'LOGOS' | 'SYMBOLS' | 'BGS' | 'LAYERS'>('AI_GEN');
-  const [archetypeFilter, setArchetypeFilter] = useState<'ALL' | 'Tutorials' | 'Comparisons' | 'Modern Tech' | 'Design & Mobile' | 'Classics'>('ALL');
+  const [activeTab, setActiveTab] = useState<StudioTab>('AI_GEN');
+  const [archetypeFilter, setArchetypeFilter] = useState<'ALL' | ArchetypeCategory>('ALL');
+
+  // Persona source: language cutouts vs premium photoreal studio hosts
+  const [personaSource, setPersonaSource] = useState<'LANG' | 'STUDIO'>('LANG');
   const [activeLang, setActiveLang] = useState<string>('English');
+  const [activeHost, setActiveHost] = useState<string>(STUDIO_HOST_NAMES[0]);
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
-  const [zoomScale, setZoomScale] = useState<number>(1);
 
   // Custom User Uploads State
   const [customAssets, setCustomAssets] = useState<CustomThumbnailAsset[]>(() => StorageService.getCustomThumbnailAssets());
 
   // AI Nano Banana 2 Generator State
   const [aiPrompt, setAiPrompt] = useState<string>('High-CTR YouTube thumbnail background for a software tutorial, vibrant gradient lighting, modern 3D UI elements, clean cinematic composition, 16:9');
-  const [selectedRefArchetype, setSelectedRefArchetype] = useState<string>('/reference-thumbnails/tutorial-1-best-archetype.png');
-  const [selectedPersonaUrl, setSelectedPersonaUrl] = useState<string>('/English/English.png');
+  const [selectedRefArchetype, setSelectedRefArchetype] = useState<string>(DEFAULT_REFERENCE_URL);
+  const [selectedPersonaUrl, setSelectedPersonaUrl] = useState<string>(DEFAULT_PERSONA_URL);
   const [aiModel, setAiModel] = useState<'gemini-2.5-flash-image' | 'gemini-3-pro-image'>('gemini-2.5-flash-image');
   const [aiImageSize, setAiImageSize] = useState<'1K' | '2K'>('1K');
   const [isGeneratingAI, setIsGeneratingAI] = useState<boolean>(false);
@@ -212,22 +116,22 @@ export const ThumbnailStudio: React.FC = () => {
     {
       id: 'bg-1',
       type: 'BACKGROUND',
-      url: '/background/bg_1_1128207.jpg',
+      url: DEFAULT_BACKGROUND_URL,
       x: 0,
       y: 0,
       width: 800,
       height: 450,
-      zIndex: 1,
+      zIndex: 1
     },
     {
       id: 'person-1',
       type: 'PERSON',
-      url: '/English/English.png',
+      url: DEFAULT_PERSONA_URL,
       x: 20,
       y: 40,
       width: 320,
       height: 410,
-      zIndex: 2,
+      zIndex: 2
     },
     {
       id: 'text-top',
@@ -268,7 +172,7 @@ export const ThumbnailStudio: React.FC = () => {
     {
       id: 'logo-1',
       type: 'LOGO',
-      url: '/app_logos_png/notion.png',
+      url: resolveLogoPath('notion.png'),
       x: 450,
       y: 230,
       width: 150,
@@ -281,7 +185,7 @@ export const ThumbnailStudio: React.FC = () => {
     {
       id: 'arrow-1',
       type: 'SYMBOL',
-      url: '/bulk_symbols_110_colored/curved-arrow.png',
+      url: resolveSymbolPath('curved-arrow.png'),
       x: 620,
       y: 150,
       width: 120,
@@ -294,31 +198,36 @@ export const ThumbnailStudio: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isBatchExporting, setIsBatchExporting] = useState<boolean>(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; label: string } | null>(null);
   const [autoGenTitle, setAutoGenTitle] = useState<string>('');
   const [isGeneratingBrief, setIsGeneratingBrief] = useState<boolean>(false);
   const [currentBrief, setCurrentBrief] = useState<ThumbnailBrief | null>(null);
-  const [presetSavedNotice, setPresetSavedNotice] = useState<string>('');
+
+  const busy = isExporting || isBatchExporting;
 
   useEffect(() => {
-    if (location.state?.topic || location.state?.title) {
-      setAutoGenTitle(location.state.topic || location.state.title);
-    }
+    // Deep-link from other pages: accept both `topic` and `title` keys.
+    const incoming = location.state?.topic ?? location.state?.title;
+    if (incoming) setAutoGenTitle(incoming);
   }, [location.state]);
 
   const selectedElement = elements.find(el => el.id === selectedId);
 
-  // Filtered Assets
-  const filteredLogos = useMemo(() => {
-    return ALL_APP_LOGOS.filter(name => 
-      !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery]);
+  // Personas currently shown (language cutouts or studio host pack)
+  const currentPersonas = personaSource === 'STUDIO'
+    ? (STUDIO_HOSTS[activeHost] || [])
+    : personasForLanguage(activeLang);
 
-  const filteredSymbols = useMemo(() => {
-    return ALL_SYMBOLS.filter(name => 
-      !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery]);
+  // Filtered Assets
+  const filteredLogos = useMemo(() =>
+    LOGOS.filter(name => !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase())),
+    [searchQuery]
+  );
+
+  const filteredSymbols = useMemo(() =>
+    SYMBOLS.filter(name => !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase())),
+    [searchQuery]
+  );
 
   // Apply Channel Preset Styling
   const handleApplyChannelPreset = (channelId: string) => {
@@ -333,7 +242,7 @@ export const ThumbnailStudio: React.FC = () => {
           fontFamily: ch.thumbnailStyle?.fontFamily || el.fontFamily,
           fontSize: ch.thumbnailStyle?.fontSize || el.fontSize,
           color: ch.thumbnailStyle?.color || el.color,
-          strokeColor: ch.thumbnailStyle?.strokeColor || el.strokeColor,
+          strokeColor: ch.thumbnailStyle?.strokeColor || el.strokeColor
         };
       }
       return el;
@@ -358,8 +267,7 @@ export const ThumbnailStudio: React.FC = () => {
     };
 
     StorageService.saveChannel(updatedChannel);
-    setPresetSavedNotice(`✓ Saved styling preset to ${ch.name}`);
-    setTimeout(() => setPresetSavedNotice(''), 2500);
+    toast(`Saved styling preset to ${ch.name}`, 'success', 'Preset saved');
   };
 
   // Upload Custom Reference Asset
@@ -381,14 +289,30 @@ export const ThumbnailStudio: React.FC = () => {
       StorageService.addCustomThumbnailAsset(newAsset);
       setCustomAssets(StorageService.getCustomThumbnailAssets());
       handleAddAsset(category === 'BGS' ? 'BACKGROUND' : category === 'PERSONAS' ? 'PERSON' : 'LOGO', dataUrl);
+      toast('Uploaded and added to canvas.', 'success');
     };
+    reader.onerror = () => toast('Could not read that file.', 'error');
     reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleDeleteCustomAsset = async (asset: CustomThumbnailAsset) => {
+    const ok = await confirm({
+      title: 'Delete custom asset?',
+      message: `"${asset.name}" will be permanently removed from your library.`,
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
+    StorageService.deleteCustomThumbnailAsset(asset.id);
+    setCustomAssets(StorageService.getCustomThumbnailAssets());
+    toast('Custom asset deleted.', 'info');
   };
 
   // AI Brief Auto Generation
   const handleGenerateAIBrief = async () => {
     if (!autoGenTitle.trim()) {
-      alert('Please enter a video topic or title first.');
+      toast('Enter a video topic or title first.', 'warning');
       return;
     }
 
@@ -397,25 +321,23 @@ export const ThumbnailStudio: React.FC = () => {
       const brief = await AIService.generateThumbnailBrief(autoGenTitle);
       setCurrentBrief(brief);
 
-      // Match logo if found
-      const cleanSoftware = (brief.software_name || '').toLowerCase();
-      const matchedLogo = ALL_APP_LOGOS.find(l => l.toLowerCase().includes(cleanSoftware));
+      const matchedLogo = findLogo(brief.software_name || autoGenTitle);
 
       setElements(prev => prev.map(el => {
-        if (el.id === 'text-top') {
-          return { ...el, text: brief.thumbnail_text_line1 };
-        }
-        if (el.id === 'text-bottom') {
-          return { ...el, text: brief.thumbnail_text_line2 };
-        }
-        if (el.id === 'logo-1' && matchedLogo) {
-          return { ...el, url: `/app_logos_png/${matchedLogo}` };
-        }
+        if (el.id === 'text-top') return { ...el, text: brief.thumbnail_text_line1 };
+        if (el.id === 'text-bottom') return { ...el, text: brief.thumbnail_text_line2 };
+        if (el.id === 'logo-1' && matchedLogo) return { ...el, url: resolveLogoPath(matchedLogo) };
         return el;
       }));
+
+      if (matchedLogo) {
+        toast(`Brief ready · matched ${assetDisplayName(matchedLogo)} logo.`, 'success');
+      } else {
+        toast('Brief ready. No matching app logo found — pick one from the Logos tab.', 'info');
+      }
     } catch (e: any) {
       console.error(e);
-      alert('Failed to generate thumbnail brief: ' + e.message);
+      toast('Failed to generate thumbnail brief: ' + (e?.message || 'unknown error'), 'error');
     } finally {
       setIsGeneratingBrief(false);
     }
@@ -496,6 +418,11 @@ export const ThumbnailStudio: React.FC = () => {
     });
   };
 
+  const handleDeleteElement = (id: string) => {
+    setElements(prev => prev.filter(item => item.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
+
   // Single PNG Export
   const handleExportPNG = async () => {
     if (!canvasRef.current) return;
@@ -504,23 +431,22 @@ export const ThumbnailStudio: React.FC = () => {
 
     try {
       await new Promise(r => setTimeout(r, 200));
-      const blob = await toBlob(canvasRef.current, {
-        pixelRatio: 2.4,
-      });
+      const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
 
       if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `thumbnail_${(autoGenTitle || 'custom').replace(/[^a-z0-9]/gi, '_')}_${activeLang}.png`;
+        a.download = `thumbnail_${(autoGenTitle || 'custom').replace(/[^a-z0-9]/gi, '_')}_${personaSource === 'STUDIO' ? activeHost : activeLang}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        toast('Thumbnail exported.', 'success');
       }
     } catch (err: any) {
       console.error('Export failed:', err);
-      alert('Export failed: ' + err.message);
+      toast('Export failed: ' + (err?.message || 'unknown error'), 'error');
     } finally {
       setIsExporting(false);
     }
@@ -531,14 +457,22 @@ export const ThumbnailStudio: React.FC = () => {
     if (!canvasRef.current) return;
     setIsBatchExporting(true);
     setSelectedId(null);
+    setBatchProgress({ done: 0, total: LANGUAGES.length, label: 'Preparing brief…' });
+
+    // Snapshot current text so we can restore it after the batch run.
+    const originalTop = elements.find(e => e.id === 'text-top')?.text || 'LEARN FAST';
+    const originalBottom = elements.find(e => e.id === 'text-bottom')?.text || 'STEP BY STEP';
 
     try {
       const zip = new JSZip();
       const brief = currentBrief || await AIService.generateThumbnailBrief(autoGenTitle || 'Custom Tutorial');
 
-      for (const lang of LANGUAGES) {
-        const trans = brief.translations?.[lang] || { top: 'LEARN FAST', bottom: 'STEP BY STEP' };
-        
+      for (let i = 0; i < LANGUAGES.length; i++) {
+        const lang = LANGUAGES[i];
+        setBatchProgress({ done: i, total: LANGUAGES.length, label: `Rendering ${lang}…` });
+
+        const trans = brief.translations?.[lang] || { top: originalTop, bottom: originalBottom };
+
         setElements(prev => prev.map(el => {
           if (el.id === 'text-top') return { ...el, text: trans.top };
           if (el.id === 'text-bottom') return { ...el, text: trans.bottom };
@@ -554,14 +488,22 @@ export const ThumbnailStudio: React.FC = () => {
         }
       }
 
+      setBatchProgress({ done: LANGUAGES.length, total: LANGUAGES.length, label: 'Packaging ZIP…' });
       const zipContent = await zip.generateAsync({ type: 'blob' });
       saveAs(zipContent, `thumbnail_pack_${(autoGenTitle || 'tutorial').replace(/[^a-z0-9]/gi, '_')}_10langs.zip`);
-
+      toast(`Exported ${LANGUAGES.length}-language thumbnail pack.`, 'success');
     } catch (err: any) {
       console.error('Batch export failed:', err);
-      alert('Batch export failed: ' + err.message);
+      toast('Batch export failed: ' + (err?.message || 'unknown error'), 'error');
     } finally {
+      // Restore the original headline text.
+      setElements(prev => prev.map(el => {
+        if (el.id === 'text-top') return { ...el, text: originalTop };
+        if (el.id === 'text-bottom') return { ...el, text: originalBottom };
+        return el;
+      }));
       setIsBatchExporting(false);
+      setBatchProgress(null);
     }
   };
 
@@ -572,40 +514,22 @@ export const ThumbnailStudio: React.FC = () => {
     setAiGenError(null);
 
     try {
-      const dataUri = await AIService.generateThumbnailImage(aiPrompt, {
+      const promptToSend = aiPrompt.includes('Text must be black')
+        ? aiPrompt
+        : `${aiPrompt.trim()}. Text must be black for contrast and have no mistakes. Only one person on the Thumbnail`;
+      const dataUri = await AIService.generateThumbnailImage(promptToSend, {
         aspectRatio,
         model: aiModel,
         imageSize: aiImageSize
       });
 
       setGeneratedAiImages(prev => [dataUri, ...prev]);
-
-      // Automatically set as background
-      setElements(prev => {
-        const bgIdx = prev.findIndex(e => e.type === 'BACKGROUND');
-        if (bgIdx >= 0) {
-          const updated = [...prev];
-          updated[bgIdx] = { ...updated[bgIdx], url: dataUri };
-          return updated;
-        } else {
-          return [
-            {
-              id: `bg-${Date.now()}`,
-              type: 'BACKGROUND',
-              url: dataUri,
-              x: 0,
-              y: 0,
-              width: aspectRatio === '16:9' ? 800 : 450,
-              height: aspectRatio === '16:9' ? 450 : 800,
-              zIndex: 1
-            },
-            ...prev
-          ];
-        }
-      });
+      handleSetAiAsBg(dataUri);
+      toast('Background plate generated.', 'success');
     } catch (err: any) {
       console.error('AI image generation error:', err);
-      setAiGenError(err.message || 'Image generation failed');
+      setAiGenError(err?.message || 'Image generation failed');
+      toast('Image generation failed: ' + (err?.message || 'unknown error'), 'error');
     } finally {
       setIsGeneratingAI(false);
     }
@@ -674,7 +598,14 @@ export const ThumbnailStudio: React.FC = () => {
   ) => {
     const topic = (customTopic || autoGenTitle || aiPrompt || 'Software Tutorial').trim();
     const reference = refUrl || selectedRefArchetype;
-    const persona = personaUrl || selectedPersonaUrl;
+    const persona = personaUrl || selectedPersonaUrl || DEFAULT_PERSONA_URL;
+
+    const ok = await confirm({
+      title: 'Auto-compose new thumbnail?',
+      message: 'This generates a fresh AI plate and replaces the current canvas layout.',
+      confirmLabel: 'Compose'
+    });
+    if (!ok) return;
 
     setIsGeneratingAI(true);
     setAiGenError(null);
@@ -692,7 +623,7 @@ export const ThumbnailStudio: React.FC = () => {
       }
 
       // 3. Generate background plate via Nano Banana 2
-      const fullPrompt = `High-CTR YouTube thumbnail background plate for "${topic}", styled with dramatic volumetric lighting, cinematic color contrast, clean 3D graphic elements, matching visual style of reference archetype, 16:9 composition`;
+      const fullPrompt = `High-CTR YouTube thumbnail background plate for "${topic}", styled with dramatic volumetric lighting, cinematic color contrast, clean 3D graphic elements, matching visual style of reference archetype, 16:9 composition. Text must be black for contrast and have no mistakes. Only one person on the Thumbnail`;
 
       const generatedPlateUrl = await AIService.generateThumbnailImage(fullPrompt, {
         aspectRatio,
@@ -703,14 +634,14 @@ export const ThumbnailStudio: React.FC = () => {
 
       setGeneratedAiImages(prev => [generatedPlateUrl, ...prev]);
 
-      // 4. Find matched software logo if available
-      const cleanSoftware = (brief.software_name || topic.split(' ')[0] || '').toLowerCase();
-      const matchedLogo = ALL_APP_LOGOS.find(l => l.toLowerCase().includes(cleanSoftware)) || 'ChatGPT-Logo.png';
+      // 4. Find matched software logo (real logo list, graceful fallback)
+      const matchedLogo = findLogo(brief.software_name || topic);
 
       // 5. Compose full canvas element tree
+      const now = Date.now();
       const composedElements: ThumbnailElement[] = [
         {
-          id: `bg-${Date.now()}`,
+          id: `bg-${now}`,
           type: 'BACKGROUND',
           url: generatedPlateUrl,
           x: 0,
@@ -720,9 +651,9 @@ export const ThumbnailStudio: React.FC = () => {
           zIndex: 1
         },
         {
-          id: `person-${Date.now()}`,
+          id: `person-${now}`,
           type: 'PERSON',
-          url: persona || '/English/English.png',
+          url: persona,
           x: 20,
           y: 40,
           width: 320,
@@ -764,24 +695,38 @@ export const ThumbnailStudio: React.FC = () => {
           fontWeight: 'bold',
           fontStyle: 'italic',
           rotation: 0
-        },
-        {
-          id: `logo-${Date.now()}`,
+        }
+      ];
+
+      // Only add a logo layer when we actually matched one on disk.
+      if (matchedLogo) {
+        composedElements.push({
+          id: `logo-${now}`,
           type: 'LOGO',
-          url: `/logos/${matchedLogo}`,
+          url: resolveLogoPath(matchedLogo),
           x: 620,
           y: 220,
           width: 140,
           height: 140,
-          zIndex: 3
-        }
-      ];
+          zIndex: 3,
+          bgColor: '#ffffff',
+          borderRadius: '50%',
+          padding: '14px'
+        });
+      }
 
       setElements(composedElements);
       setSelectedId('text-top');
+
+      if (matchedLogo) {
+        toast(`Composed thumbnail · added ${assetDisplayName(matchedLogo)} logo.`, 'success');
+      } else {
+        toast('Composed thumbnail. No matching app logo — add one from the Logos tab.', 'warning');
+      }
     } catch (err: any) {
       console.error('Auto-compose thumbnail failed:', err);
-      setAiGenError(err.message || 'Auto-composition failed');
+      setAiGenError(err?.message || 'Auto-composition failed');
+      toast('Auto-composition failed: ' + (err?.message || 'unknown error'), 'error');
     } finally {
       setIsGeneratingAI(false);
     }
@@ -797,15 +742,17 @@ export const ThumbnailStudio: React.FC = () => {
     };
     StorageService.addCustomThumbnailAsset(asset);
     setCustomAssets(StorageService.getCustomThumbnailAssets());
-    alert('Saved to Custom Assets library!');
+    toast('Saved to Custom Assets library.', 'success');
   };
 
   const canvasWidth = aspectRatio === '16:9' ? 800 : 450;
   const canvasHeight = aspectRatio === '16:9' ? 450 : 800;
 
+  const batchPct = batchProgress ? Math.round((batchProgress.done / batchProgress.total) * 100) : 0;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4 animate-fadeIn">
-      
+
       {/* Top Header Bar */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pro-panel p-3.5 rounded-xl border border-border">
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -813,13 +760,13 @@ export const ThumbnailStudio: React.FC = () => {
           <div className="flex items-center bg-surface-200 rounded-lg p-0.5 border border-border text-xs font-mono font-bold">
             <button
               onClick={() => setAspectRatio('16:9')}
-              className={`px-2.5 py-1 rounded transition-colors ${aspectRatio === '16:9' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
+              className={`px-2.5 py-1 rounded transition-colors focus-ring ${aspectRatio === '16:9' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
             >
               16:9 HD
             </button>
             <button
               onClick={() => setAspectRatio('9:16')}
-              className={`px-2.5 py-1 rounded transition-colors ${aspectRatio === '9:16' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
+              className={`px-2.5 py-1 rounded transition-colors focus-ring ${aspectRatio === '9:16' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
             >
               9:16 Shorts
             </button>
@@ -841,18 +788,12 @@ export const ThumbnailStudio: React.FC = () => {
             </select>
             <button
               onClick={handleSaveAsChannelPreset}
-              className="p-1 text-muted hover:text-foreground"
+              className="p-1 text-muted hover:text-foreground focus-ring rounded"
               title="Save current layout as default for this channel"
             >
               <Bookmark className="w-3.5 h-3.5" />
             </button>
           </div>
-
-          {presetSavedNotice && (
-            <span className="text-[11px] font-mono text-emerald-500 font-bold animate-fadeIn">
-              {presetSavedNotice}
-            </span>
-          )}
 
           <div>
             <h2 className="text-sm font-bold font-display text-foreground">Thumbnail Canvas Studio</h2>
@@ -870,62 +811,69 @@ export const ThumbnailStudio: React.FC = () => {
             className="pro-input flex-1 md:w-64 rounded-lg px-3 py-1.5 text-xs text-foreground font-sans"
           />
           <button
-            disabled={isGeneratingBrief}
+            disabled={isGeneratingBrief || busy}
             onClick={handleGenerateAIBrief}
-            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0 disabled:opacity-50"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            {isGeneratingBrief ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             AI Brief
           </button>
           <button
-            disabled={isExporting || isBatchExporting}
+            disabled={busy}
             onClick={handleExportPNG}
-            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0"
+            className="btn-outline px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 flex-shrink-0 disabled:opacity-50"
           >
             <Download className="w-3.5 h-3.5" />
-            Export PNG
+            {isExporting ? 'Exporting…' : 'Export PNG'}
           </button>
           <button
-            disabled={isBatchExporting || isExporting}
+            disabled={busy}
             onClick={handleBatchExportZip}
-            className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
+            className="btn-solid px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0 disabled:opacity-50"
           >
             <FolderArchive className="w-3.5 h-3.5" />
-            {isBatchExporting ? 'Packaging ZIP...' : '10-Lang ZIP'}
+            {isBatchExporting ? 'Packaging…' : '10-Lang ZIP'}
           </button>
         </div>
       </div>
 
+      {/* Batch export progress */}
+      {batchProgress && (
+        <div className="pro-panel p-3 rounded-xl border border-border space-y-2 animate-fadeIn">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <span className="flex items-center gap-2 text-foreground font-bold">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-accent" />
+              {batchProgress.label}
+            </span>
+            <span className="text-muted">{batchProgress.done}/{batchProgress.total} · {batchPct}%</span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-surface-200 overflow-hidden">
+            <div className="h-full bg-accent transition-all duration-300" style={{ width: `${batchPct}%` }} />
+          </div>
+        </div>
+      )}
+
       {/* Main Studio Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        
+
         {/* Left Side: Asset Library & Layer Tree (4 cols) */}
-        <div className="lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[650px]">
-          
-          {/* Category Tabs */}
-          <div className="grid grid-cols-8 gap-0.5 p-1 bg-surface-200 rounded-lg border border-border">
-            {(['AI_GEN', 'ARCHETYPES', 'CUSTOM', 'PERSONAS', 'LOGOS', 'SYMBOLS', 'BGS', 'LAYERS'] as const).map(tab => (
+        <div className={`lg:col-span-4 pro-panel p-3.5 rounded-xl space-y-3 flex flex-col h-[650px] ${busy ? 'opacity-60 pointer-events-none' : ''}`}>
+
+          {/* Category Tabs — readable scrollable segmented control */}
+          <div className="flex gap-1 p-1 bg-surface-200 rounded-lg border border-border overflow-x-auto scrollbar-none">
+            {TABS.map(({ key, label, tooltip, icon: Icon }) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-1.5 text-[8px] font-mono font-bold uppercase rounded-md transition-all truncate flex items-center justify-center gap-0.5 ${
-                  activeTab === tab
+                key={key}
+                onClick={() => setActiveTab(key)}
+                title={tooltip}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold whitespace-nowrap transition-colors focus-ring ${
+                  activeTab === key
                     ? 'bg-surface-100 text-foreground shadow-subtle'
                     : 'text-muted hover:text-foreground'
                 }`}
-                title={tab === 'AI_GEN' ? 'AI Nano Banana 2 Generator' : tab === 'ARCHETYPES' ? 'Reference Archetypes' : tab}
               >
-                {tab === 'AI_GEN' ? (
-                  <>
-                    <Sparkles className="w-2.5 h-2.5 text-blue-400" />
-                    <span>AI AUTO</span>
-                  </>
-                ) : tab === 'ARCHETYPES' ? (
-                  <>
-                    <Layers className="w-2.5 h-2.5 text-purple-400" />
-                    <span>REFS (56)</span>
-                  </>
-                ) : tab}
+                <Icon className={`w-4 h-4 ${activeTab === key ? 'text-accent' : ''}`} />
+                <span>{label}</span>
               </button>
             ))}
           </div>
@@ -935,30 +883,28 @@ export const ThumbnailStudio: React.FC = () => {
             <div className="p-3 rounded-lg bg-surface-200/80 border border-border space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <Wand2 className="w-3.5 h-3.5 text-blue-400" />
-                  <span className="text-[10px] font-mono font-bold uppercase text-foreground">
-                    1-Click Auto Thumbnail Factory
+                  <Wand2 className="w-3.5 h-3.5 text-accent" />
+                  <span className="text-xs font-bold uppercase text-foreground tracking-wide">
+                    1-Click Auto Thumbnail
                   </span>
                 </div>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  Nano Banana 2
-                </span>
+                <span className="badge badge-accent">Nano Banana 2</span>
               </div>
 
               {/* 1. Pick Reference Archetype */}
               <div className="space-y-1">
-                <label className="block text-[9px] font-mono text-muted flex items-center justify-between">
-                  <span>1. Reference Visual Style:</span>
-                  <span className="text-[8.5px] text-blue-400 font-bold">{REFERENCE_ARCHETYPES.find(a => a.url === selectedRefArchetype)?.name || 'Default Style'}</span>
+                <label className="block text-[11px] font-mono text-muted flex items-center justify-between">
+                  <span>1. Reference visual style</span>
+                  <span className="text-accent font-bold truncate max-w-[140px]">{REFERENCE_ARCHETYPES.find(a => a.url === selectedRefArchetype)?.name || 'Default Style'}</span>
                 </label>
                 <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {REFERENCE_ARCHETYPES.slice(0, 12).map(arch => (
+                  {REFERENCE_ARCHETYPES.slice(0, 14).map(arch => (
                     <button
                       key={arch.id}
                       onClick={() => setSelectedRefArchetype(arch.url)}
-                      className={`relative flex-shrink-0 w-16 aspect-video rounded-md overflow-hidden border transition-all ${
+                      className={`relative flex-shrink-0 w-16 aspect-video rounded-md overflow-hidden border transition-all focus-ring ${
                         selectedRefArchetype === arch.url
-                          ? 'border-blue-500 ring-2 ring-blue-500/30'
+                          ? 'border-accent ring-2 ring-accent/30'
                           : 'border-border opacity-70 hover:opacity-100'
                       }`}
                       title={arch.name}
@@ -971,18 +917,18 @@ export const ThumbnailStudio: React.FC = () => {
 
               {/* 2. Pick Persona Face */}
               <div className="space-y-1">
-                <label className="block text-[9px] font-mono text-muted flex items-center justify-between">
-                  <span>2. Host Persona Cutout:</span>
-                  <span className="text-[8.5px] text-foreground font-bold">{activeLang} Persona</span>
+                <label className="block text-[11px] font-mono text-muted flex items-center justify-between">
+                  <span>2. Host persona cutout</span>
+                  <span className="text-foreground font-bold">{personaSource === 'STUDIO' ? `${activeHost} pack` : `${activeLang}`}</span>
                 </label>
                 <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {(DEFAULT_PERSONAS[activeLang] || DEFAULT_PERSONAS['English']).map((p, idx) => (
+                  {currentPersonas.map((p, idx) => (
                     <button
                       key={idx}
                       onClick={() => setSelectedPersonaUrl(p.url)}
-                      className={`relative flex-shrink-0 w-10 h-10 rounded-lg bg-surface-300 border flex items-center justify-center p-0.5 transition-all ${
+                      className={`relative flex-shrink-0 w-11 h-11 rounded-lg bg-surface-300 border flex items-center justify-center p-0.5 transition-all focus-ring ${
                         selectedPersonaUrl === p.url
-                          ? 'border-emerald-500 ring-2 ring-emerald-500/30'
+                          ? 'border-success ring-2 ring-success/30'
                           : 'border-border opacity-70 hover:opacity-100'
                       }`}
                       title={p.name}
@@ -995,9 +941,7 @@ export const ThumbnailStudio: React.FC = () => {
 
               {/* 3. Prompt Description */}
               <div>
-                <label className="block text-[9px] font-mono text-muted mb-1">
-                  3. Topic / Prompt:
-                </label>
+                <label className="block text-[11px] font-mono text-muted mb-1">3. Topic / prompt</label>
                 <textarea
                   rows={2}
                   value={aiPrompt}
@@ -1008,44 +952,37 @@ export const ThumbnailStudio: React.FC = () => {
               </div>
 
               {/* Prompt Suggestions */}
-              <div className="space-y-1">
-                <div className="flex gap-1 flex-wrap">
-                  {[
-                    'Excel Dashboard Neon',
-                    'Notion Minimal 3D',
-                    'SaaS Automation Studio',
-                    'Clean Dark Slate'
-                  ].map(style => (
-                    <button
-                      key={style}
-                      onClick={() => setAiPrompt(`High-CTR YouTube thumbnail background for ${style}, dramatic volumetric lighting, ultra-clean 3D composition, 16:9`)}
-                      className="px-1.5 py-0.5 rounded bg-surface-300 text-[8.5px] font-mono text-muted hover:text-foreground hover:bg-surface-100 transition-colors"
-                    >
-                      {style}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex gap-1 flex-wrap">
+                {['Excel Dashboard Neon', 'Notion Minimal 3D', 'SaaS Automation Studio', 'Clean Dark Slate'].map(style => (
+                  <button
+                    key={style}
+                    onClick={() => setAiPrompt(`High-CTR YouTube thumbnail background for ${style}, dramatic volumetric lighting, ultra-clean 3D composition, 16:9`)}
+                    className="px-2 py-0.5 rounded bg-surface-300 text-[11px] font-mono text-muted hover:text-foreground hover:bg-surface-100 transition-colors focus-ring"
+                  >
+                    {style}
+                  </button>
+                ))}
               </div>
 
               {/* Model & Size Selector */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[8.5px] font-mono text-muted mb-0.5">Model Engine:</label>
+                  <label className="block text-[11px] font-mono text-muted mb-0.5">Model engine</label>
                   <select
                     value={aiModel}
                     onChange={(e) => setAiModel(e.target.value as any)}
-                    className="pro-input w-full text-[9.5px] rounded p-1 font-mono"
+                    className="pro-input w-full text-[11px] rounded p-1.5 font-mono"
                   >
                     <option value="gemini-2.5-flash-image">Nano Banana Flash (Fast)</option>
                     <option value="gemini-3-pro-image">Nano Banana Pro (2K)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[8.5px] font-mono text-muted mb-0.5">Resolution Floor:</label>
+                  <label className="block text-[11px] font-mono text-muted mb-0.5">Resolution floor</label>
                   <select
                     value={aiImageSize}
                     onChange={(e) => setAiImageSize(e.target.value as any)}
-                    className="pro-input w-full text-[9.5px] rounded p-1 font-mono"
+                    className="pro-input w-full text-[11px] rounded p-1.5 font-mono"
                   >
                     <option value="1K">1K (1344x768)</option>
                     <option value="2K">2K (2752x1536 Pro)</option>
@@ -1054,12 +991,12 @@ export const ThumbnailStudio: React.FC = () => {
               </div>
 
               {aiGenError && (
-                <div className="p-2 rounded bg-red-500/10 border border-red-500/20 text-[10px] font-mono text-red-400">
+                <div className="p-2 rounded bg-danger/10 border border-danger/20 text-[11px] font-mono text-danger">
                   {aiGenError}
                 </div>
               )}
 
-              {/* Action Buttons: Auto-Compose Full Thumbnail vs Background Only */}
+              {/* Action Buttons */}
               <div className="space-y-1.5">
                 <button
                   onClick={() => handleAutoComposeThumbnail()}
@@ -1069,11 +1006,11 @@ export const ThumbnailStudio: React.FC = () => {
                   {isGeneratingAI ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Composing AI Thumbnail (~15s)...</span>
+                      <span>Composing thumbnail (~15s)…</span>
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-3.5 h-3.5 text-blue-300" />
+                      <Sparkles className="w-3.5 h-3.5" />
                       <span>Auto-Compose Complete Thumbnail</span>
                     </>
                   )}
@@ -1082,9 +1019,9 @@ export const ThumbnailStudio: React.FC = () => {
                 <button
                   onClick={handleGenerateAIImage}
                   disabled={isGeneratingAI || !aiPrompt.trim()}
-                  className="btn-outline w-full py-1.5 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1 text-muted hover:text-foreground disabled:opacity-50"
+                  className="btn-outline w-full py-1.5 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1 text-muted hover:text-foreground disabled:opacity-50"
                 >
-                  <Layers className="w-3 h-3" />
+                  <Layers className="w-3.5 h-3.5" />
                   <span>Generate Background Plate Only</span>
                 </button>
               </div>
@@ -1095,19 +1032,19 @@ export const ThumbnailStudio: React.FC = () => {
           {activeTab === 'ARCHETYPES' && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono font-bold uppercase text-foreground">
-                  High-CTR Reference Library ({REFERENCE_ARCHETYPES.length})
+                <span className="text-xs font-bold uppercase text-foreground tracking-wide">
+                  Reference Library ({REFERENCE_ARCHETYPES.length})
                 </span>
-                <span className="text-[9px] font-mono text-muted">From Content Forge</span>
+                <span className="text-[11px] font-mono text-muted">High-CTR</span>
               </div>
 
               {/* Category Filter Pills */}
               <div className="flex gap-1 flex-wrap">
-                {(['ALL', 'Tutorials', 'Comparisons', 'Modern Tech', 'Design & Mobile', 'Classics'] as const).map(cat => (
+                {(['ALL', ...ARCHETYPE_CATEGORIES] as const).map(cat => (
                   <button
                     key={cat}
                     onClick={() => setArchetypeFilter(cat)}
-                    className={`px-2 py-0.5 rounded text-[9px] font-mono font-semibold transition-colors ${
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold transition-colors focus-ring ${
                       archetypeFilter === cat
                         ? 'bg-surface-100 text-foreground border border-border-strong'
                         : 'bg-surface-200 text-muted hover:text-foreground'
@@ -1124,18 +1061,18 @@ export const ThumbnailStudio: React.FC = () => {
           {activeTab === 'CUSTOM' && (
             <div className="p-2.5 rounded-lg bg-surface-200 border border-border space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono font-bold uppercase text-foreground">
-                  Custom Brand Reference Upload
+                <span className="text-xs font-bold uppercase text-foreground tracking-wide">
+                  Custom Uploads
                 </span>
                 <button
                   onClick={handleAddTextElement}
-                  className="btn-outline px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1"
+                  className="btn-outline px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1"
                 >
-                  <Type className="w-3 h-3" /> + Add Text
+                  <Type className="w-3 h-3" /> Add Text
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <label className="btn-solid py-1.5 px-2 rounded text-[10px] font-bold text-center cursor-pointer flex items-center justify-center gap-1">
+                <label className="btn-solid py-1.5 px-2 rounded text-[11px] font-bold text-center cursor-pointer flex items-center justify-center gap-1">
                   <Upload className="w-3 h-3" /> Face / Persona
                   <input
                     type="file"
@@ -1144,7 +1081,7 @@ export const ThumbnailStudio: React.FC = () => {
                     onChange={(e) => handleUploadCustomAsset(e, 'PERSONAS')}
                   />
                 </label>
-                <label className="btn-outline py-1.5 px-2 rounded text-[10px] font-bold text-center cursor-pointer flex items-center justify-center gap-1">
+                <label className="btn-outline py-1.5 px-2 rounded text-[11px] font-bold text-center cursor-pointer flex items-center justify-center gap-1">
                   <Upload className="w-3 h-3" /> Logo / Symbol
                   <input
                     type="file"
@@ -1157,42 +1094,72 @@ export const ThumbnailStudio: React.FC = () => {
             </div>
           )}
 
-          {/* Language selector for personas */}
+          {/* Persona source + language / host selector */}
           {activeTab === 'PERSONAS' && (
-            <div className="flex flex-wrap gap-1">
-              {LANGUAGES.map(lang => (
+            <div className="space-y-2">
+              <div className="flex items-center bg-surface-200 rounded-lg p-0.5 border border-border text-[11px] font-semibold">
                 <button
-                  key={lang}
-                  onClick={() => setActiveLang(lang)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
-                    activeLang === lang
-                      ? 'bg-surface-300 text-foreground border border-border-strong'
-                      : 'bg-surface-200 text-muted hover:text-foreground'
-                  }`}
+                  onClick={() => setPersonaSource('LANG')}
+                  className={`flex-1 px-2 py-1 rounded transition-colors focus-ring ${personaSource === 'LANG' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
                 >
-                  {lang}
+                  Language Cutouts
                 </button>
-              ))}
+                <button
+                  onClick={() => setPersonaSource('STUDIO')}
+                  className={`flex-1 px-2 py-1 rounded transition-colors focus-ring ${personaSource === 'STUDIO' ? 'bg-surface-100 text-foreground shadow-subtle' : 'text-muted'}`}
+                >
+                  Studio Hosts
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {personaSource === 'LANG'
+                  ? PERSONA_LANGUAGES.map(lang => (
+                      <button
+                        key={lang}
+                        onClick={() => setActiveLang(lang)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold focus-ring ${
+                          activeLang === lang
+                            ? 'bg-surface-300 text-foreground border border-border-strong'
+                            : 'bg-surface-200 text-muted hover:text-foreground'
+                        }`}
+                      >
+                        {lang}
+                      </button>
+                    ))
+                  : STUDIO_HOST_NAMES.map(name => (
+                      <button
+                        key={name}
+                        onClick={() => setActiveHost(name)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold focus-ring ${
+                          activeHost === name
+                            ? 'bg-surface-300 text-foreground border border-border-strong'
+                            : 'bg-surface-200 text-muted hover:text-foreground'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+              </div>
             </div>
           )}
 
           {/* Search Box */}
-          {activeTab !== 'LAYERS' && (
+          {(activeTab === 'LOGOS' || activeTab === 'SYMBOLS' || activeTab === 'ARCHETYPES') && (
             <div className="relative">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Filter assets..."
-                className="pro-input w-full rounded-md px-2.5 py-1 text-xs"
+                className="pro-input w-full rounded-md px-2.5 py-1.5 text-xs"
               />
-              <Search className="w-3.5 h-3.5 text-muted absolute right-2.5 top-2" />
+              <Search className="w-3.5 h-3.5 text-muted absolute right-2.5 top-2.5" />
             </div>
           )}
 
           {/* Content Area */}
           <div className="flex-1 overflow-y-auto p-0.5 space-y-2">
-            
+
             {/* AI Generated Images Gallery */}
             {activeTab === 'AI_GEN' && (
               <div className="space-y-2">
@@ -1200,44 +1167,26 @@ export const ThumbnailStudio: React.FC = () => {
                   <div className="text-center py-8 text-xs text-muted space-y-1">
                     <Sparkles className="w-5 h-5 mx-auto text-muted/50 mb-1" />
                     <p className="font-semibold text-foreground">No AI thumbnails generated yet.</p>
-                    <p className="text-[11px]">Type a prompt above and click "Generate AI Thumbnail" to produce high-CTR 16:9 plates.</p>
+                    <p className="text-[11px]">Type a prompt above and auto-compose to produce high-CTR 16:9 plates.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="text-[10px] font-mono uppercase font-bold text-muted">
-                      Generated AI Plates ({generatedAiImages.length}):
+                    <div className="text-[11px] font-mono uppercase font-bold text-muted">
+                      Generated AI Plates ({generatedAiImages.length})
                     </div>
                     <div className="grid grid-cols-1 gap-2.5">
                       {generatedAiImages.map((imgUri, idx) => (
                         <div key={idx} className="p-2 rounded-lg bg-surface-200 border border-border space-y-2 group">
                           <div className="aspect-video relative rounded-md overflow-hidden bg-black border border-border">
                             <img src={imgUri} alt={`AI Gen ${idx + 1}`} className="w-full h-full object-cover" />
-                            <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-md text-[9px] font-mono text-white">
+                            <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-md text-[10px] font-mono text-white">
                               Plate #{generatedAiImages.length - idx}
                             </div>
                           </div>
                           <div className="grid grid-cols-3 gap-1 pt-1">
-                            <button
-                              onClick={() => handleSetAiAsBg(imgUri)}
-                              className="btn-solid py-1 px-1 rounded text-[9px] font-bold text-center"
-                              title="Set as Canvas Background"
-                            >
-                              Set BG
-                            </button>
-                            <button
-                              onClick={() => handleAddAiAsLayer(imgUri)}
-                              className="btn-outline py-1 px-1 rounded text-[9px] font-bold text-center"
-                              title="Add as Layer"
-                            >
-                              + Layer
-                            </button>
-                            <button
-                              onClick={() => handleSaveAiToAssets(imgUri)}
-                              className="btn-outline py-1 px-1 rounded text-[9px] font-bold text-center"
-                              title="Save to Custom Assets Library"
-                            >
-                              Save
-                            </button>
+                            <button onClick={() => handleSetAiAsBg(imgUri)} className="btn-solid py-1 px-1 rounded text-[11px] font-bold text-center" title="Set as Canvas Background">Set BG</button>
+                            <button onClick={() => handleAddAiAsLayer(imgUri)} className="btn-outline py-1 px-1 rounded text-[11px] font-bold text-center" title="Add as Layer">+ Layer</button>
+                            <button onClick={() => handleSaveAiToAssets(imgUri)} className="btn-outline py-1 px-1 rounded text-[11px] font-bold text-center" title="Save to Custom Assets Library">Save</button>
                           </div>
                         </div>
                       ))}
@@ -1247,11 +1196,11 @@ export const ThumbnailStudio: React.FC = () => {
               </div>
             )}
 
-            {/* Reference Archetypes Library (56 Templates) */}
+            {/* Reference Archetypes Library */}
             {activeTab === 'ARCHETYPES' && (
               <div className="space-y-3">
-                <div className="text-[10px] font-mono uppercase font-bold text-muted">
-                  Showing {REFERENCE_ARCHETYPES.filter(a => (archetypeFilter === 'ALL' || a.category === archetypeFilter) && a.name.toLowerCase().includes(searchQuery.toLowerCase())).length} Archetypes:
+                <div className="text-[11px] font-mono uppercase font-bold text-muted">
+                  Showing {REFERENCE_ARCHETYPES.filter(a => (archetypeFilter === 'ALL' || a.category === archetypeFilter) && a.name.toLowerCase().includes(searchQuery.toLowerCase())).length} archetypes
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {REFERENCE_ARCHETYPES
@@ -1261,27 +1210,24 @@ export const ThumbnailStudio: React.FC = () => {
                         <div className="aspect-video relative rounded overflow-hidden bg-black border border-border/50">
                           <img src={arch.url} alt={arch.name} className="w-full h-full object-cover" />
                           <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1">
-                            <p className="text-[8.5px] font-bold text-white truncate">{arch.name}</p>
-                            <span className="text-[7.5px] font-mono text-muted uppercase">{arch.category}</span>
+                            <p className="text-[10px] font-bold text-white truncate">{arch.name}</p>
+                            <span className="text-[9px] font-mono text-white/70 uppercase">{arch.category}</span>
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-1">
                           <button
                             onClick={() => handleAddAsset('BACKGROUND', arch.url)}
-                            className="btn-solid py-1 px-1 rounded text-[8.5px] font-bold text-center"
+                            className="btn-solid py-1 px-1 rounded text-[11px] font-bold text-center"
                             title="Set as Canvas Background"
                           >
                             Use BG
                           </button>
                           <button
-                            onClick={() => {
-                              setSelectedRefArchetype(arch.url);
-                              setActiveTab('AI_GEN');
-                            }}
-                            className="btn-outline py-1 px-1 rounded text-[8.5px] font-bold text-center text-blue-400 border-blue-500/30"
+                            onClick={() => { setSelectedRefArchetype(arch.url); setActiveTab('AI_GEN'); }}
+                            className="btn-outline py-1 px-1 rounded text-[11px] font-bold text-center text-accent border-accent/30"
                             title="Use as Style Reference in AI Studio"
                           >
-                            AI Auto
+                            AI Ref
                           </button>
                         </div>
                       </div>
@@ -1309,10 +1255,7 @@ export const ThumbnailStudio: React.FC = () => {
                           <img src={asset.url} alt={asset.name} className="max-h-full object-contain" />
                         </button>
                         <button
-                          onClick={() => {
-                            StorageService.deleteCustomThumbnailAsset(asset.id);
-                            setCustomAssets(StorageService.getCustomThumbnailAssets());
-                          }}
+                          onClick={() => handleDeleteCustomAsset(asset)}
                           className="absolute top-1 right-1 p-1 rounded bg-black/80 text-white opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Delete Asset"
                         >
@@ -1328,7 +1271,7 @@ export const ThumbnailStudio: React.FC = () => {
             {/* Layer Tree */}
             {activeTab === 'LAYERS' && (
               <div className="space-y-1.5">
-                <div className="text-[10px] font-mono uppercase text-muted font-bold px-1">Active Layers ({elements.length})</div>
+                <div className="text-[11px] font-mono uppercase text-muted font-bold px-1">Active Layers ({elements.length})</div>
                 {elements.map((el) => (
                   <div
                     key={el.id}
@@ -1338,7 +1281,7 @@ export const ThumbnailStudio: React.FC = () => {
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-surface-300 text-muted">
+                      <span className="text-[10px] font-mono uppercase px-1 py-0.5 rounded bg-surface-300 text-muted">
                         {el.type}
                       </span>
                       <span className="truncate text-foreground text-[11px]">
@@ -1347,52 +1290,25 @@ export const ThumbnailStudio: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleMoveLayer(el.id, 'up'); }}
-                        className="p-1 text-muted hover:text-foreground"
-                        title="Move Up"
-                      >
-                        <ArrowUp className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleMoveLayer(el.id, 'down'); }}
-                        className="p-1 text-muted hover:text-foreground"
-                        title="Move Down"
-                      >
-                        <ArrowDown className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDuplicate(el); }}
-                        className="p-1 text-muted hover:text-foreground"
-                        title="Duplicate"
-                      >
-                        <Copy className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setElements(prev => prev.filter(item => item.id !== el.id));
-                          if (selectedId === el.id) setSelectedId(null);
-                        }}
-                        className="p-1 text-muted hover:text-red-500"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); handleMoveLayer(el.id, 'up'); }} className="p-1 text-muted hover:text-foreground" title="Move Up"><ArrowUp className="w-3 h-3" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleMoveLayer(el.id, 'down'); }} className="p-1 text-muted hover:text-foreground" title="Move Down"><ArrowDown className="w-3 h-3" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDuplicate(el); }} className="p-1 text-muted hover:text-foreground" title="Duplicate"><Copy className="w-3 h-3" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteElement(el.id); }} className="p-1 text-muted hover:text-danger" title="Delete"><Trash2 className="w-3 h-3" /></button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Default Personas */}
+            {/* Personas (language cutouts or studio hosts) */}
             {activeTab === 'PERSONAS' && (
               <div className="grid grid-cols-3 gap-2">
-                {(DEFAULT_PERSONAS[activeLang] || DEFAULT_PERSONAS['English']).map((p, i) => (
+                {currentPersonas.map((p, i) => (
                   <button
                     key={i}
-                    onClick={() => handleAddAsset('PERSON', p.url)}
+                    onClick={() => { handleAddAsset('PERSON', p.url); setSelectedPersonaUrl(p.url); }}
                     className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-1 flex flex-col items-center justify-center transition-transform hover:scale-105"
+                    title={p.name}
                   >
                     <img src={p.url} alt={p.name} className="max-h-full object-contain" />
                   </button>
@@ -1400,36 +1316,38 @@ export const ThumbnailStudio: React.FC = () => {
               </div>
             )}
 
-            {/* All 71 Logos */}
+            {/* Logos */}
             {activeTab === 'LOGOS' && (
               <div className="grid grid-cols-3 gap-2">
                 {filteredLogos.map((name, i) => (
                   <button
                     key={i}
-                    onClick={() => handleAddAsset('LOGO', `/app_logos_png/${name}`)}
+                    onClick={() => handleAddAsset('LOGO', resolveLogoPath(name))}
                     className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex flex-col items-center justify-center gap-1 transition-transform hover:scale-105"
+                    title={assetDisplayName(name)}
                   >
-                    <img src={`/app_logos_png/${name}`} alt={name} className="w-8 h-8 object-contain" />
-                    <span className="text-[9px] font-mono text-muted truncate w-full text-center">
-                      {name.replace(/\.png$/i, '').replace(/[-_]/g, ' ')}
+                    <img src={resolveLogoPath(name)} alt={name} className="w-8 h-8 object-contain" />
+                    <span className="text-[10px] font-mono text-muted truncate w-full text-center">
+                      {assetDisplayName(name)}
                     </span>
                   </button>
                 ))}
               </div>
             )}
 
-            {/* All 111 Symbols */}
+            {/* Symbols */}
             {activeTab === 'SYMBOLS' && (
               <div className="grid grid-cols-3 gap-2">
                 {filteredSymbols.map((sym, i) => (
                   <button
                     key={i}
-                    onClick={() => handleAddAsset('SYMBOL', `/bulk_symbols_110_colored/${sym}`)}
+                    onClick={() => handleAddAsset('SYMBOL', resolveSymbolPath(sym))}
                     className="aspect-square rounded-lg bg-surface-200 border border-border hover:border-border-strong p-2 flex flex-col items-center justify-center gap-1 transition-transform hover:scale-105"
+                    title={assetDisplayName(sym)}
                   >
-                    <img src={`/bulk_symbols_110_colored/${sym}`} alt={sym} className="w-8 h-8 object-contain" />
-                    <span className="text-[9px] font-mono text-muted truncate w-full text-center">
-                      {sym.replace(/\.png$/i, '').replace(/[-_]/g, ' ')}
+                    <img src={resolveSymbolPath(sym)} alt={sym} className="w-8 h-8 object-contain" />
+                    <span className="text-[10px] font-mono text-muted truncate w-full text-center">
+                      {assetDisplayName(sym)}
                     </span>
                   </button>
                 ))}
@@ -1439,16 +1357,14 @@ export const ThumbnailStudio: React.FC = () => {
             {/* Backgrounds */}
             {activeTab === 'BGS' && (
               <div className="grid grid-cols-1 gap-2">
-                {DEFAULT_BGS.map((bg, i) => (
+                {BACKGROUNDS.map((bg, i) => (
                   <button
                     key={i}
-                    onClick={() => {
-                      setElements(prev => prev.map(el => el.type === 'BACKGROUND' ? { ...el, url: bg.url } : el));
-                    }}
+                    onClick={() => setElements(prev => prev.map(el => el.type === 'BACKGROUND' ? { ...el, url: bg.url } : el))}
                     className="aspect-video rounded-lg overflow-hidden border border-border hover:border-border-strong relative group"
                   >
                     <img src={bg.url} alt={bg.name} className="w-full h-full object-cover" />
-                    <span className="absolute bottom-1 left-2 text-[10px] font-mono font-bold text-white bg-black/60 px-1.5 py-0.5 rounded">
+                    <span className="absolute bottom-1 left-2 text-[11px] font-mono font-bold text-white bg-black/60 px-1.5 py-0.5 rounded">
                       {bg.name}
                     </span>
                   </button>
@@ -1460,11 +1376,11 @@ export const ThumbnailStudio: React.FC = () => {
 
         </div>
 
-        {/* Right Side: Interactive Canvas & Rich Property Inspector (8 cols) */}
+        {/* Right Side: Interactive Canvas & Property Inspector (8 cols) */}
         <div className="lg:col-span-8 space-y-3">
-          
+
           <div className="pro-panel p-4 rounded-xl flex flex-col items-center justify-center overflow-hidden min-h-[480px]">
-            
+
             {/* Canvas */}
             <div
               ref={canvasRef}
@@ -1509,7 +1425,7 @@ export const ThumbnailStudio: React.FC = () => {
                       } : item));
                     }}
                     bounds="parent"
-                    style={{ 
+                    style={{
                       zIndex: el.zIndex,
                       transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined
                     }}
@@ -1543,11 +1459,7 @@ export const ThumbnailStudio: React.FC = () => {
                           padding: el.padding || '0'
                         }}
                       >
-                        <img
-                          src={el.url}
-                          alt="Asset"
-                          className="w-full h-full object-contain pointer-events-none"
-                        />
+                        <img src={el.url} alt="Asset" className="w-full h-full object-contain pointer-events-none" />
                       </div>
                     )}
                   </Rnd>
@@ -1560,7 +1472,7 @@ export const ThumbnailStudio: React.FC = () => {
           {/* Property Inspector Bar when element selected */}
           {selectedElement && (
             <div className="pro-panel p-3.5 rounded-xl space-y-3 animate-fadeIn border border-border">
-              
+
               {/* Row 1: Text content & Actions */}
               <div className="flex flex-wrap items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2 flex-1 min-w-[200px]">
@@ -1588,11 +1500,8 @@ export const ThumbnailStudio: React.FC = () => {
                     <Copy className="w-3 h-3" /> Duplicate
                   </button>
                   <button
-                    onClick={() => {
-                      setElements(prev => prev.filter(el => el.id !== selectedElement.id));
-                      setSelectedId(null);
-                    }}
-                    className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-red-500 hover:text-red-400"
+                    onClick={() => handleDeleteElement(selectedElement.id)}
+                    className="btn-outline px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 text-danger hover:text-danger"
                   >
                     <Trash2 className="w-3.5 h-3.5" /> Remove
                   </button>
@@ -1602,8 +1511,7 @@ export const ThumbnailStudio: React.FC = () => {
               {/* Row 2: Typography & Styling (if TEXT) */}
               {selectedElement.type === 'TEXT' && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-border text-xs">
-                  
-                  {/* Font Family */}
+
                   <div>
                     <label className="block text-[10px] font-mono text-muted uppercase font-bold mb-0.5">Font</label>
                     <select
@@ -1620,7 +1528,6 @@ export const ThumbnailStudio: React.FC = () => {
                     </select>
                   </div>
 
-                  {/* Font Size */}
                   <div>
                     <label className="block text-[10px] font-mono text-muted uppercase font-bold mb-0.5">
                       Size: {selectedElement.fontSize || 64}px
@@ -1634,11 +1541,10 @@ export const ThumbnailStudio: React.FC = () => {
                         const val = parseInt(e.target.value, 10);
                         setElements(prev => prev.map(el => el.id === selectedElement.id ? { ...el, fontSize: val } : el));
                       }}
-                      className="w-full cursor-pointer accent-foreground"
+                      className="w-full cursor-pointer accent-accent"
                     />
                   </div>
 
-                  {/* Fill Color */}
                   <div>
                     <label className="block text-[10px] font-mono text-muted uppercase font-bold mb-0.5">Text Color</label>
                     <input
@@ -1652,7 +1558,6 @@ export const ThumbnailStudio: React.FC = () => {
                     />
                   </div>
 
-                  {/* Stroke Border */}
                   <div>
                     <label className="block text-[10px] font-mono text-muted uppercase font-bold mb-0.5">
                       Stroke: {selectedElement.strokeWidth || 8}px
@@ -1666,7 +1571,7 @@ export const ThumbnailStudio: React.FC = () => {
                         const val = parseInt(e.target.value, 10);
                         setElements(prev => prev.map(el => el.id === selectedElement.id ? { ...el, strokeWidth: val } : el));
                       }}
-                      className="w-full cursor-pointer accent-foreground"
+                      className="w-full cursor-pointer accent-accent"
                     />
                   </div>
 

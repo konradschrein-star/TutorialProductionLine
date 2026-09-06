@@ -243,6 +243,10 @@ export interface TutorialFolderInput {
   title: string | null | undefined;
   channelName: string | null | undefined;
   completedAt: Date;
+  sourceJobId?: string | null;
+  sourceTitle?: string | null;
+  languageCode?: string | null;
+  bundleFolderName?: string;
   tutorialsFolderName?: string;
 }
 
@@ -252,17 +256,23 @@ export interface TutorialFolderInput {
  */
 export function planTutorialFolder(input: TutorialFolderInput): FolderPlan {
   const root = input.tutorialsFolderName ?? DEFAULT_TUTORIALS_FOLDER_NAME;
+  const leafJobId = input.sourceJobId ?? input.jobId;
+  const leafTitle = input.sourceJobId
+    ? (input.sourceTitle ?? input.title)
+    : input.title;
   const jobFolder = [
     dayStamp(input.completedAt),
-    slugifyTitle(input.title ?? ""),
-    shortJobId(input.jobId),
+    slugifyTitle(leafTitle ?? ""),
+    shortJobId(leafJobId),
   ].join("__");
   const segments = [
     root,
-    sanitizeChannelFolder(input.channelName),
+    sanitizeChannelFolder(input.bundleFolderName ?? input.channelName),
     monthFolder(input.completedAt),
     jobFolder,
   ];
+  const language = languageSegment(input.languageCode);
+  if (language) segments.push(language);
   return { segments, path: segments.join("/") };
 }
 

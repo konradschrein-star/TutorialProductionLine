@@ -4,6 +4,7 @@ import {
   varchar,
   boolean,
   timestamp,
+  bigint,
 } from "drizzle-orm/pg-core";
 import { operatorRoleEnum } from "./enums.js";
 
@@ -39,6 +40,10 @@ export const users = pgTable("users", {
    * is refused rather than attributed to a guessed brand.
    */
   default_tutorial_channel_id: uuid("default_tutorial_channel_id"),
+  last_seen_at: timestamp("last_seen_at", { withTimezone: true }),
+  online_seconds_total: bigint("online_seconds_total", { mode: "number" })
+    .notNull()
+    .default(0),
   created_at: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

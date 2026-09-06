@@ -47,6 +47,9 @@ export interface Channel {
 
 export interface ChannelWithJobCount extends Channel {
   job_count: number;
+  scheduled_count: number;
+  uploaded_count: number;
+  verified_upload_count: number;
 }
 
 /**
@@ -61,6 +64,9 @@ export async function listChannels(): Promise<ChannelWithJobCount[]> {
     .select({
       channel: channels,
       job_count: sql<number>`cast(count(tj.id) as integer)`,
+      scheduled_count: sql<number>`cast(count(tj.id) filter (where tj.uploader_status = 'scheduled') as integer)`,
+      uploaded_count: sql<number>`cast(count(tj.id) filter (where tj.uploader_status = 'uploaded' or tj.is_uploaded = true) as integer)`,
+      verified_upload_count: sql<number>`cast(count(tj.id) filter (where tj.upload_verified_at is not null) as integer)`,
     })
     .from(channels)
     .leftJoin(sql`tutorial_jobs tj`, sql`${channels.id} = tj.channel_id`)
@@ -70,6 +76,9 @@ export async function listChannels(): Promise<ChannelWithJobCount[]> {
   return result.map((row) => ({
     ...row.channel,
     job_count: row.job_count || 0,
+    scheduled_count: row.scheduled_count || 0,
+    uploaded_count: row.uploaded_count || 0,
+    verified_upload_count: row.verified_upload_count || 0,
   }));
 }
 

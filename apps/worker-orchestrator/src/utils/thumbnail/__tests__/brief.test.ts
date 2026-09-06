@@ -442,7 +442,7 @@ describe("deriveHeadline", () => {
     expect(r.source).toBe("none");
   });
 
-  it("uses an operator headline verbatim, never overriding a human", async () => {
+  it("condenses an operator headline to meaningful thumbnail words", async () => {
     const r = await deriveHeadline({
       title: "T",
       operatorHeadline: "My Words",
@@ -451,7 +451,7 @@ describe("deriveHeadline", () => {
       format: "OTHER",
       llm: async () => "SHOULD NOT BE USED",
     });
-    expect(r.headline).toBe("My Words");
+    expect(r.headline).toBe("Words");
     expect(r.source).toBe("operator");
   });
 

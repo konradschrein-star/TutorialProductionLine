@@ -30,6 +30,17 @@ export const tutorialSettings = pgTable("tutorial_settings", {
   drive_autoupload_enabled: boolean("drive_autoupload_enabled")
     .notNull()
     .default(false),
+  thumbnail_generation_mode: text("thumbnail_generation_mode")
+    .notNull()
+    .default("ai"),
+  thumbnail_background_rotation: jsonb("thumbnail_background_rotation")
+    .$type<string[]>()
+    .notNull()
+    .default(["Modern Minimal Tech", "Neon Glow Studio", "Dark Corporate Slate", "Abstract Gradient Blue"]),
+  thumbnail_persona_rotation: jsonb("thumbnail_persona_rotation")
+    .$type<Record<string, string[]>>()
+    .notNull()
+    .default({}),
   default_voice_settings: jsonb("default_voice_settings").$type<
     Record<string, unknown>
   >(),

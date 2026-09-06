@@ -85,3 +85,4 @@ export * from "./compute-nodes.js";
 
 // Storage links: finished-product artefacts -> VPS + Google Drive (migration 0041)
 export * from "./storage-artifacts.js";
+export * from "./thumbnail-library-assets.js";

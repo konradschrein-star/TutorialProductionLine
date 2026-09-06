@@ -7,6 +7,7 @@ import type {
   StorageOwnerKind,
 } from "@repo/db";
 import { loadStorageConfig, type DriveConfig } from "./config.js";
+import { loadStorageConfigFromDatabase } from "./runtime-config.js";
 import { classifyThrown, storageError, type StorageError } from "./errors.js";
 import {
   ARTIFACT_FILENAMES,
@@ -247,6 +248,21 @@ export class ArtifactStore {
       return { ok: true, store: new ArtifactStore(db, deps.config, deps) };
     }
     const configured = loadStorageConfig();
+    if (!configured.enabled) return { ok: false, reason: configured.reason };
+    return { ok: true, store: new ArtifactStore(db, configured.drive, deps) };
+  }
+
+  /** Runtime constructor used by UI-configurable deployments. */
+  static async createFromDatabase(
+    db: DrizzleClient,
+    deps: ArtifactStoreDeps = {},
+  ): Promise<
+    { ok: true; store: ArtifactStore } | { ok: false; reason: string }
+  > {
+    if (deps.config !== undefined) {
+      return { ok: true, store: new ArtifactStore(db, deps.config, deps) };
+    }
+    const configured = await loadStorageConfigFromDatabase(db);
     if (!configured.enabled) return { ok: false, reason: configured.reason };
     return { ok: true, store: new ArtifactStore(db, configured.drive, deps) };
   }

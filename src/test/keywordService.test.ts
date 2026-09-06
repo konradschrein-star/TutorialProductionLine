@@ -100,4 +100,29 @@ describe('KeywordService Unit Tests', () => {
     const suggestions = await KeywordService.fetchGoogleSuggestions('Excel');
     expect(suggestions.length).toBeGreaterThan(0);
   });
+
+  it('should assign a keyword to a specific VA user', () => {
+    const keywords = KeywordService.getKeywords();
+    const target = keywords[0];
+
+    const updated = KeywordService.assignKeyword(target.id, 'usr_va_1', 'Virtual Assistant 1');
+    expect(updated?.assignedTo).toBe('usr_va_1');
+    expect(updated?.assignedToName).toBe('Virtual Assistant 1');
+
+    const retrieved = KeywordService.getKeywords().find(k => k.id === target.id);
+    expect(retrieved?.assignedTo).toBe('usr_va_1');
+    expect(retrieved?.assignedToName).toBe('Virtual Assistant 1');
+  });
+
+  it('should batch assign multiple keywords to a VA user', () => {
+    const keywords = KeywordService.getKeywords();
+    const targets = keywords.slice(0, 3);
+    const ids = targets.map(t => t.id);
+
+    KeywordService.batchAssignUser(ids, 'usr_va_2', 'Virtual Assistant 2');
+    const updated = KeywordService.getKeywords().filter(k => ids.includes(k.id));
+    expect(updated.length).toBe(3);
+    expect(updated.every(k => k.assignedTo === 'usr_va_2')).toBe(true);
+    expect(updated.every(k => k.assignedToName === 'Virtual Assistant 2')).toBe(true);
+  });
 });

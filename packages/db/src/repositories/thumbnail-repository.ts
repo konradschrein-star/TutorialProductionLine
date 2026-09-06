@@ -646,6 +646,7 @@ export async function selectThumbnail(
       and(
         eq(thumbnails.subject_kind, target.subject_kind),
         eq(thumbnails.subject_id, target.subject_id),
+        eq(thumbnails.language, target.language),
       ),
     );
   return updateThumbnailRecord(db, thumbnailId, { is_selected: true });

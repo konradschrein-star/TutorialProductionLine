@@ -8,12 +8,16 @@ import { listChannels } from "@/lib/repositories/channel-repository";
 import { getActiveFormats } from "@/lib/formats";
 import { ThumbnailStudioClient } from "./_components/studio-client";
 import type { ChannelBrandingData } from "./_components/branding-form";
+import { getSession } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/auth/rbac";
 
 export const metadata = {
   title: "Thumbnail Studio",
 };
 
-export default async function ThumbnailsPage() {
+export default async function ThumbnailsPage({ searchParams }: { searchParams: Promise<{ jobId?: string }> }) {
+  const { jobId } = await searchParams;
+  const session = await getSession();
   const [archetypes, channels, formats] = await Promise.all([
     listArchetypes(),
     listChannels(),
@@ -42,6 +46,8 @@ export default async function ThumbnailsPage() {
       channels={channels.map((c) => ({ id: c.id, name: c.name }))}
       formats={formats}
       channelData={channelData}
+      initialJobId={jobId ?? null}
+      canConfigure={hasPermission(session, "view:settings")}
     />
   );
 }

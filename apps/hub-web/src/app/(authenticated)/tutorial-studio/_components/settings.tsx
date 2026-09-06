@@ -670,6 +670,110 @@ function RecordingDefaults({ settings }: { settings: TutorialSettingsRow }) {
   );
 }
 
+function ThumbnailGenerationMode({ settings }: { settings: TutorialSettingsRow }) {
+  const [mode, setMode] = useState<"ai" | "manual">(
+    settings.thumbnail_generation_mode === "manual" ? "manual" : "ai",
+  );
+  const [saving, setSaving] = useState(false);
+
+  async function save(next: "ai" | "manual") {
+    setMode(next);
+    setSaving(true);
+    const result = await updateTutorialSettingsAction({ thumbnail_generation_mode: next });
+    setSaving(false);
+    if (result.success) toast.success(`Thumbnail mode set to ${next === "ai" ? "AI-generated" : "manual composer"}.`);
+    else toast.error(result.error ?? "Failed to save thumbnail mode.");
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(180px, 1fr))", gap: 10 }}>
+      {(["ai", "manual"] as const).map((value) => (
+        <button key={value} type="button" disabled={saving} onClick={() => void save(value)} style={{ padding: 14, borderRadius: 9, textAlign: "left", cursor: "pointer", color: "var(--v2-text-1)", background: mode === value ? "rgba(var(--v2-accent-rgb),.13)" : "var(--v2-surface-2)", border: mode === value ? "1px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.1)" }}>
+          <div style={{ fontSize: 12, fontWeight: 800 }}>{value === "ai" ? "AI-generated" : "Manual system"}</div>
+          <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--v2-text-2)" }}>{value === "ai" ? "Generate automatically, then let the VA review it." : "Wait for the VA to compose and approve the video-bound variants."}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ROTATION_BACKGROUNDS = [
+  "Modern Minimal Tech",
+  "Neon Glow Studio",
+  "Dark Corporate Slate",
+  "Abstract Gradient Blue",
+] as const;
+const PERSONA_ROTATION: Record<string, { label: string; poses: { label: string; path: string }[] }> = {
+  en: { label: "English host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `English/american-${pose}.png` })) },
+  de: { label: "German host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `germanese/german-${pose}.png` })) },
+  fr: { label: "French host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `French/french-${pose}.png` })) },
+  it: { label: "Italian host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `Italy/italian-${pose}.png` })) },
+  nl: { label: "Dutch host", poses: ["hero", "pointing", "explaining"].map((pose) => ({ label: pose, path: `Dutch/dutch-${pose}.png` })) },
+  sv: { label: "Swedish host", poses: ["hero", "pointing"].map((pose) => ({ label: pose, path: `Swedish/swedish-${pose}.png` })) },
+};
+
+function ThumbnailRotationSettings({ settings }: { settings: TutorialSettingsRow }) {
+  const [selected, setSelected] = useState<string[]>(settings.thumbnail_background_rotation ?? [...ROTATION_BACKGROUNDS]);
+  const [saving, setSaving] = useState(false);
+  async function toggle(name: string) {
+    const next = selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name];
+    if (!next.length) return toast.error("Keep at least one background in rotation.");
+    setSelected(next);
+    setSaving(true);
+    const result = await updateTutorialSettingsAction({ thumbnail_background_rotation: next });
+    setSaving(false);
+    if (result.success) toast.success("Thumbnail background rotation saved.");
+    else toast.error(result.error ?? "Failed to save background rotation.");
+  }
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "var(--v2-text-1)", marginBottom: 8 }}>AUTOMATIC BACKGROUND ROTATION</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(180px, 1fr))", gap: 8 }}>
+        {ROTATION_BACKGROUNDS.map((name) => {
+          const on = selected.includes(name);
+          return <button key={name} disabled={saving} type="button" onClick={() => void toggle(name)} style={{ padding: 10, borderRadius: 8, textAlign: "left", cursor: "pointer", color: on ? "var(--v2-accent)" : "var(--v2-text-2)", background: on ? "rgba(var(--v2-accent-rgb),.11)" : "var(--v2-surface-2)", border: on ? "1px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.1)" }}>
+            {on ? "✓ " : ""}{name}
+          </button>;
+        })}
+      </div>
+      <div style={{ marginTop: 7, fontSize: 10.5, color: "var(--v2-text-2)" }}>Only these four approved backgrounds start enabled. Uploaded backgrounds remain available for manual selection.</div>
+    </div>
+  );
+}
+
+function PersonaRotationSettings({ settings }: { settings: TutorialSettingsRow }) {
+  const initial = settings.thumbnail_persona_rotation ?? {};
+  const [selected, setSelected] = useState<Record<string, string[]>>(() => Object.fromEntries(
+    Object.entries(PERSONA_ROTATION).map(([code, data]) => [code, initial[code]?.length ? initial[code] : data.poses.map((pose) => pose.path)]),
+  ));
+  const [saving, setSaving] = useState(false);
+  async function toggle(language: string, path: string) {
+    const current = selected[language] ?? [];
+    const nextLanguage = current.includes(path) ? current.filter((item) => item !== path) : [...current, path];
+    if (!nextLanguage.length) return toast.error("Keep at least one pose enabled for every language host.");
+    const next = { ...selected, [language]: nextLanguage };
+    setSelected(next);
+    setSaving(true);
+    const result = await updateTutorialSettingsAction({ thumbnail_persona_rotation: next });
+    setSaving(false);
+    if (!result.success) toast.error(result.error ?? "Failed to save persona rotation.");
+  }
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "var(--v2-text-1)", marginBottom: 8 }}>PERSONA POSE ROTATION · ONE HOST PER LANGUAGE</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+        {Object.entries(PERSONA_ROTATION).map(([code, data]) => <div key={code} style={{ padding: 9, borderRadius: 8, border: "1px solid rgba(255,255,255,.1)" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--v2-text-1)", marginBottom: 6 }}>{data.label}</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{data.poses.map((pose) => {
+            const on = selected[code]?.includes(pose.path);
+            return <button key={pose.path} disabled={saving} type="button" onClick={() => void toggle(code, pose.path)} style={{ padding: "5px 8px", borderRadius: 6, cursor: "pointer", border: on ? "1px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.1)", color: on ? "var(--v2-accent)" : "var(--v2-text-2)", background: on ? "rgba(var(--v2-accent-rgb),.1)" : "transparent", fontSize: 10 }}>{pose.label}</button>;
+          })}</div>
+        </div>)}
+      </div>
+    </div>
+  );
+}
+
 function DefaultVoiceSettings({ settings }: { settings: TutorialSettingsRow }) {
   const raw = (settings.default_voice_settings ?? {}) as Record<
     string,
@@ -1111,6 +1215,14 @@ export function ProductionSettings({
 
       {/* Recording Defaults */}
       <GlassCard style={{ padding: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--v2-text-1)", marginBottom: 16 }}>Thumbnail Generation</div>
+        <ThumbnailGenerationMode settings={settings} />
+        <ThumbnailRotationSettings settings={settings} />
+        <PersonaRotationSettings settings={settings} />
+      </GlassCard>
+
+      {/* Recording Defaults */}
+      <GlassCard style={{ padding: 24 }}>
         <div
           style={{
             fontSize: 13,
@@ -1141,4 +1253,3 @@ export function ProductionSettings({
     </div>
   );
 }
-

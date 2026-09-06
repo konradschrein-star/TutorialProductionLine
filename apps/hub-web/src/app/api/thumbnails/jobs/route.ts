@@ -85,8 +85,10 @@ export async function GET(req: NextRequest) {
   }
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
+  const jobId = (req.nextUrl.searchParams.get("jobId") ?? "").trim();
   const kind = req.nextUrl.searchParams.get("kind") ?? "all";
   const pattern = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  const ownProducerScope = session.role === "PRODUCTION_VA" || session.role === "TUTORIAL_VA";
 
   // Pagination: the tab used to hard-cap at 25 with no way to see the rest, so a
   // line with 100+ finished videos could never reach the older ones. The client
@@ -110,6 +112,8 @@ export async function GET(req: NextRequest) {
     const filters = [
       inArray(contentJobs.status, [...FINISHED_CONTENT_STATUSES]),
     ];
+    if (ownProducerScope) filters.push(eq(contentJobs.assigned_production_va_id, session.userId));
+    if (jobId) filters.push(eq(contentJobs.id, jobId));
     if (q) filters.push(ilike(contentJobs.title, pattern));
     const rows = await db
       .select({
@@ -153,6 +157,8 @@ export async function GET(req: NextRequest) {
 
   if (kind === "all" || kind === "tutorial_job") {
     const filters = [eq(tutorialJobs.status, "COMPLETED")];
+    if (ownProducerScope) filters.push(eq(tutorialJobs.created_by, session.userId));
+    if (jobId) filters.push(eq(tutorialJobs.id, jobId));
     if (q) filters.push(ilike(tutorialJobs.title, pattern));
     const rows = await db
       .select({
@@ -266,7 +272,7 @@ export async function GET(req: NextRequest) {
   const hasMore = contentOverflow || tutorialOverflow || hits.length > requested;
   return NextResponse.json({
     // Stated, not implied. Consumers render this rather than guessing.
-    scope: "all_producers",
+    scope: ownProducerScope ? "own_producer" : "all_producers",
     jobs: hits.slice(0, requested),
     hasMore,
   });

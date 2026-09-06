@@ -5,6 +5,7 @@
   "description": "Next.js 15 Hub - Control plane and operator UI for Content Forge",
   "type": "module",
   "scripts": {
+    "smoke:viewer": "tsx scripts/smoke-viewer.ts",
     "dev": "tsx src/server/index.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx src/server/index.ts",

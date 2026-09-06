@@ -8,6 +8,7 @@ import {
   channels,
   users,
   storageArtifacts,
+  thumbnails,
 } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +24,24 @@ export interface TranslationDeliveryItem {
   uploadedAt: string | null;
   uploadedBy: string | null;
   youtubeUploadUrl: string | null;
+  uploaderStatus: string | null;
+  youtubeVisibility: string | null;
+  scheduledFor: string | null;
+  youtubePublishedAt: string | null;
+  uploadVerifiedAt: string | null;
   driveFileId: string | null;
   driveUrl: string | null;
   completedAt: string | null;
+  description: string | null;
+  tags: string[] | null;
+  deliveredToDrive: boolean;
+  driveState: "uploaded" | "uploading" | "failed" | "held" | "pending";
+  driveArtifactCount: number;
+  driveFolderPath: string | null;
+  driveError: string | null;
+  thumbnailId: string | null;
+  thumbnailKind: "none" | "automatic" | "ai";
+  thumbnailApproved: boolean;
 }
 
 export interface VideoDeliveryRow {
@@ -43,11 +59,26 @@ export interface VideoDeliveryRow {
   uploadedAt: string | null;
   uploadedBy: string | null;
   youtubeUploadUrl: string | null;
+  uploaderStatus: string | null;
+  youtubeVisibility: string | null;
+  scheduledFor: string | null;
+  youtubePublishedAt: string | null;
+  uploadVerifiedAt: string | null;
   driveFileId: string | null;
   driveUrl: string | null;
   completedAt: string | null;
   createdAt: string;
   translations: TranslationDeliveryItem[];
+  description: string | null;
+  tags: string[] | null;
+  deliveredToDrive: boolean;
+  driveState: "uploaded" | "uploading" | "failed" | "held" | "pending";
+  driveArtifactCount: number;
+  driveFolderPath: string | null;
+  driveError: string | null;
+  thumbnailId: string | null;
+  thumbnailKind: "none" | "automatic" | "ai";
+  thumbnailApproved: boolean;
 }
 
 /**
@@ -82,8 +113,18 @@ export async function GET(request: Request): Promise<NextResponse> {
         uploadedAt: tutorialJobs.uploaded_at,
         uploadedBy: tutorialJobs.uploaded_by,
         youtubeUploadUrl: tutorialJobs.youtube_upload_url,
+        uploaderStatus: tutorialJobs.uploader_status,
+        youtubeVisibility: tutorialJobs.youtube_visibility,
+        scheduledFor: tutorialJobs.scheduled_for,
+        youtubePublishedAt: tutorialJobs.youtube_published_at,
+        uploadVerifiedAt: tutorialJobs.upload_verified_at,
         completedAt: tutorialJobs.completed_at,
         createdAt: tutorialJobs.created_at,
+        description: tutorialJobs.description,
+        tags: tutorialJobs.tags,
+        deliveredToDrive: tutorialJobs.delivered_to_drive,
+        outputQaStatus: tutorialJobs.output_qa_status,
+        outputQaDetail: tutorialJobs.output_qa_detail,
       })
       .from(tutorialJobs)
       .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
@@ -95,7 +136,11 @@ export async function GET(request: Request): Promise<NextResponse> {
         ),
       )
       .orderBy(desc(tutorialJobs.completed_at), desc(tutorialJobs.created_at))
-      .limit(300);
+      // Rendering 300 expandable rows (plus every translation) made a single
+      // click re-render thousands of controls and lock up modest VA laptops.
+      // The newest 60 is the operational queue; search/paging can be server
+      // driven later without returning the whole archive to the browser.
+      .limit(60);
 
     const parentIds = parents.map((p) => p.id);
 
@@ -114,7 +159,17 @@ export async function GET(request: Request): Promise<NextResponse> {
               uploadedAt: tutorialJobs.uploaded_at,
               uploadedBy: tutorialJobs.uploaded_by,
               youtubeUploadUrl: tutorialJobs.youtube_upload_url,
+              uploaderStatus: tutorialJobs.uploader_status,
+              youtubeVisibility: tutorialJobs.youtube_visibility,
+              scheduledFor: tutorialJobs.scheduled_for,
+              youtubePublishedAt: tutorialJobs.youtube_published_at,
+              uploadVerifiedAt: tutorialJobs.upload_verified_at,
               completedAt: tutorialJobs.completed_at,
+              description: tutorialJobs.description,
+              tags: tutorialJobs.tags,
+              deliveredToDrive: tutorialJobs.delivered_to_drive,
+              outputQaStatus: tutorialJobs.output_qa_status,
+              outputQaDetail: tutorialJobs.output_qa_detail,
             })
             .from(tutorialJobs)
             .where(
@@ -135,6 +190,11 @@ export async function GET(request: Request): Promise<NextResponse> {
               jobId: storageArtifacts.job_id,
               driveFileId: storageArtifacts.drive_file_id,
               driveWebLink: storageArtifacts.drive_web_link,
+              kind: storageArtifacts.kind,
+              state: storageArtifacts.state,
+              driveFolderPath: storageArtifacts.drive_folder_path,
+              driveFolderId: storageArtifacts.drive_folder_id,
+              errorMessage: storageArtifacts.error_message,
             })
             .from(storageArtifacts)
             .where(
@@ -145,19 +205,73 @@ export async function GET(request: Request): Promise<NextResponse> {
             )
         : [];
 
-    const driveMap = new Map<string, { driveFileId: string | null; driveUrl: string | null }>();
+    const driveMap = new Map<string, {
+      driveFileId: string | null;
+      driveUrl: string | null;
+      state: string;
+      count: number;
+      folderPath: string | null;
+      error: string | null;
+    }>();
     for (const a of artRows) {
-      if (a.driveFileId || a.driveWebLink) {
+      const previous = driveMap.get(a.jobId);
+      const count = (previous?.count ?? 0) + (a.state === "uploaded" ? 1 : 0);
+      if (a.kind === "final_video" || !previous) {
         driveMap.set(a.jobId, {
           driveFileId: a.driveFileId,
           driveUrl:
-            a.driveWebLink ??
+            (a.driveFolderId ? `https://drive.google.com/drive/folders/${a.driveFolderId}` : null) ?? a.driveWebLink ??
             (a.driveFileId
               ? `https://drive.google.com/file/d/${a.driveFileId}/view`
               : null),
+          state: a.state,
+          count,
+          folderPath: a.driveFolderPath,
+          error: a.errorMessage,
         });
+      } else {
+        previous.count = count;
+        if (!previous.error && a.errorMessage) previous.error = a.errorMessage;
       }
     }
+
+    const thumbRows = allJobIds.length > 0
+      ? await db
+          .select({
+            id: thumbnails.id,
+            subjectId: thumbnails.subject_id,
+            generationKind: thumbnails.generation_kind,
+            providerUsed: thumbnails.provider_used,
+            promptMode: thumbnails.prompt_mode,
+            reviewVerdict: thumbnails.review_verdict,
+            isSelected: thumbnails.is_selected,
+            createdAt: thumbnails.created_at,
+          })
+          .from(thumbnails)
+          .where(and(
+            eq(thumbnails.subject_kind, "tutorial_job"),
+            eq(thumbnails.status, "completed"),
+            inArray(thumbnails.subject_id, allJobIds),
+          ))
+          .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
+      : [];
+    const thumbnailMap = new Map<string, typeof thumbRows[number]>();
+    for (const thumbnail of thumbRows) {
+      if (!thumbnailMap.has(thumbnail.subjectId)) thumbnailMap.set(thumbnail.subjectId, thumbnail);
+    }
+    const thumbnailKind = (thumbnail: typeof thumbRows[number] | undefined): "none" | "automatic" | "ai" => {
+      if (!thumbnail) return "none";
+      if (thumbnail.generationKind === "edit" || thumbnail.promptMode === "manual") return "automatic";
+      if (thumbnail.providerUsed) return "ai";
+      return "automatic";
+    };
+    const driveState = (delivered: boolean, qa: string | null, drive: ReturnType<typeof driveMap.get>) => {
+      if (delivered && drive?.state === "uploaded") return "uploaded" as const;
+      if (qa === "failed") return "held" as const;
+      if (drive?.state === "uploading") return "uploading" as const;
+      if (drive?.state === "failed") return "failed" as const;
+      return "pending" as const;
+    };
 
 
     // 4. Group translations by parent ID
@@ -168,6 +282,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         translationsMap.set(c.sourceJobId, []);
       }
       const d = driveMap.get(c.id);
+      const thumbnail = thumbnailMap.get(c.id);
       translationsMap.get(c.sourceJobId)!.push({
         id: c.id,
         sourceJobId: c.sourceJobId,
@@ -179,15 +294,31 @@ export async function GET(request: Request): Promise<NextResponse> {
         uploadedAt: c.uploadedAt ? c.uploadedAt.toISOString() : null,
         uploadedBy: c.uploadedBy,
         youtubeUploadUrl: c.youtubeUploadUrl,
+        uploaderStatus: c.uploaderStatus,
+        youtubeVisibility: c.youtubeVisibility,
+        scheduledFor: c.scheduledFor?.toISOString() ?? null,
+        youtubePublishedAt: c.youtubePublishedAt?.toISOString() ?? null,
+        uploadVerifiedAt: c.uploadVerifiedAt?.toISOString() ?? null,
         driveFileId: d?.driveFileId ?? null,
         driveUrl: d?.driveUrl ?? null,
         completedAt: c.completedAt ? c.completedAt.toISOString() : null,
+        description: c.description,
+        tags: c.tags,
+        deliveredToDrive: c.deliveredToDrive,
+        driveState: driveState(c.deliveredToDrive, c.outputQaStatus, d),
+        driveArtifactCount: d?.count ?? 0,
+        driveFolderPath: d?.folderPath ?? null,
+        driveError: d?.error ?? (c.outputQaStatus === "failed" ? "Held by output QA" : null),
+        thumbnailId: thumbnail?.id ?? null,
+        thumbnailKind: thumbnailKind(thumbnail),
+        thumbnailApproved: thumbnail?.reviewVerdict === "acceptable" || thumbnail?.reviewVerdict === "strong",
       });
     }
 
     // 5. Build final response rows
     const videos: VideoDeliveryRow[] = parents.map((p) => {
       const d = driveMap.get(p.id);
+      const thumbnail = thumbnailMap.get(p.id);
       return {
         id: p.id,
         title: p.title,
@@ -203,11 +334,26 @@ export async function GET(request: Request): Promise<NextResponse> {
         uploadedAt: p.uploadedAt ? p.uploadedAt.toISOString() : null,
         uploadedBy: p.uploadedBy,
         youtubeUploadUrl: p.youtubeUploadUrl,
+        uploaderStatus: p.uploaderStatus,
+        youtubeVisibility: p.youtubeVisibility,
+        scheduledFor: p.scheduledFor?.toISOString() ?? null,
+        youtubePublishedAt: p.youtubePublishedAt?.toISOString() ?? null,
+        uploadVerifiedAt: p.uploadVerifiedAt?.toISOString() ?? null,
         driveFileId: d?.driveFileId ?? null,
         driveUrl: d?.driveUrl ?? null,
         completedAt: p.completedAt ? p.completedAt.toISOString() : null,
         createdAt: p.createdAt.toISOString(),
         translations: translationsMap.get(p.id) ?? [],
+        description: p.description,
+        tags: p.tags,
+        deliveredToDrive: p.deliveredToDrive,
+        driveState: driveState(p.deliveredToDrive, p.outputQaStatus, d),
+        driveArtifactCount: d?.count ?? 0,
+        driveFolderPath: d?.folderPath ?? null,
+        driveError: d?.error ?? (p.outputQaStatus === "failed" ? "Held by output QA" : null),
+        thumbnailId: thumbnail?.id ?? null,
+        thumbnailKind: thumbnailKind(thumbnail),
+        thumbnailApproved: thumbnail?.reviewVerdict === "acceptable" || thumbnail?.reviewVerdict === "strong",
       };
     });
 
@@ -237,7 +383,7 @@ export async function GET(request: Request): Promise<NextResponse> {
  */
 export async function PATCH(request: Request): Promise<NextResponse> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "view:production")) {
+  if (!session || !hasPermission(session, "manage:thumbnails")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -260,7 +406,11 @@ export async function PATCH(request: Request): Promise<NextResponse> {
       .update(tutorialJobs)
       .set({
         is_uploaded: isUploaded,
+        uploader_status: isUploaded ? "uploaded" : "waiting_to_be_uploaded",
+        youtube_visibility: isUploaded ? "public" : null,
         uploaded_at: isUploaded ? new Date() : null,
+        youtube_published_at: isUploaded ? new Date() : null,
+        upload_verified_at: null,
         uploaded_by: isUploaded ? uploader : null,
         youtube_upload_url: body.youtubeUrl ?? null,
       })

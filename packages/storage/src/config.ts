@@ -62,22 +62,23 @@ export interface DriveConfig {
 }
 
 export type StorageConfigResult =
-  | { enabled: true; drive: DriveConfig }
-  | { enabled: false; reason: string };
+  { enabled: true; drive: DriveConfig } | { enabled: false; reason: string };
 
 const KIB_256 = 256 * 1024;
 const GIB = 1024 * 1024 * 1024;
 
-function readInt(name: string, fallback: number): number {
-  const raw = process.env[name];
+export type StorageEnv = Record<string, string | undefined>;
+
+function readInt(env: StorageEnv, name: string, fallback: number): number {
+  const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.floor(n);
 }
 
-function readStr(name: string): string | undefined {
-  const raw = process.env[name];
+function readStr(env: StorageEnv, name: string): string | undefined {
+  const raw = env[name];
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   return trimmed === "" ? undefined : trimmed;
@@ -88,8 +89,11 @@ function readStr(name: string): string | undefined {
  * var is unset; returns an error string when the var IS set but the file can't
  * be read — a misconfiguration we want surfaced, not silently ignored.
  */
-function readSecretFile(name: string): string | undefined | { error: string } {
-  const path = readStr(name);
+function readSecretFile(
+  env: StorageEnv,
+  name: string,
+): string | undefined | { error: string } {
+  const path = readStr(env, name);
   if (path === undefined) return undefined;
   try {
     const text = readFileSync(path, "utf8").trim();
@@ -151,12 +155,12 @@ function parseOAuthClientJson(
  * GOOGLE_OAUTH_CLIENT_SECRET_FILE, and the loopback consent helper writes the
  * refresh token to a gitignored file.
  */
-function resolveAuth(): DriveAuthConfig | { error: string } {
-  let clientId = readStr("GOOGLE_DRIVE_CLIENT_ID");
-  let clientSecret = readStr("GOOGLE_DRIVE_CLIENT_SECRET");
+function resolveAuth(env: StorageEnv): DriveAuthConfig | { error: string } {
+  let clientId = readStr(env, "GOOGLE_DRIVE_CLIENT_ID");
+  let clientSecret = readStr(env, "GOOGLE_DRIVE_CLIENT_SECRET");
 
   if (clientId === undefined || clientSecret === undefined) {
-    const fileRaw = readSecretFile("GOOGLE_OAUTH_CLIENT_SECRET_FILE");
+    const fileRaw = readSecretFile(env, "GOOGLE_OAUTH_CLIENT_SECRET_FILE");
     if (typeof fileRaw === "object" && fileRaw !== null && "error" in fileRaw) {
       return fileRaw;
     }
@@ -168,9 +172,9 @@ function resolveAuth(): DriveAuthConfig | { error: string } {
     }
   }
 
-  let refreshToken = readStr("GOOGLE_DRIVE_REFRESH_TOKEN");
+  let refreshToken = readStr(env, "GOOGLE_DRIVE_REFRESH_TOKEN");
   if (refreshToken === undefined) {
-    const fileTok = readSecretFile("GOOGLE_DRIVE_REFRESH_TOKEN_FILE");
+    const fileTok = readSecretFile(env, "GOOGLE_DRIVE_REFRESH_TOKEN_FILE");
     if (typeof fileTok === "object" && fileTok !== null && "error" in fileTok) {
       return fileTok;
     }
@@ -218,13 +222,15 @@ function resolveAuth(): DriveAuthConfig | { error: string } {
  * A malformed GOOGLE_DRIVE_FORMAT_ROOTS pair is ignored rather than throwing —
  * storage must never take down a host process over cosmetic config.
  */
-function resolveFormatRootFolders(): Readonly<Record<string, string>> {
+function resolveFormatRootFolders(
+  env: StorageEnv,
+): Readonly<Record<string, string>> {
   const map: Record<string, string> = { ...DEFAULT_FORMAT_ROOT_FOLDERS };
 
-  const comparisons = readStr("GOOGLE_DRIVE_COMPARISONS_FOLDER_NAME");
+  const comparisons = readStr(env, "GOOGLE_DRIVE_COMPARISONS_FOLDER_NAME");
   map["TECH_COMPARISON"] = comparisons ?? DEFAULT_COMPARISONS_FOLDER_NAME;
 
-  const extra = readStr("GOOGLE_DRIVE_FORMAT_ROOTS");
+  const extra = readStr(env, "GOOGLE_DRIVE_FORMAT_ROOTS");
   if (extra !== undefined) {
     for (const pair of extra.split(",")) {
       const eq = pair.indexOf("=");
@@ -244,8 +250,10 @@ function resolveFormatRootFolders(): Readonly<Record<string, string>> {
  * misconfigured storage subsystem reports `enabled: false` with a reason that
  * gets logged and surfaced, it does not crash the host process.
  */
-export function loadStorageConfig(): StorageConfigResult {
-  if (process.env["STORAGE_DRIVE_ENABLED"] !== "true") {
+export function loadStorageConfig(
+  env: StorageEnv = process.env,
+): StorageConfigResult {
+  if (env["STORAGE_DRIVE_ENABLED"] !== "true") {
     return {
       enabled: false,
       reason:
@@ -253,12 +261,12 @@ export function loadStorageConfig(): StorageConfigResult {
     };
   }
 
-  const auth = resolveAuth();
+  const auth = resolveAuth(env);
   if ("error" in auth) {
     return { enabled: false, reason: auth.error };
   }
 
-  const rawChunk = readInt("STORAGE_DRIVE_CHUNK_BYTES", 8 * KIB_256 * 4); // 8 MiB
+  const rawChunk = readInt(env, "STORAGE_DRIVE_CHUNK_BYTES", 8 * KIB_256 * 4); // 8 MiB
   // Google requires resumable chunks to be a multiple of 256 KiB (except the
   // last one). Round down rather than reject — a wrong value here would only
   // show up as a cryptic 400 half way through a 400 MB upload.
@@ -267,28 +275,33 @@ export function loadStorageConfig(): StorageConfigResult {
     Math.floor(rawChunk / KIB_256) * KIB_256,
   );
 
-  const rootFolderId = readStr("GOOGLE_DRIVE_ROOT_FOLDER_ID");
+  const rootFolderId = readStr(env, "GOOGLE_DRIVE_ROOT_FOLDER_ID");
 
   return {
     enabled: true,
     drive: {
       auth,
       rootFolderName:
-        readStr("GOOGLE_DRIVE_ROOT_FOLDER_NAME") ?? DEFAULT_ROOT_FOLDER_NAME,
+        readStr(env, "GOOGLE_DRIVE_ROOT_FOLDER_NAME") ??
+        DEFAULT_ROOT_FOLDER_NAME,
       tutorialsFolderName:
-        readStr("GOOGLE_DRIVE_TUTORIALS_FOLDER_NAME") ??
+        readStr(env, "GOOGLE_DRIVE_TUTORIALS_FOLDER_NAME") ??
         DEFAULT_TUTORIALS_FOLDER_NAME,
       clipForgeRootFolderName:
-        readStr("GOOGLE_DRIVE_CLIPFORGE_ROOT_FOLDER_NAME") ??
+        readStr(env, "GOOGLE_DRIVE_CLIPFORGE_ROOT_FOLDER_NAME") ??
         DEFAULT_CLIPFORGE_ROOT_FOLDER_NAME,
-      formatRootFolderNames: resolveFormatRootFolders(),
+      formatRootFolderNames: resolveFormatRootFolders(env),
       ...(rootFolderId !== undefined ? { rootFolderId } : {}),
-      requestsPerSecond: readInt("STORAGE_DRIVE_RPS", 4),
-      burst: readInt("STORAGE_DRIVE_BURST", 8),
+      requestsPerSecond: readInt(env, "STORAGE_DRIVE_RPS", 4),
+      burst: readInt(env, "STORAGE_DRIVE_BURST", 8),
       chunkSizeBytes,
-      maxAttempts: readInt("STORAGE_DRIVE_MAX_ATTEMPTS", 5),
-      maxFileBytes: readInt("STORAGE_DRIVE_MAX_FILE_BYTES", 20 * GIB),
-      dailyByteBudget: readInt("STORAGE_DRIVE_DAILY_BYTE_BUDGET", 500 * GIB),
+      maxAttempts: readInt(env, "STORAGE_DRIVE_MAX_ATTEMPTS", 5),
+      maxFileBytes: readInt(env, "STORAGE_DRIVE_MAX_FILE_BYTES", 20 * GIB),
+      dailyByteBudget: readInt(
+        env,
+        "STORAGE_DRIVE_DAILY_BYTE_BUDGET",
+        500 * GIB,
+      ),
     },
   };
 }

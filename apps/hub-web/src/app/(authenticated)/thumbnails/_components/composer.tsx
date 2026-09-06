@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Rnd } from "react-rnd";
 import { toBlob } from "html-to-image";
 import JSZip from "jszip";
@@ -14,15 +14,14 @@ import { FlagIcon } from "@/lib/tutorial/flag-icon";
  * Ported from the standalone facade tool (repo-root src/pages/ThumbnailStudio.tsx)
  * and reskinned to the V2 design system. Everything here runs 100% client-side:
  * drag/resize layers on a fixed canvas, a static offline asset catalog served
- * from /public, custom PNG uploads persisted to localStorage as base64, PNG
- * export (html-to-image), and a 10-language ZIP export that swaps the two
- * headline layers using a STATIC offline translation map — NO API calls.
+ * from /public, shared uploads persisted on the server (with a local fallback), PNG
+ * export (html-to-image), and a launch-network ZIP export that swaps the
+ * approved 1–3-word headline and the assigned host for each language.
  *
  * The AI-generation flow (Generate/Archetypes tabs) depends on media-gateway
  * infra the target box does not have; this composer is the real tool + fallback.
  *
- * TODO: per-channel thumbnailStyle presets were intentionally dropped from this
- * port to keep scope tight. Re-add once channel branding data is wired here.
+ * Channel variants remain editable so a VA can fix font fit before export.
  */
 
 const TEXT_1 = "#e5e2e1";
@@ -30,33 +29,23 @@ const TEXT_2 = "#cdc3d7";
 
 const CUSTOM_ASSETS_KEY = "ts_custom_assets";
 
-// The 10 languages of the batch pack, in export order.
+// English source + the five localized launch channels, in export order.
 const LANGUAGES = [
   "English",
   "German",
-  "Spanish",
-  "Portuguese",
-  "Italian",
   "French",
+  "Italian",
   "Dutch",
-  "Japanese",
-  "Korean",
   "Swedish",
 ] as const;
 
-// STATIC offline translation map — copied verbatim from the facade's
-// hardcoded thumbnail-translation fallback. NEVER call an API for this.
-const STATIC_TRANSLATIONS: Record<string, { top: string; bottom: string }> = {
-  English: { top: "LEARN FAST", bottom: "STEP BY STEP" },
-  German: { top: "SCHNELL LERNEN", bottom: "SCHRITT FÜR SCHRITT" },
-  Spanish: { top: "APRENDE FÁCIL", bottom: "PASO A PASO" },
-  Portuguese: { top: "APRENDA RÁPIDO", bottom: "PASSO A PASSO" },
-  Italian: { top: "IMPARA SUBITO", bottom: "PASSO DOPO PASSO" },
-  French: { top: "GUIDE RAPIDE", bottom: "ÉTAPE PAR ÉTAPE" },
-  Dutch: { top: "SNEL LEREN", bottom: "STAP VOOR STAP" },
-  Japanese: { top: "簡単マスター", bottom: "ステップ解説" },
-  Korean: { top: "빠른 가이드", bottom: "완벽 정리" },
-  Swedish: { top: "LÄR DIG SNABBT", bottom: "STEG FÖR STEG" },
+const INITIAL_VARIANT_TEXT: Record<(typeof LANGUAGES)[number], string> = {
+  English: "UPLOAD VIDEO",
+  German: "VIDEO HOCHLADEN",
+  French: "IMPORTER VIDÉO",
+  Italian: "CARICA VIDEO",
+  Dutch: "VIDEO UPLOADEN",
+  Swedish: "LADDA UPP VIDEO",
 };
 
 const FONT_OPTIONS = [
@@ -120,9 +109,23 @@ const LANG_NAME_TO_CODE: Record<string, string> = {
   Dutch: "nl",
 };
 
+const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
+  en: "English", english: "English",
+  de: "German", german: "German",
+  fr: "French", french: "French",
+  it: "Italian", italian: "Italian",
+  nl: "Dutch", dutch: "Dutch",
+  sv: "Swedish", swedish: "Swedish",
+};
+
+interface ThumbnailBundle {
+  rootId: string;
+  variants: Array<{ id: string; language: string; title: string; status: string; videoUrl: string; headline: string | null; approved: boolean }>;
+}
+
 // Rebuilt from the ACTUAL files present in apps/hub-web/public/<folder>/.
 // URLs are case-sensitive; folder casing matches disk exactly.
-const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
+const RAW_PERSONAS: Record<string, { name: string; url: string }[]> = {
   English: [
     { name: "American - Pointing", url: "/English/american-pointing.png" },
     { name: "American - Thumbs-up", url: "/English/american-thumbs-up.png" },
@@ -132,7 +135,6 @@ const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
     { name: "American - Stop", url: "/English/american-stop-palm.png" },
     { name: "American - Celebrate", url: "/English/american-celebrate.png" },
     { name: "American - Smiling", url: "/English/american-hero.png" },
-    { name: "English Host 1", url: "/English/English.png" },
     {
       name: "English Host 2",
       url: "/English/english_persona_3_1783711821680-removebg-preview.png",
@@ -177,7 +179,6 @@ const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
     { name: "German - Celebrate", url: "/germanese/german-celebrate.png" },
     { name: "German - Celebrate 2", url: "/germanese/german-celebrate-2.png" },
     { name: "German - Smiling", url: "/germanese/german-hero.png" },
-    { name: "German Host 1", url: "/germanese/Germanese.png" },
     {
       name: "German Host 2",
       url: "/germanese/german_persona_3_1783711839868-removebg-preview.png",
@@ -328,6 +329,16 @@ const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = {
   ],
 };
 
+// Legacy UUID/persona uploads were different people from the established
+// language hosts. Keep one person per language and offer only that person's
+// named pose set (pointing, thinking, smiling, etc.).
+const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = Object.fromEntries(
+  Object.entries(RAW_PERSONAS).map(([language, personas]) => [
+    language,
+    personas.filter((persona) => !/(removalai|persona_|\/new_)/i.test(persona.url)),
+  ]),
+);
+
 const ALL_APP_LOGOS = [
   "asana.png", "blender.png", "calendly.png", "cashapp.png", "ChatGPT-Logo.png",
   "clickup.png", "cloudflare.png", "davinciresolve.png", "discord.png", "dropbox.png",
@@ -437,7 +448,7 @@ function initialElements(): ThumbnailElement[] {
     {
       id: "person-1",
       type: "PERSON",
-      url: "/English/English.png",
+      url: "/English/american-hero.png",
       x: 20,
       y: 40,
       width: 320,
@@ -507,8 +518,70 @@ function initialElements(): ThumbnailElement[] {
   ];
 }
 
-export function Composer() {
+function fallbackThumbnailWords(title: string): string {
+  return title
+    .replace(/^(how to|so |comment |come |come si |hoe |sådan |så )/i, "")
+    .replace(/\s+[-–—|:].*$/, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ")
+    .toUpperCase();
+}
+
+function logoForTitle(title: string): string | undefined {
+  const normalisedTitle = title.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const filename = ALL_APP_LOGOS.find((name) =>
+    normalisedTitle.includes(name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "")),
+  );
+  return filename ? `/app_logos_png/${filename}` : undefined;
+}
+
+function ThumbnailPreview({ elements, portrait }: { elements: ThumbnailElement[]; portrait: boolean }) {
+  const sourceWidth = portrait ? 450 : 800;
+  const sourceHeight = portrait ? 800 : 450;
+  const width = portrait ? 170 : 284;
+  const scale = width / sourceWidth;
+  return (
+    <div style={{ position: "relative", width, height: sourceHeight * scale, overflow: "hidden", background: "#000", borderRadius: 6 }}>
+      {elements.map((element) => {
+        if (element.type === "BACKGROUND") {
+          return element.url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={element.id} src={element.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: element.zIndex }} />
+          ) : (
+            <div key={element.id} style={{ position: "absolute", inset: 0, background: element.css, zIndex: element.zIndex }} />
+          );
+        }
+        const common: React.CSSProperties = {
+          position: "absolute",
+          left: element.x * scale,
+          top: element.y * scale,
+          width: element.width * scale,
+          height: element.height * scale,
+          zIndex: element.zIndex,
+          transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
+          transformOrigin: "center",
+        };
+        if (element.type === "TEXT") {
+          return (
+            <div key={element.id} style={{ ...common, display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", color: element.color || "#fff", fontFamily: element.fontFamily || "Impact", fontStyle: element.fontStyle || "italic", fontWeight: element.fontWeight || 800, fontSize: (element.fontSize || 64) * scale, lineHeight: 1, WebkitTextStroke: `${(element.strokeWidth ?? 8) * scale}px ${element.strokeColor || "#000"}`, paintOrder: "stroke fill" }}>
+              {element.text}
+            </div>
+          );
+        }
+        return element.url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img key={element.id} src={element.url} alt="" style={{ ...common, objectFit: "contain" }} />
+        ) : null;
+      })}
+    </div>
+  );
+}
+
+export function Composer({ jobId = null }: { jobId?: string | null }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const layoutsRef = useRef<Record<string, ThumbnailElement[]>>({});
 
   const [activeTab, setActiveTab] = useState<LibraryTab>("CUSTOM");
   const [activeLang, setActiveLang] = useState<string>("English");
@@ -525,8 +598,83 @@ export function Composer() {
   const [isExporting, setIsExporting] = useState(false);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
   const [title, setTitle] = useState("");
+  const [variantText, setVariantText] = useState<Record<string, string>>(
+    INITIAL_VARIANT_TEXT,
+  );
+  const [bundle, setBundle] = useState<ThumbnailBundle | null>(null);
+  const [savingApproval, setSavingApproval] = useState(false);
+  const [assetCursor, setAssetCursor] = useState<string | null>(null);
+  const [assetHasMore, setAssetHasMore] = useState(false);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+
+  useEffect(() => {
+    setLoadingAssets(true);
+    fetch("/api/thumbnails/assets?limit=36")
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not load shared assets")))
+      .then((data: { assets: CustomThumbnailAsset[]; hasMore: boolean; nextCursor: string | null }) => {
+        setCustomAssets((local) => [...data.assets, ...local.filter((item) => !data.assets.some((server) => server.id === item.id))]);
+        setAssetHasMore(data.hasMore);
+        setAssetCursor(data.nextCursor);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoadingAssets(false));
+  }, []);
+
+  async function loadMoreAssets() {
+    if (!assetCursor || loadingAssets) return;
+    setLoadingAssets(true);
+    try {
+      const response = await fetch(`/api/thumbnails/assets?limit=36&cursor=${encodeURIComponent(assetCursor)}`);
+      if (!response.ok) throw new Error("Could not load more assets");
+      const data = await response.json() as { assets: CustomThumbnailAsset[]; hasMore: boolean; nextCursor: string | null };
+      setCustomAssets((previous) => [...previous, ...data.assets.filter((asset) => !previous.some((item) => item.id === asset.id))]);
+      setAssetHasMore(data.hasMore);
+      setAssetCursor(data.nextCursor);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingAssets(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!jobId) return;
+    fetch(`/api/production/jobs/${jobId}/thumbnail-bundle`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not load video")))
+      .then((data: ThumbnailBundle) => {
+        setBundle(data);
+        const words = { ...INITIAL_VARIANT_TEXT } as Record<string, string>;
+        for (const variant of data.variants) {
+          const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()];
+          if (language) words[language] = variant.headline || fallbackThumbnailWords(variant.title);
+        }
+        setVariantText(words);
+        const english = data.variants.find((variant) => variant.language.toLowerCase() === "en") ?? data.variants[0];
+        if (english) {
+          setTitle(english.title);
+          const logo = logoForTitle(english.title);
+          setElements((previous) => previous
+            .filter((element) => logo || element.id !== "logo-1")
+            .map((element) => {
+            if (element.id === "text-top") return { ...element, text: words.English };
+            if (element.id === "text-bottom") return { ...element, text: "" };
+            if (element.id === "logo-1") return logo ? { ...element, url: logo } : element;
+            return element;
+          }));
+        }
+      })
+      .catch((error) => alert(error instanceof Error ? error.message : String(error)));
+  }, [jobId]);
 
   const selectedElement = elements.find((el) => el.id === selectedId);
+  const activeVariant = bundle?.variants.find(
+    (variant) => (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === activeLang,
+  ) ?? bundle?.variants[0];
+  const availableLanguages = bundle
+    ? LANGUAGES.filter((language) => bundle.variants.some(
+        (variant) => (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === language,
+      ))
+    : [...LANGUAGES];
 
   const filteredLogos = useMemo(
     () =>
@@ -550,11 +698,98 @@ export function Composer() {
   const canvasHeight = aspectRatio === "16:9" ? 450 : 800;
   const displayScale = aspectRatio === "9:16" ? 0.65 : 1;
 
+  const previewLayouts = availableLanguages.map((language) => {
+    const englishSource = activeLang === "English"
+      ? elements
+      : (layoutsRef.current.English ?? elements);
+    return {
+      language,
+      elements: language === activeLang
+        ? elements
+        : languageLayout(language, englishSource),
+    };
+  });
+
+  function hostForLanguage(language: string): string | undefined {
+    const hosts = DEFAULT_PERSONAS[language] ?? [];
+    if (hosts.length === 0) return undefined;
+    const seed = `${title}:${language}`;
+    const hash = [...seed].reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 7);
+    return hosts[hash % hosts.length]?.url;
+  }
+
+  function languageLayout(language: string, source: ThumbnailElement[]): ThumbnailElement[] {
+    const saved = layoutsRef.current[language];
+    if (saved) return saved.map((element) => ({ ...element }));
+    const hostUrl = hostForLanguage(language);
+    const words = (variantText[language] ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 3).join(" ").toUpperCase();
+    return source.map((element) => {
+      if (element.id === "text-top") {
+        const fitted = Math.max(24, Math.min(element.fontSize ?? 64, Math.floor((element.width * 1.45) / Math.max(1, words.length))));
+        return { ...element, text: words, fontSize: fitted };
+      }
+      if (element.id === "text-bottom") return { ...element, text: "" };
+      if (element.id === "person-1" && hostUrl) return { ...element, url: hostUrl };
+      return { ...element };
+    });
+  }
+
+  function switchLanguage(language: string) {
+    if (language === activeLang) return;
+    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    const englishSource = activeLang === "English"
+      ? elements
+      : (layoutsRef.current["English"] ?? elements);
+    setElements(languageLayout(language, englishSource));
+    setSelectedId(null);
+    setActiveLang(language);
+  }
+
+  function selectPersona(language: string, url: string) {
+    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    const source = language === activeLang
+      ? elements
+      : languageLayout(language, layoutsRef.current["English"] ?? elements);
+    const next = source.map((element) =>
+      element.id === "person-1" ? { ...element, url } : { ...element },
+    );
+    layoutsRef.current[language] = next;
+    setElements(next);
+    setSelectedId("person-1");
+    setActiveLang(language);
+  }
+
   // ── mutation helpers ──
   function patchElement(id: string, patch: Partial<ThumbnailElement>) {
     setElements((prev) =>
       prev.map((el) => (el.id === id ? { ...el, ...patch } : el)),
     );
+  }
+
+  function startRotation(
+    event: React.PointerEvent<HTMLButtonElement>,
+    element: ThumbnailElement,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const box = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!box) return;
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    const initialAngle = Math.atan2(event.clientY - cy, event.clientX - cx);
+    const initialRotation = element.rotation ?? 0;
+    const move = (pointer: PointerEvent) => {
+      const angle = Math.atan2(pointer.clientY - cy, pointer.clientX - cx);
+      patchElement(element.id, {
+        rotation: Math.round(initialRotation + ((angle - initialAngle) * 180) / Math.PI),
+      });
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
   }
 
   function handleAddAsset(type: ElementType, url: string) {
@@ -645,12 +880,28 @@ export function Composer() {
     if (selectedId === id) setSelectedId(null);
   }
 
-  function handleUploadCustomAsset(
+  async function handleUploadCustomAsset(
     e: React.ChangeEvent<HTMLInputElement>,
     category: AssetCategory,
   ) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
+    const form = new FormData();
+    form.append("file", file);
+    form.append("category", category);
+    try {
+      const response = await fetch("/api/thumbnails/assets", { method: "POST", body: form });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({})) as { error?: string }).error || "Upload failed");
+      const { asset } = await response.json() as { asset: CustomThumbnailAsset };
+      setCustomAssets((previous) => [asset, ...previous]);
+      handleAddAsset(category === "BGS" ? "BACKGROUND" : category === "PERSONAS" ? "PERSON" : "LOGO", asset.url);
+      return;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+    /* Offline/local fallback keeps the editor usable if the asset service is
+       temporarily unavailable, without losing the operator's selection. */
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -674,14 +925,19 @@ export function Composer() {
       );
     };
     reader.readAsDataURL(file);
-    // allow re-uploading the same file name
-    e.target.value = "";
   }
 
-  function handleDeleteCustomAsset(id: string) {
+  async function handleDeleteCustomAsset(id: string) {
+    if (!id.startsWith("custom_")) {
+      const response = await fetch(`/api/thumbnails/assets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) {
+        alert("Could not delete the shared asset");
+        return;
+      }
+    }
     const next = readCustomAssets().filter((a) => a.id !== id);
     writeCustomAssets(next);
-    setCustomAssets(next);
+    setCustomAssets((previous) => previous.filter((asset) => asset.id !== id));
   }
 
   // ── exporters ──
@@ -715,18 +971,26 @@ export function Composer() {
     // Snapshot the current headline text so we can restore it afterwards.
     const originalTop = elements.find((el) => el.id === "text-top")?.text;
     const originalBottom = elements.find((el) => el.id === "text-bottom")?.text;
+    const originalPerson = elements.find((el) => el.id === "person-1")?.url;
+    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    const englishSource = layoutsRef.current["English"] ?? elements;
     try {
       const zip = new JSZip();
-      for (const lang of LANGUAGES) {
-        const trans =
-          STATIC_TRANSLATIONS[lang] ?? {
-            top: "LEARN FAST",
-            bottom: "STEP BY STEP",
-          };
-        setElements((prev) =>
-          prev.map((el) => {
-            if (el.id === "text-top") return { ...el, text: trans.top };
-            if (el.id === "text-bottom") return { ...el, text: trans.bottom };
+      for (const lang of availableLanguages) {
+        const words = (variantText[lang] ?? "")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(" ")
+          .toUpperCase();
+        const hostUrl = hostForLanguage(lang);
+        const layout = languageLayout(lang, englishSource);
+        setElements(
+          layout.map((el) => {
+            if (el.id === "text-top") return { ...el, text: words };
+            if (el.id === "text-bottom") return { ...el, text: "" };
+            if (el.id === "person-1" && hostUrl) return { ...el, url: hostUrl };
             return el;
           }),
         );
@@ -741,7 +1005,7 @@ export function Composer() {
       const zipContent = await zip.generateAsync({ type: "blob" });
       saveAs(
         zipContent,
-        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_10langs.zip`,
+        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_6channels.zip`,
       );
     } catch (err) {
       console.error("Batch export failed:", err);
@@ -757,10 +1021,69 @@ export function Composer() {
             return { ...el, text: originalTop };
           if (el.id === "text-bottom" && originalBottom !== undefined)
             return { ...el, text: originalBottom };
+          if (el.id === "person-1" && originalPerson)
+            return { ...el, url: originalPerson };
           return el;
         }),
       );
       setIsBatchExporting(false);
+    }
+  }
+
+  async function captureCanvas(): Promise<Blob> {
+    if (!canvasRef.current) throw new Error("Canvas is not ready");
+    setSelectedId(null);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
+    if (!blob) throw new Error("Could not render thumbnail");
+    return blob;
+  }
+
+  async function saveVariantApproval(
+    variant: ThumbnailBundle["variants"][number],
+    language: string,
+  ) {
+    const blob = await captureCanvas();
+    const body = new FormData();
+    body.append("file", blob, `thumbnail-${variant.language}.png`);
+    body.append("jobId", variant.id);
+    body.append("language", variant.language);
+    body.append("headline", variantText[language] ?? "");
+    body.append("aspectRatio", aspectRatio);
+    const response = await fetch("/api/thumbnails/manual", { method: "POST", body });
+    if (!response.ok) {
+      throw new Error((await response.json().catch(() => null))?.error ?? "Save failed");
+    }
+  }
+
+  async function saveApproved(all: boolean) {
+    if (!bundle) return;
+    setSavingApproval(true);
+    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    const originalLanguage = activeLang;
+    const englishSource = layoutsRef.current.English ?? elements;
+    try {
+      const variants = all
+        ? bundle.variants
+        : bundle.variants.filter(
+            (variant) =>
+              (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === activeLang,
+          );
+      for (const variant of variants) {
+        const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
+        const layout = languageLayout(language, englishSource);
+        setElements(layout);
+        setActiveLang(language);
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        await saveVariantApproval(variant, language);
+      }
+      alert(all ? "All video thumbnails were saved and approved." : `${originalLanguage} thumbnail was saved and approved.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setElements(languageLayout(originalLanguage, englishSource));
+      setActiveLang(originalLanguage);
+      setSavingApproval(false);
     }
   }
 
@@ -791,6 +1114,48 @@ export function Composer() {
 
   return (
     <div>
+      {bundle && (
+        <GlassCard style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "var(--v2-accent)", letterSpacing: "0.08em" }}>THUMBNAILS FOR THIS VIDEO</div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.35fr) minmax(300px, 1fr)", gap: 18, marginTop: 10 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: TEXT_2, marginBottom: 7 }}>VIDEO YOU ARE WORKING ON · {activeLang.toUpperCase()}</div>
+              {activeVariant && (
+                <>
+                  <video key={activeVariant.id} controls preload="metadata" src={activeVariant.videoUrl} style={{ display: "block", width: "100%", maxHeight: 330, background: "#000", borderRadius: 9 }} />
+                  <div style={{ marginTop: 8, fontSize: 13, color: TEXT_1, fontWeight: 750 }}>{activeVariant.title}</div>
+                </>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: TEXT_2, letterSpacing: ".08em" }}>WORKFLOW</div>
+              {["1  Watch the video", "2  Adjust the layout and check every language", "3  Approve the finished thumbnails"].map((step) => (
+                <div key={step} style={{ padding: "9px 11px", borderRadius: 7, background: "rgba(255,255,255,.045)", color: TEXT_1, fontSize: 11 }}>{step}</div>
+              ))}
+              <button type="button" disabled={savingApproval} onClick={() => void saveApproved(false)} style={{ ...panelBtn(true), padding: "11px 14px", marginTop: 4, background: "var(--v2-accent)", color: "#071000", fontSize: 12 }}>
+                {activeVariant?.approved ? `${activeLang} approved · Save changes` : `Approve ${activeLang} thumbnail`}
+              </button>
+              <button type="button" disabled={savingApproval} onClick={() => void saveApproved(true)} style={{ ...panelBtn(false), padding: "10px 14px", fontSize: 12 }}>
+                Approve all {bundle.variants.length} language thumbnails
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, overflowX: "auto", marginTop: 9 }}>
+            {bundle.variants.map((variant) => {
+              const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
+              return (
+              <button type="button" onClick={() => switchLanguage(language)} key={variant.id} style={{ minWidth: 220, padding: 9, borderRadius: 8, border: language === activeLang ? "1px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.1)", background: language === activeLang ? "rgba(var(--v2-accent-rgb),.08)" : "transparent", textAlign: "left", cursor: "pointer" }}>
+                <div style={{ fontSize: 11, color: TEXT_1, fontWeight: 700 }}>{variant.language.toUpperCase()} · {variant.title}</div>
+                <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 10 }}>
+                  <a href={variant.videoUrl} target="_blank" rel="noreferrer" style={{ color: "var(--v2-accent)" }}>Watch video</a>
+                  <span style={{ color: variant.approved ? "#82e6aa" : TEXT_2 }}>{variant.approved ? "Approved" : "Needs approval"}</span>
+                </div>
+              </button>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
       {/* Toolbar */}
       <GlassCard
         style={{
@@ -843,19 +1208,12 @@ export function Composer() {
               Manual Composer
             </div>
             <div style={{ fontSize: 10.5, color: TEXT_2 }}>
-              Fully offline. Compose, then export PNG or a 10-language ZIP pack.
+              Adjust this video’s thumbnail, check its available languages, then approve delivery.
             </div>
           </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Filename label (optional)…"
-            style={{ ...inputStyle, width: 200 }}
-          />
           <button
             type="button"
             disabled={isExporting || isBatchExporting}
@@ -878,7 +1236,7 @@ export function Composer() {
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
               download
             </span>
-            {isExporting ? "Exporting…" : "Export PNG"}
+            {isExporting ? "Exporting…" : "Download current PNG"}
           </button>
           <button
             type="button"
@@ -902,8 +1260,66 @@ export function Composer() {
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
               folder_zip
             </span>
-            {isBatchExporting ? "Packaging ZIP…" : "10-Lang ZIP"}
+            {isBatchExporting ? "Packaging ZIP…" : availableLanguages.length === 1 ? "Download ZIP" : `Download all ${availableLanguages.length} (ZIP)`}
           </button>
+        </div>
+      </GlassCard>
+
+      <GlassCard style={{ padding: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: TEXT_1, marginBottom: 8 }}>
+          THUMBNAIL WORDS · MAXIMUM 3 WORDS PER LANGUAGE
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(180px, 1fr))", gap: 8 }}>
+          {availableLanguages.map((lang) => (
+            <label key={lang} style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 6, alignItems: "center", padding: 5, borderRadius: 7, border: activeLang === lang ? "1px solid var(--v2-accent)" : "1px solid transparent" }}>
+              <button type="button" title={`Edit ${lang}`} onClick={() => switchLanguage(lang)} style={{ border: 0, background: "transparent", padding: 0, cursor: "pointer" }}>
+                <FlagIcon code={LANG_NAME_TO_CODE[lang] ?? "en"} />
+              </button>
+              <input
+                value={variantText[lang] ?? ""}
+                onFocus={() => switchLanguage(lang)}
+                onChange={(event) => {
+                  const value = event.target.value
+                    .split(/\s+/)
+                    .slice(0, 3)
+                    .join(" ");
+                  setVariantText((previous) => ({ ...previous, [lang]: value }));
+                  if (activeLang === lang) {
+                    setElements((previous) => previous.map((element) =>
+                      element.id === "text-top" ? { ...element, text: value.toUpperCase() } : element.id === "text-bottom" ? { ...element, text: "" } : element,
+                    ));
+                  }
+                }}
+                aria-label={`${lang} thumbnail words`}
+                title={lang}
+                style={inputStyle}
+              />
+            </label>
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* English is always the anchor column; localized versions extend to the
+          right and scroll as a single comparison row. This lets QA catch text
+          overflow before localized narration/video rendering begins. */}
+      <GlassCard style={{ padding: 12, marginTop: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: TEXT_1, marginBottom: 9 }}>
+          ALL LANGUAGE THUMBNAILS · CLICK ONE TO EDIT
+        </div>
+        <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: aspectRatio === "16:9" ? 300 : 190, gap: 10, overflowX: "auto", paddingBottom: 7 }}>
+          {previewLayouts.map(({ language, elements: previewElements }) => (
+            <button
+              key={language}
+              type="button"
+              onClick={() => switchLanguage(language)}
+              style={{ padding: 7, borderRadius: 9, border: activeLang === language ? "2px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.22)", cursor: "pointer", textAlign: "left" }}
+            >
+              <div style={{ color: language === "English" ? "var(--v2-accent)" : TEXT_1, fontSize: 10, fontWeight: 850, marginBottom: 6 }}>
+                {language === "English" ? "ENGLISH · MASTER" : language.toUpperCase()}
+              </div>
+              <ThumbnailPreview elements={previewElements} portrait={aspectRatio === "9:16"} />
+            </button>
+          ))}
         </div>
       </GlassCard>
 
@@ -1024,6 +1440,16 @@ export function Composer() {
                     onChange={(e) => handleUploadCustomAsset(e, "PERSONAS")}
                   />
                 </label>
+                <label style={{ ...panelBtn(false), textAlign: "center", display: "inline-flex", justifyContent: "center", gap: 4 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>upload</span>
+                  Symbol
+                  <input type="file" accept="image/png,image/svg+xml,image/webp" style={{ display: "none" }} onChange={(e) => void handleUploadCustomAsset(e, "SYMBOLS")} />
+                </label>
+                <label style={{ ...panelBtn(false), textAlign: "center", display: "inline-flex", justifyContent: "center", gap: 4 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>upload</span>
+                  Background
+                  <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={(e) => void handleUploadCustomAsset(e, "BGS")} />
+                </label>
                 <label
                   style={{
                     ...panelBtn(false),
@@ -1112,7 +1538,7 @@ export function Composer() {
                               ? "BACKGROUND"
                               : asset.category === "PERSONAS"
                                 ? "PERSON"
-                                : "LOGO",
+                                : asset.category === "SYMBOLS" ? "SYMBOL" : "LOGO",
                             asset.url,
                           )
                         }
@@ -1138,7 +1564,7 @@ export function Composer() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDeleteCustomAsset(asset.id)}
+                        onClick={() => void handleDeleteCustomAsset(asset.id)}
                         title="Delete asset"
                         style={{
                           position: "absolute",
@@ -1159,6 +1585,11 @@ export function Composer() {
                       </button>
                     </div>
                   ))}
+                  {assetHasMore && (
+                    <button type="button" disabled={loadingAssets} onClick={() => void loadMoreAssets()} style={{ ...panelBtn(false), gridColumn: "1 / -1", justifyContent: "center" }}>
+                      {loadingAssets ? "Loading…" : "Load more shared assets"}
+                    </button>
+                  )}
                 </div>
               ))}
 
@@ -1211,8 +1642,7 @@ export function Composer() {
                             type="button"
                             title={p.name}
                             onClick={() => {
-                              handleAddAsset("PERSON", p.url);
-                              setActiveLang(lang);
+                              selectPersona(lang, p.url);
                             }}
                             style={{
                               aspectRatio: "1 / 1",
@@ -1540,6 +1970,9 @@ export function Composer() {
                   transformOrigin: "top left",
                   background: "#000",
                   borderRadius: 6,
+                  // The canvas is the export crop. Keep the live preview clipped
+                  // as well, so a host dragged half outside visibly disappears
+                  // at the exact same boundary used by the PNG export.
                   overflow: "hidden",
                   position: "relative",
                   userSelect: "none",
@@ -1601,14 +2034,39 @@ export function Composer() {
                           y: position.y,
                         })
                       }
-                      bounds="parent"
                       style={{
                         zIndex: el.zIndex,
-                        transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
                         outline: isSelected ? "2px solid var(--v2-accent)" : "none",
                       }}
                       onClick={() => setSelectedId(el.id)}
                     >
+                      {isSelected && (
+                        <button
+                          type="button"
+                          aria-label="Rotate layer"
+                          title="Drag to rotate"
+                          onPointerDown={(event) => startRotation(event, el)}
+                          style={{
+                            position: "absolute",
+                            left: "50%",
+                            top: -30,
+                            transform: "translateX(-50%)",
+                            width: 24,
+                            height: 24,
+                            borderRadius: "50%",
+                            border: "1px solid var(--v2-accent)",
+                            background: "#17171c",
+                            color: "var(--v2-accent)",
+                            zIndex: 20,
+                            cursor: "grab",
+                            display: "grid",
+                            placeItems: "center",
+                            padding: 0,
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>rotate_right</span>
+                        </button>
+                      )}
                       {el.type === "TEXT" ? (
                         <div
                           style={{
@@ -1627,10 +2085,13 @@ export function Composer() {
                             paintOrder: "stroke fill",
                             fontStyle: el.fontStyle || "italic",
                             lineHeight: 1,
+                            overflow: "hidden",
+                            whiteSpace: "nowrap",
                             backgroundColor: el.bgColor || "transparent",
                             borderRadius: el.borderRadius || "0",
                             padding: el.padding || "0",
                             userSelect: "none",
+                            transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
                           }}
                         >
                           {el.text}
@@ -1646,6 +2107,7 @@ export function Composer() {
                             backgroundColor: el.bgColor || "transparent",
                             borderRadius: el.borderRadius || "0",
                             padding: el.padding || "0",
+                            transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
                           }}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1813,6 +2275,19 @@ export function Composer() {
                   </label>
                 </div>
               )}
+              <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  ROTATION: {selectedElement.rotation ?? 0}°
+                </span>
+                <input
+                  type="range"
+                  min={-180}
+                  max={180}
+                  value={selectedElement.rotation ?? 0}
+                  onChange={(event) => patchElement(selectedElement.id, { rotation: Number(event.target.value) })}
+                  style={{ width: "100%", accentColor: "var(--v2-accent)" }}
+                />
+              </label>
             </GlassCard>
           )}
         </div>

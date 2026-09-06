@@ -121,6 +121,8 @@ export function buildUploadMetadataPrompt(
     "  after watching. No 'In this video we will'.",
     "- Then a short bulleted list (use '- ') of the concrete steps covered.",
     "- Close with one line inviting a comment if they get stuck.",
+    "- End with one separate line containing 3 to 5 relevant hashtags.",
+    "- Hashtags belong in the description only; do not put # prefixes in tags.",
     "- Never invent features, prices, links or timestamps that are not in the",
     "  script. If you are unsure of a detail, leave it out.",
     "",

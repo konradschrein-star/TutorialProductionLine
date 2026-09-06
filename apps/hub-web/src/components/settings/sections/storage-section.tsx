@@ -15,6 +15,7 @@ interface StorageSectionProps {
     usedBytes?: number;
     error?: string;
   };
+  canManageCredentials?: boolean;
 }
 
 const GIB = 1024 * 1024 * 1024;
@@ -29,6 +30,7 @@ function fmtBytes(n: number | undefined): string {
 export function StorageSection({
   initialData,
   storageStat,
+  canManageCredentials = false,
 }: StorageSectionProps) {
   const [state, setState] = useState<StorageSettings>(() =>
     StorageSettingsSchema.parse(initialData ?? {}),
@@ -118,7 +120,134 @@ export function StorageSection({
         />
       </SettingRow>
 
-      <DriveArchiveCard />
+      <div
+        style={{
+          marginTop: 10,
+          paddingTop: 12,
+          borderTop: "1px solid rgba(255,255,255,.08)",
+        }}
+      >
+        <div
+          style={{ fontSize: 12, fontWeight: 800, color: "var(--v2-text-1)" }}
+        >
+          Google Drive delivery
+        </div>
+        <div
+          style={{ fontSize: 10.5, color: "var(--v2-text-2)", marginTop: 3 }}
+        >
+          Credentials are managed above. These controls are read by the Drive
+          worker without editing files.
+        </div>
+      </div>
+
+      <SettingRow
+        label="Automatic delivery"
+        hint="Copy approved bundles to Drive"
+        htmlFor="driveEnabled"
+        controlWidth={70}
+      >
+        <input
+          id="driveEnabled"
+          type="checkbox"
+          checked={state.driveEnabled}
+          onChange={(e) =>
+            setState((s) => ({ ...s, driveEnabled: e.target.checked }))
+          }
+        />
+      </SettingRow>
+      <SettingRow
+        label="Drive root"
+        hint="Top-level production folder"
+        htmlFor="driveRootFolderName"
+        controlWidth={200}
+      >
+        <SettingInput
+          id="driveRootFolderName"
+          value={state.driveRootFolderName}
+          onChange={(e) =>
+            setState((s) => ({ ...s, driveRootFolderName: e.target.value }))
+          }
+        />
+      </SettingRow>
+      <SettingRow
+        label="Tutorial bundles"
+        hint="Folder below the Drive root"
+        htmlFor="driveTutorialsFolderName"
+        controlWidth={200}
+      >
+        <SettingInput
+          id="driveTutorialsFolderName"
+          value={state.driveTutorialsFolderName}
+          onChange={(e) =>
+            setState((s) => ({
+              ...s,
+              driveTutorialsFolderName: e.target.value,
+            }))
+          }
+        />
+      </SettingRow>
+      <SettingRow
+        label="Delivery scan"
+        hint="How often the worker checks for approved work"
+        htmlFor="driveScanIntervalMinutes"
+        controlWidth={120}
+      >
+        <SettingInput
+          id="driveScanIntervalMinutes"
+          type="number"
+          min={1}
+          max={1440}
+          value={state.driveScanIntervalMinutes}
+          onChange={(e) =>
+            setState((s) => ({
+              ...s,
+              driveScanIntervalMinutes: Number(e.target.value) || 5,
+            }))
+          }
+        />
+      </SettingRow>
+      <SettingRow
+        label="Jobs per pass"
+        hint="Limits each Drive scan"
+        htmlFor="driveBatchSize"
+        controlWidth={120}
+      >
+        <SettingInput
+          id="driveBatchSize"
+          type="number"
+          min={1}
+          max={50}
+          value={state.driveBatchSize}
+          onChange={(e) =>
+            setState((s) => ({
+              ...s,
+              driveBatchSize: Number(e.target.value) || 5,
+            }))
+          }
+        />
+      </SettingRow>
+      <SettingRow
+        label="Daily Drive budget"
+        hint="GB per day; leaves room below Google's ceiling"
+        htmlFor="driveDailyBudgetGb"
+        controlWidth={120}
+      >
+        <SettingInput
+          id="driveDailyBudgetGb"
+          type="number"
+          min={1}
+          max={740}
+          value={state.driveDailyBudgetGb}
+          onChange={(e) =>
+            setState((s) => ({
+              ...s,
+              driveDailyBudgetGb: Number(e.target.value) || 500,
+            }))
+          }
+        />
+      </SettingRow>
+
+      <DriveArchiveCard canManage={canManageCredentials} />
     </SectionFormWrapper>
   );
 }

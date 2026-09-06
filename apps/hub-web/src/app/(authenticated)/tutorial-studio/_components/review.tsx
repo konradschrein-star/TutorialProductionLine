@@ -62,6 +62,7 @@ interface ReviewJob {
   hasTags: boolean;
   playable: boolean;
   mine: boolean;
+  thumbnailVariants: Array<{ id: string; language: string; title: string; thumbnailId: string | null }>;
 }
 
 interface ReviewResponse {
@@ -184,6 +185,42 @@ export function Review() {
     }
   }, []);
 
+  const topReviewJob =
+    data?.jobs.find((job) => job.reviewStatus !== "disapproved") ?? null;
+
+  // Fast QA pass: actions always target the first live card, so after the API
+  // refreshes the list the next key naturally advances to the next video.
+  // Ignore typing and modifier chords. Destructive actions still use the same
+  // confirmation dialog as their buttons.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        target?.isContentEditable ||
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        busyId ||
+        !topReviewJob
+      ) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "q" || key === "w") {
+        event.preventDefault();
+        void act(topReviewJob, "approve");
+      } else if (key === "e" || key === "r") {
+        event.preventDefault();
+        void act(topReviewJob, "disapprove");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [act, busyId, topReviewJob]);
+
   if (loading) {
     return <V2Card style={{ padding: 24 }}>Loading your day…</V2Card>;
   }
@@ -250,6 +287,9 @@ export function Review() {
           {unreviewed} not looked at yet — and that is fine, nothing is waiting
           on you.
         </div>
+        <div style={{ marginTop: 10, fontSize: 11, opacity: 0.62 }}>
+          Keyboard: <kbd>Q</kbd>/<kbd>W</kbd> approve the top video · <kbd>E</kbd>/<kbd>R</kbd> reject and delete it (confirmation required)
+        </div>
       </V2Card>
 
       {data.jobs.length === 0 && (
@@ -308,65 +348,43 @@ export function Review() {
                     }
                   />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      job.playable
-                        ? setPlayingId(job.id)
-                        : toast.error(
-                            "There is no video file on the server for this one, so it cannot be played.",
-                          )
-                    }
-                    title={job.playable ? "Play" : "No video file on disk"}
+                  <div
                     style={{
-                      all: "unset",
                       display: "block",
                       width: "100%",
                       height: "100%",
-                      cursor: job.playable ? "pointer" : "not-allowed",
                       position: "relative",
                     }}
                   >
-                    {job.thumbnailId ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`/api/production/jobs/${job.id}/thumbnail/${job.thumbnailId}`}
-                        alt=""
-                        loading="lazy"
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                        }}
-                      />
-                    ) : (
-                      <span
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 12,
-                          opacity: 0.6,
-                          textAlign: "center",
-                          padding: 12,
-                        }}
-                      >
-                        No thumbnail yet
-                      </span>
-                    )}
+                    <a href={`/thumbnails?jobId=${job.id}`} title="Open in Thumbnail Studio" style={{ position: "absolute", inset: 0, display: "block" }}>
+                      {job.thumbnailId ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`/api/production/jobs/${job.id}/thumbnail/${job.thumbnailId}`} alt="Thumbnail" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      ) : (
+                        <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, opacity: 0.6, textAlign: "center", padding: 12 }}>
+                          No thumbnail yet · open Thumbnail Studio
+                        </span>
+                      )}
+                    </a>
 
                     {/* Play affordance — only when there is something to play. */}
                     {job.playable && (
-                      <span
+                      <button
+                        type="button"
+                        onClick={() => setPlayingId(job.id)}
+                        title="Play video"
                         style={{
                           position: "absolute",
-                          inset: 0,
+                          left: "50%",
+                          top: "50%",
+                          transform: "translate(-50%, -50%)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
+                          border: 0,
+                          background: "transparent",
+                          padding: 0,
+                          cursor: "pointer",
                         }}
                       >
                         <span
@@ -386,7 +404,7 @@ export function Review() {
                         >
                           ▶
                         </span>
-                      </span>
+                      </button>
                     )}
 
                     {!job.playable && (
@@ -424,7 +442,7 @@ export function Review() {
                         {humanDuration(job.durationSeconds)}
                       </span>
                     )}
-                  </button>
+                  </div>
                 )}
               </div>
 
@@ -456,6 +474,23 @@ export function Review() {
                   <Chip ok={job.hasThumbnail} label="thumbnail" />
                   <Chip ok={job.hasDescription} label="description" />
                   <Chip ok={job.hasTags} label="tags" />
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>All language thumbnails</div>
+                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
+                    {job.thumbnailVariants.map((variant) => (
+                      <a key={variant.id} href={`/thumbnails?jobId=${variant.id}`} title={`${variant.language}: ${variant.title}`} style={{ flex: "0 0 190px", aspectRatio: "16 / 9", position: "relative", borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,.35)", border: "1px solid rgba(255,255,255,.15)" }}>
+                        {variant.thumbnailId ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={`/api/production/jobs/${variant.id}/thumbnail/${variant.thumbnailId}`} alt={`${variant.language} thumbnail`} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 9, color: "#fca5a5" }}>No thumbnail</span>
+                        )}
+                        <span style={{ position: "absolute", left: 4, bottom: 4, padding: "1px 4px", borderRadius: 3, background: "rgba(0,0,0,.8)", color: "#fff", fontSize: 8, textTransform: "uppercase" }}>{variant.language}</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
 
                 {job.qaStatus === "failed" && job.qaSummary && (

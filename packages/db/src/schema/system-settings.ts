@@ -35,6 +35,9 @@ export const systemSettings = pgTable(
     /** Telegram alert config (reworked by T6). Token lives in encrypted_secrets. */
     notifications: jsonb("notifications"),
 
+    /** Non-secret controls for the separate YouTube uploader. */
+    uploader: jsonb("uploader"),
+
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow()

@@ -20,6 +20,18 @@ export default {
         'border-strong': 'var(--border-strong)',
         foreground: 'var(--text-primary)',
         muted: 'var(--text-muted)',
+        // Brand accent (white-label; driven at runtime from StudioConfig.brandAccent)
+        accent: {
+          DEFAULT: 'var(--accent)',
+          soft: 'var(--accent-soft)',
+          foreground: 'var(--accent-foreground)',
+        },
+        'accent-purple': 'var(--accent)', // back-compat: index.html referenced this
+        // Semantic status tokens
+        success: 'var(--success)',
+        warning: 'var(--warning)',
+        danger: 'var(--danger)',
+        info: 'var(--info)',
       },
       fontFamily: {
         sans: ['Plus Jakarta Sans', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],

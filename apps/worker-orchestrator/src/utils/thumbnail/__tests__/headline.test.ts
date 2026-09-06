@@ -173,14 +173,14 @@ describe("deriveHeadline", () => {
     });
   });
 
-  it("honours an operator headline verbatim — a human who typed it meant it", async () => {
+  it("caps an operator headline at the thumbnail's hard word limit", async () => {
     const r = await deriveHeadline({
       ...base,
       operatorHeadline: "Sage Sage Sage Sage Sage Sage",
       llm: async () => "ignored",
     });
     expect(r).toEqual({
-      headline: "Sage Sage Sage Sage Sage Sage",
+      headline: "Sage Sage Sage Sage",
       source: "operator",
     });
   });

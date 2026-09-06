@@ -59,6 +59,7 @@ interface ThumbnailRow {
     logo?: string;
     base?: string;
   } | null;
+  review_verdict: "strong" | "acceptable" | "reject" | "not_reviewed";
 }
 
 interface ArchetypeRow {
@@ -122,13 +123,14 @@ function Badge({
   );
 }
 
-export function ProductionThumbnails() {
+export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: string | null }) {
   const [query, setQuery] = useState("");
   const [jobs, setJobs] = useState<JobHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [limit, setLimit] = useState(24);
   const [hasMore, setHasMore] = useState(false);
+  const [resultScope, setResultScope] = useState<"own_producer" | "all_producers">("all_producers");
 
   const [selectedJob, setSelectedJob] = useState<JobHit | null>(null);
   const [rows, setRows] = useState<ThumbnailRow[]>([]);
@@ -144,12 +146,12 @@ export function ProductionThumbnails() {
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Search ───────────────────────────────────────────────────────────────
-  const runSearch = useCallback(async (q: string, lim: number) => {
+  const runSearch = useCallback(async (q: string, lim: number, jobId?: string | null) => {
     setSearching(true);
     setSearchError(null);
     try {
       const res = await fetch(
-        `/api/thumbnails/jobs?q=${encodeURIComponent(q)}&limit=${lim}`,
+        `/api/thumbnails/jobs?q=${encodeURIComponent(q)}&limit=${lim}${jobId ? `&jobId=${encodeURIComponent(jobId)}` : ""}`,
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
@@ -160,9 +162,12 @@ export function ProductionThumbnails() {
       const data = (await res.json()) as {
         jobs: JobHit[];
         hasMore?: boolean;
+        scope?: "own_producer" | "all_producers";
       };
       setJobs(data.jobs);
       setHasMore(Boolean(data.hasMore));
+      setResultScope(data.scope ?? "all_producers");
+      if (jobId && data.jobs[0]) await openJob(data.jobs[0]);
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : String(err));
       setJobs([]);
@@ -174,12 +179,16 @@ export function ProductionThumbnails() {
 
   // Any new search term collapses back to the first page.
   useEffect(() => {
+    if (initialJobId && !query) {
+      void runSearch("", 24, initialJobId);
+      return;
+    }
     const t = setTimeout(() => {
       setLimit(24);
       void runSearch(query, 24);
     }, 300);
     return () => clearTimeout(t);
-  }, [query, runSearch]);
+  }, [initialJobId, query, runSearch]);
 
   function loadMore() {
     const next = limit + 24;
@@ -316,6 +325,27 @@ export function ProductionThumbnails() {
     }
   }
 
+  async function approve(thumbnailIds: string[]) {
+    if (!selectedJob || thumbnailIds.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/thumbnails/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thumbnailIds }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? `Failed (${response.status})`);
+      setNotice(thumbnailIds.length === 1 ? "Thumbnail approved." : `${thumbnailIds.length} thumbnails approved.`);
+      await loadRows(selectedJob);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -336,10 +366,11 @@ export function ProductionThumbnails() {
               own thumbnails. It never was — the search has always been
               unscoped. Say so, rather than leaving it to be inferred. */}
           <span style={{ fontSize: 11, color: "var(--v2-text-3)" }}>
-            Shows rendered videos from <strong>everyone</strong> — yours and
-            every assistant&rsquo;s — not just your own. Rendered videos only:
-            content jobs awaiting upload, uploading or published, and completed
-            tutorial videos.
+            {resultScope === "own_producer" ? (
+              <>Showing only <strong>videos you produced</strong>. Select one to open its composer.</>
+            ) : (
+              <>Admin view: showing <strong>all producers&rsquo; finished videos</strong>. Select one to open its composer.</>
+            )}
           </span>
           {searchError && (
             <span style={{ fontSize: 12, color: "var(--v2-error)" }}>
@@ -380,10 +411,10 @@ export function ProductionThumbnails() {
             {jobs.map((job) => {
               const isOpen = selectedJob?.id === job.id;
               return (
-                <button
+                <a
                   key={`${job.kind}:${job.id}`}
-                  type="button"
-                  onClick={() => void openJob(job)}
+                  href={`/thumbnails?jobId=${job.id}`}
+                  aria-label={`Open ${job.title} in the composer`}
                   style={{
                     display: "flex",
                     flexDirection: "column",
@@ -397,6 +428,7 @@ export function ProductionThumbnails() {
                     borderRadius: 10,
                     overflow: "hidden",
                     color: "var(--v2-text-1)",
+                    textDecoration: "none",
                     textAlign: "left",
                     cursor: "pointer",
                   }}
@@ -473,14 +505,17 @@ export function ProductionThumbnails() {
                     </span>
                     <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       {job.completedCount === 0 ? (
-                        <Badge tone="bad">no thumbnail</Badge>
+                        <Badge tone="bad">manual thumbnail required</Badge>
                       ) : (
                         <Badge tone="neutral">{job.completedCount} ready</Badge>
                       )}
                       {job.hasSelected && <Badge tone="good">selected</Badge>}
                     </span>
+                    <span style={{ marginTop: 2, color: "var(--v2-accent)", fontSize: 10, fontWeight: 800 }}>
+                      {job.completedCount === 0 ? "Create thumbnail →" : "Open in composer →"}
+                    </span>
                   </span>
-                </button>
+                </a>
               );
             })}
           </div>
@@ -571,6 +606,13 @@ export function ProductionThumbnails() {
                 onClick={() => void regenerate("same")}
               >
                 Regenerate
+              </V2Button>
+              <V2Button
+                variant="accent"
+                disabled={busy || rows.filter((row) => row.status === "completed").length === 0}
+                onClick={() => void approve(rows.filter((row) => row.status === "completed").map((row) => row.id))}
+              >
+                Approve all ready
               </V2Button>
               <V2Button
                 variant="accent"
@@ -681,6 +723,7 @@ export function ProductionThumbnails() {
                   >
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       {row.is_selected && <Badge tone="good">selected</Badge>}
+                      {(row.review_verdict === "acceptable" || row.review_verdict === "strong") && <Badge tone="good">approved</Badge>}
                       <Badge
                         tone={
                           row.status === "completed"
@@ -721,6 +764,14 @@ export function ProductionThumbnails() {
                       onClick={() => void selectThisOne(row.id)}
                     >
                       {row.is_selected ? "In use" : "Use this one"}
+                    </V2Button>
+                    <V2Button
+                      size="sm"
+                      variant={row.review_verdict === "acceptable" || row.review_verdict === "strong" ? "ghost" : "outline"}
+                      disabled={busy || row.status !== "completed" || row.review_verdict === "acceptable" || row.review_verdict === "strong"}
+                      onClick={() => void approve([row.id])}
+                    >
+                      {row.review_verdict === "acceptable" || row.review_verdict === "strong" ? "Approved" : "Approve"}
                     </V2Button>
                   </div>
                 </div>

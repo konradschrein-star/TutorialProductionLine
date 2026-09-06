@@ -7,6 +7,7 @@ import { AppHeader } from './_components/header';
 import { KeybindProvider } from './_lib/keybinds';
 import { KeybindOverlay } from './_components/keybind-overlay';
 import { CommandPaletteTrigger } from './_components/command-palette';
+import { PresenceHeartbeat } from './_components/presence-heartbeat';
 import './v2.css';
 
 const VALID_THEMES = new Set(['lime', 'purple', 'teal', 'orange', 'blue', 'green']);
@@ -28,6 +29,7 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
         rel="stylesheet"
       />
       <KeybindProvider>
+        <PresenceHeartbeat />
         <div
           data-theme={mode}
           className={`flex h-screen overflow-hidden${themeClass ? ` ${themeClass}` : ''}`}

@@ -25,6 +25,7 @@ export {
   type DriveConfig,
   type StorageConfigResult,
 } from "./config.js";
+export { loadStorageConfigFromDatabase } from "./runtime-config.js";
 
 export {
   getDriveHealth,

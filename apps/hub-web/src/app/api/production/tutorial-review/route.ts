@@ -110,6 +110,22 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const ids = rows.map((r) => r.id);
 
+  const variantRows = ids.length > 0
+    ? await db
+        .select({
+          id: tutorialJobs.id,
+          sourceJobId: tutorialJobs.source_job_id,
+          language: tutorialJobs.language,
+          title: tutorialJobs.title,
+        })
+        .from(tutorialJobs)
+        .where(and(
+          isNotNull(tutorialJobs.source_job_id),
+          inArray(tutorialJobs.source_job_id, ids),
+        ))
+    : [];
+  const allThumbnailJobIds = [...ids, ...variantRows.map((variant) => variant.id)];
+
   // Thumbnails are polymorphic (subject_kind + subject_id, no FK), so they
   // cannot be joined — fetched for these jobs and matched in memory. The row id
   // is returned, not just a boolean: the Review tab renders the picture, and
@@ -117,7 +133,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // TUTORIAL_VA can actually read (the /api/thumbnails/* family wants
   // view:settings, which they do not hold).
   const thumbRows =
-    ids.length > 0
+    allThumbnailJobIds.length > 0
       ? await db
           .select({
             id: thumbnails.id,
@@ -131,7 +147,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             and(
               eq(thumbnails.subject_kind, "tutorial_job"),
               eq(thumbnails.status, "completed"),
-              inArray(thumbnails.subject_id, ids),
+              inArray(thumbnails.subject_id, allThumbnailJobIds),
             ),
           )
           .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
@@ -190,6 +206,17 @@ export async function GET(request: Request): Promise<NextResponse> {
         ? ((r.qaDetail as { summary?: string }).summary ?? null)
         : null,
     thumbnailId: thumbBySubject.get(r.id) ?? null,
+    thumbnailVariants: [
+      { id: r.id, language: "en", title: r.title, thumbnailId: thumbBySubject.get(r.id) ?? null },
+      ...variantRows
+        .filter((variant) => variant.sourceJobId === r.id)
+        .map((variant) => ({
+          id: variant.id,
+          language: variant.language ?? "translated",
+          title: variant.title,
+          thumbnailId: thumbBySubject.get(variant.id) ?? null,
+        })),
+    ],
     hasThumbnail: thumbBySubject.has(r.id),
     inDrive: inDrive.has(r.id),
     hasDescription: Boolean(r.description),

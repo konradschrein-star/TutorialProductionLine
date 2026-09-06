@@ -57,6 +57,7 @@ const API_ROUTES = [
   "/api/storage",
   // Prometheus scrape target — public by design (no session cookie).
   "/api/metrics",
+  "/api/presence",
 ];
 
 /**
@@ -129,6 +130,28 @@ export async function middleware(request: NextRequest) {
   // route whose name merely began with a listed prefix would silently inherit
   // the bypass. Match the prefix exactly, or the prefix followed by a separator.
   if (isBypassedApiRoute(pathname)) {
+    // Demo/viewer sessions are read-only across the entire API surface. Keep
+    // this central guard in addition to handler permissions: several legacy
+    // production mutation handlers historically used view:production as their
+    // only gate. Machine callbacks carry no hub_session and continue to their
+    // own bearer-token authentication.
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      const token = request.cookies.get("hub_session")?.value;
+      if (token) {
+        try {
+          const payload = await verifyJWT(token);
+          if (payload.role === "VIEWER" || payload.role === "TUTORIAL_VISITOR") {
+            return NextResponse.json(
+              { error: "Read-only viewer account" },
+              { status: 403 },
+            );
+          }
+        } catch {
+          // The handler still performs its normal authentication and returns
+          // the authoritative response for an invalid cookie.
+        }
+      }
+    }
     return NextResponse.next();
   }
 

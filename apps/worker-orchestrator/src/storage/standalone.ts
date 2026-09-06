@@ -45,6 +45,7 @@ import { logger } from "@repo/logger";
 import {
   runScanOnce,
   scannerOptionsFromEnv,
+  scannerOptionsFromDatabase,
   type ScannerOptions,
 } from "./finished-job-scanner.js";
 
@@ -70,7 +71,7 @@ async function tick(
   if (state.running || state.stopped) return;
   state.running = true;
   try {
-    const created = ArtifactStore.create(db);
+    const created = await ArtifactStore.createFromDatabase(db);
     if (!created.ok) {
       if (state.unconfiguredPasses % UNCONFIGURED_LOG_EVERY_N_PASSES === 0) {
         logger.warn(
@@ -111,11 +112,11 @@ async function main(): Promise<void> {
   }
 
   const db = createDrizzleClient(databaseUrl);
-  const opts = scannerOptionsFromEnv();
+  const opts = await scannerOptionsFromDatabase(db);
   const once = process.argv.includes("--once");
 
   if (once) {
-    const created = ArtifactStore.create(db);
+    const created = await ArtifactStore.createFromDatabase(db);
     if (!created.ok) {
       // Exit non-zero: a one-shot run that uploaded nothing because it was
       // switched off should not look like success.
@@ -135,8 +136,8 @@ async function main(): Promise<void> {
   // weeks having uploaded nothing while everyone believed it worked: it was
   // "enabled", it logged one info line, and it no-opped. Someone switching it
   // ON and getting nothing must see an ERROR at boot, not a debug line.
-  const switchedOn = process.env["STORAGE_DRIVE_ENABLED"] === "true";
-  const preflight = ArtifactStore.create(db);
+  const preflight = await ArtifactStore.createFromDatabase(db);
+  const switchedOn = preflight.ok || !preflight.reason.includes("not 'true'");
   if (switchedOn && !preflight.ok) {
     logger.error(
       {
@@ -164,7 +165,15 @@ async function main(): Promise<void> {
 
   // REF'D deliberately — see the header. This interval is what keeps the
   // process alive; do not add .unref() to it.
-  const timer = setInterval(() => void tick(db, opts, state), opts.intervalMs);
+  let timer: NodeJS.Timeout | null = null;
+  const loop = async (): Promise<void> => {
+    if (state.stopped) return;
+    const current = await scannerOptionsFromDatabase(db);
+    await tick(db, current, state);
+    if (!state.stopped) {
+      timer = setTimeout(() => void loop(), current.intervalMs);
+    }
+  };
 
   logger.info(
     {
@@ -176,12 +185,12 @@ async function main(): Promise<void> {
     "storage-standalone: Drive uploader started",
   );
 
-  void tick(db, opts, state);
+  void loop();
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, "storage-standalone: shutting down");
     state.stopped = true;
-    clearInterval(timer);
+    if (timer) clearTimeout(timer);
     // Give an in-flight pass a moment to unwind. A resumable upload survives a
     // hard kill anyway — the session URI is on the artefact row.
     setTimeout(() => process.exit(0), 1_000).unref();

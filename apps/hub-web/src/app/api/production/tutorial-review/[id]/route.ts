@@ -139,7 +139,7 @@ export async function POST(
 
   if (withDriveCopy.length > 0) {
     const { ArtifactStore } = await import("@repo/storage");
-    const created = ArtifactStore.create(db);
+    const created = await ArtifactStore.createFromDatabase(db);
     if (!created.ok) {
       return NextResponse.json(
         {

@@ -43,7 +43,12 @@ interface VADailyPoint {
 
 interface DashboardProps {
   jobs: TutorialJob[];
-  totals: { total: number; week: number };
+  totals: {
+    total: number;
+    week: number;
+    translations: number;
+    translationsWeek: number;
+  };
   leaderboard: LeaderboardEntry[];
   myCompleted: number;
   userId: string;
@@ -823,14 +828,14 @@ export function ProductionDashboard({
         }}
       >
         <Tile
-          label="Total Completed"
-          value={totals.total}
-          sub="All-time finished tutorials"
+          label="Finished Tutorials"
+          value={totals.total.toLocaleString()}
+          sub={`English originals · +${totals.translations.toLocaleString()} translated`}
         />
         <Tile
           label="This Week"
-          value={totals.week}
-          sub="Completed in last 7 days"
+          value={totals.week.toLocaleString()}
+          sub={`English · +${totals.translationsWeek.toLocaleString()} translated`}
         />
         <Tile
           label="Your Videos"

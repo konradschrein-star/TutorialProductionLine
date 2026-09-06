@@ -2,6 +2,17 @@ import React, { useSyncExternalStore, useState } from 'react';
 import { CloudUpload, ChevronUp, ChevronDown, RefreshCw, X } from 'lucide-react';
 import { uploadManager } from '../services/uploadManager';
 
+// Honest labels for the simulated local dispatch queue — "done" reads as
+// "staged" so a completed bar is never mistaken for a real completed transfer.
+const STATE_LABEL: Record<string, string> = {
+  queued: 'queued',
+  uploading: 'staging',
+  paused: 'paused',
+  finalizing: 'staging',
+  done: 'staged',
+  error: 'error',
+};
+
 export const RecordingUploadQueue: React.FC = () => {
   const uploads = useSyncExternalStore(
     uploadManager.subscribe.bind(uploadManager),
@@ -36,6 +47,9 @@ export const RecordingUploadQueue: React.FC = () => {
           <div>
             <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
               <span>Background Dispatch</span>
+              <span className="badge badge-warning" title="Local progress simulation — connect an upload backend for real transfers">
+                Simulated
+              </span>
               {active > 0 && (
                 <span className="px-1.5 py-0.2 rounded bg-surface-300 text-foreground text-[10px] font-mono font-bold">
                   {overallPct.toFixed(0)}%
@@ -76,7 +90,7 @@ export const RecordingUploadQueue: React.FC = () => {
                   </div>
 
                   <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-surface-300 text-foreground font-bold">
-                    {item.state}
+                    {STATE_LABEL[item.state] || item.state}
                   </span>
                 </div>
 
@@ -124,7 +138,7 @@ export const RecordingUploadQueue: React.FC = () => {
       {/* Footer advice */}
       {!collapsed && (
         <div className="p-2 bg-surface-200 text-[10px] text-muted text-center border-t border-border font-mono">
-          Uploads persist in background.
+          Local dispatch simulation — connect an upload backend for real transfers.
         </div>
       )}
 

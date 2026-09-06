@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
-import { setSecret, clearSecret } from "@repo/db";
+import { setSecret, clearSecret, getSecretPresence } from "@repo/db";
 
 /**
  * POST /api/credentials — the WRITE side of the ONE secrets area (S8).
@@ -60,12 +60,28 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      if (
+        body.name === "UPLOADER_CALLBACK_SECRET" &&
+        body.value.trim().length < 32
+      ) {
+        return NextResponse.json(
+          {
+            error: "Uploader connection tokens must be at least 32 characters",
+          },
+          { status: 400 },
+        );
+      }
       await setSecret(db, {
         name: body.name,
         value: body.value.trim(),
         userId: session.userId,
       });
-      return NextResponse.json({ ok: true });
+      const presence = await getSecretPresence(db, body.name);
+      return NextResponse.json({
+        ok: true,
+        source: presence.source,
+        last4: presence.last4,
+      });
     }
 
     if (body.action === "clear-credential") {
@@ -73,7 +89,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Invalid name" }, { status: 400 });
       }
       await clearSecret(db, body.name);
-      return NextResponse.json({ ok: true });
+      const presence = await getSecretPresence(db, body.name);
+      return NextResponse.json({
+        ok: true,
+        source: presence.source,
+        last4: presence.last4,
+      });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

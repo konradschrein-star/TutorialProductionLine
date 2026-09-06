@@ -11,7 +11,7 @@ describe('StorageService Unit Tests', () => {
     expect(ch.name).toBe('Your VirtualFD');
 
     const user = StorageService.getActiveUser();
-    expect(user.name).toBe(DEFAULT_USERS[1].name);
+    expect(user.name).toBe('Nalu');
   });
 
   it('should set and get API keys including Gemini and DeepSeek from vault', () => {
@@ -76,8 +76,9 @@ describe('StorageService Unit Tests', () => {
   });
 
   it('should store, update, and retrieve finished videos with editable scripts', () => {
+    // A fresh store is honestly EMPTY (no fabricated demo videos are seeded).
     const listBefore = StorageService.getFinishedVideos();
-    expect(listBefore.length).toBeGreaterThan(0);
+    expect(Array.isArray(listBefore)).toBe(true);
 
     StorageService.addFinishedVideo({
       id: 'test_job_1',

@@ -1,13 +1,14 @@
-import { 
-  Channel, 
-  VAUser, 
-  FinishedVideo, 
-  GoogleDriveConfig, 
-  DriveDeliveryItem, 
-  CustomThumbnailAsset, 
+import {
+  Channel,
+  VAUser,
+  FinishedVideo,
+  GoogleDriveConfig,
+  DriveDeliveryItem,
+  CustomThumbnailAsset,
   StudioJob,
   OnboardingState
 } from '../types';
+import { StudioConfig, DEFAULT_STUDIO_CONFIG, FilterPreset, VATarget } from '../types/config';
 
 export const DEFAULT_CHANNELS: Channel[] = [
   {
@@ -73,9 +74,10 @@ export const DEFAULT_CHANNELS: Channel[] = [
 // accounts via Settings → Team. Deliberately free of any real names/emails so the
 // product ships clean to any client.
 export const DEFAULT_USERS: VAUser[] = [
-  { id: '1', name: 'Virtual Assistant 1', email: 'va1@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
-  { id: '2', name: 'Virtual Assistant 2', email: 'va2@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'] },
-  { id: '3', name: 'Administrator', email: 'admin@tutorialstudio.com', role: 'admin', assignedChannels: ['virtualfd', 'skool', 'blueprint'] }
+  { id: '1', name: 'Omar (Admin)', email: 'omar@tutorialstudio.com', role: 'admin', assignedChannels: ['virtualfd', 'skool', 'blueprint'], assignedSoftwares: ['Excel', 'Word', 'Power BI', 'Notion', 'Figma', 'Canva', 'Photoshop', 'Blender'] },
+  { id: '2', name: 'Jeen (Admin)', email: 'jeen@tutorialstudio.com', role: 'admin', assignedChannels: ['virtualfd', 'skool', 'blueprint'], assignedSoftwares: ['Excel', 'Word', 'Power BI', 'Notion', 'Figma', 'Canva', 'Photoshop', 'Blender'] },
+  { id: '3', name: 'Nalu', email: 'nalu@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'], assignedSoftwares: ['Notion', 'Figma', 'Canva', 'Excel', 'PowerPoint', 'Photoshop'] },
+  { id: '4', name: 'Lorraine', email: 'lorraine@tutorialstudio.com', role: 'va', assignedChannels: ['virtualfd', 'skool', 'blueprint'], assignedSoftwares: ['Excel', 'Word', 'PowerPoint', 'Power BI', 'QuickBooks Online'] }
 ];
 
 
@@ -87,16 +89,54 @@ export const DEFAULT_GOOGLE_DRIVE_CONFIG: GoogleDriveConfig = {
   rootFolderId: 'root',
   folderStructureTemplate: '{channel}/{year}_{month}/{topic_slug}/',
   fileNamingTemplate: '{date}_{title}_{lang}.mp4',
-  autoUploadOnRender: true,
+  // Ship DISCONNECTED with auto-upload OFF. Nothing claims a Drive connection
+  // until real credentials are entered and testConnection actually passes — so
+  // the app never falsely reports "Uploaded to Drive" out of the box.
+  autoUploadOnRender: false,
   uploadThumbnail: true,
   uploadManifest: true,
-  isConnected: true,
-  lastConnectedAt: new Date().toISOString()
+  isConnected: false
 };
+
+type StorageListener = (changedKey: string) => void;
 
 export class StorageService {
   private static prefix = 'tpl_';
   private static memoryCache = new Map<string, any>();
+  private static listeners = new Set<StorageListener>();
+  private static crossTabBound = false;
+
+  /**
+   * Subscribe to store mutations. The callback receives the (unprefixed) key that
+   * changed — or '*' for a bulk operation (import/reset). Returns an unsubscribe fn.
+   * This is what makes the whole app reactive: any `set()` notifies subscribers,
+   * so pages re-read live instead of showing stale snapshots.
+   */
+  static subscribe(fn: StorageListener): () => void {
+    this.listeners.add(fn);
+    this.bindCrossTab();
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  private static emit(changedKey: string): void {
+    this.listeners.forEach(l => {
+      try { l(changedKey); } catch (e) { console.warn('StorageService listener failed:', e); }
+    });
+  }
+
+  /** Mirror changes made in OTHER tabs into this tab's subscribers. */
+  private static bindCrossTab(): void {
+    if (this.crossTabBound || typeof window === 'undefined') return;
+    this.crossTabBound = true;
+    window.addEventListener('storage', (e) => {
+      if (e.key && e.key.startsWith(this.prefix)) {
+        this.memoryCache.delete(e.key);
+        this.emit(e.key.slice(this.prefix.length));
+      }
+    });
+  }
 
   static get<T>(key: string, defaultValue: T): T {
     try {
@@ -127,11 +167,25 @@ export class StorageService {
     } catch (e) {
       console.warn(`StorageService.set failed for key "${key}" (falling back to in-memory):`, e);
     }
+
+    this.emit(key);
   }
 
   // User Profile
+  static getDeletedUserIds(): string[] {
+    const ids = this.get<string[]>('deleted_user_ids', []);
+    return Array.isArray(ids) ? ids : [];
+  }
+
   static getActiveUser(): VAUser {
-    return this.get<VAUser>('active_user', DEFAULT_USERS[1]);
+    const users = this.getUsers();
+    const saved = this.get<VAUser | null>('active_user', null);
+    if (saved && users.some(u => u.id === saved.id)) {
+      return saved;
+    }
+    // Default to Nalu so she is immediately active and ready to work
+    const nalu = users.find(u => u.name.toLowerCase().includes('nalu'));
+    return nalu || users[0] || DEFAULT_USERS[0];
   }
 
   static setActiveUser(user: VAUser): void {
@@ -140,12 +194,63 @@ export class StorageService {
   }
 
   static getUsers(): VAUser[] {
+    const deletedIds = this.getDeletedUserIds();
     const users = this.get<VAUser[]>('custom_users', DEFAULT_USERS);
-    return Array.isArray(users) && users.length > 0 ? users : DEFAULT_USERS;
+    let list = Array.isArray(users) && users.length > 0 ? [...users] : [...DEFAULT_USERS];
+
+    // Self-healing migration: Ensure generic VA placeholders are upgraded to real operators Nalu & Lorraine
+    list = list.map(u => {
+      if (u.name === 'Virtual Assistant 1' || (u.id === '3' && !u.name.toLowerCase().includes('nalu'))) {
+        return {
+          ...u,
+          id: u.id || '3',
+          name: 'Nalu',
+          email: u.email === 'va1@tutorialstudio.com' ? 'nalu@tutorialstudio.com' : (u.email || 'nalu@tutorialstudio.com'),
+          role: 'va' as const,
+          assignedChannels: u.assignedChannels?.length ? u.assignedChannels : ['virtualfd', 'skool', 'blueprint'],
+          assignedSoftwares: u.assignedSoftwares?.length ? u.assignedSoftwares : ['Notion', 'Figma', 'Canva', 'Excel', 'PowerPoint', 'Photoshop']
+        };
+      }
+      if (u.name === 'Virtual Assistant 2' || (u.id === '4' && !u.name.toLowerCase().includes('lorraine'))) {
+        return {
+          ...u,
+          id: u.id || '4',
+          name: 'Lorraine',
+          email: u.email === 'va2@tutorialstudio.com' ? 'lorraine@tutorialstudio.com' : (u.email || 'lorraine@tutorialstudio.com'),
+          role: 'va' as const,
+          assignedChannels: u.assignedChannels?.length ? u.assignedChannels : ['virtualfd', 'skool', 'blueprint'],
+          assignedSoftwares: u.assignedSoftwares?.length ? u.assignedSoftwares : ['Excel', 'Word', 'PowerPoint', 'Power BI', 'QuickBooks Online']
+        };
+      }
+      return u;
+    });
+
+    // Ensure Nalu is guaranteed in the list unless explicitly deleted
+    const hasNalu = list.some(u => u.name.toLowerCase().includes('nalu') || u.email?.toLowerCase().includes('nalu'));
+    if (!hasNalu && !deletedIds.includes('3') && !deletedIds.includes('usr_nalu')) {
+      list.push(DEFAULT_USERS[2]);
+    }
+
+    // Ensure default team members exist if not deleted
+    for (const defUser of DEFAULT_USERS) {
+      if (deletedIds.includes(defUser.id)) continue;
+      const exists = list.some(
+        u => u.id === defUser.id ||
+             u.email?.toLowerCase() === defUser.email?.toLowerCase() ||
+             u.name?.toLowerCase() === defUser.name?.toLowerCase()
+      );
+      if (!exists) {
+        list.push(defUser);
+      }
+    }
+
+    return list.filter(u => !deletedIds.includes(u.id));
   }
 
   static saveUser(user: VAUser): void {
     if (!user || !user.id) return;
+    const deletedIds = this.getDeletedUserIds().filter(id => id !== user.id);
+    this.set('deleted_user_ids', deletedIds);
     const list = this.getUsers();
     const idx = list.findIndex(u => u.id === user.id);
     if (idx >= 0) {
@@ -158,8 +263,12 @@ export class StorageService {
 
   static deleteUser(userId: string): void {
     if (!userId) return;
+    const deletedIds = this.getDeletedUserIds();
+    if (!deletedIds.includes(userId)) {
+      this.set('deleted_user_ids', [...deletedIds, userId]);
+    }
     const list = this.getUsers().filter(u => u.id !== userId);
-    this.set('custom_users', list.length > 0 ? list : DEFAULT_USERS);
+    this.set('custom_users', list.length > 0 ? list : DEFAULT_USERS.filter(u => u.id !== userId));
     const active = this.getActiveUser();
     if (active.id === userId) {
       this.setActiveUser(list[0] || DEFAULT_USERS[0]);
@@ -247,20 +356,7 @@ export class StorageService {
   }
 
   static getDriveDeliveries(): DriveDeliveryItem[] {
-    const deliveries = this.get<DriveDeliveryItem[]>('drive_deliveries', [
-      {
-        id: 'del_1',
-        jobId: '1',
-        title: 'How to Automate Invoices in Excel 2026',
-        channel: 'Entrepreneurs Skool',
-        fileName: '2026-08-16_How_to_Automate_Invoices_in_Excel_2026_en.mp4',
-        drivePath: 'Entrepreneurs_Skool/Tutorials/2026_08/automate_invoices/',
-        fileSize: 48 * 1024 * 1024,
-        uploadedAt: '2026-08-16 14:32:10',
-        status: 'IN_GOOGLE_DRIVE',
-        viewUrl: 'https://drive.google.com/drive/folders/tutorial_production_line'
-      }
-    ]);
+    const deliveries = this.get<DriveDeliveryItem[]>('drive_deliveries', []);
     return Array.isArray(deliveries) ? deliveries : [];
   }
 
@@ -290,21 +386,7 @@ export class StorageService {
 
   // Finished Videos Queue
   static getFinishedVideos(): FinishedVideo[] {
-    const list = this.get<FinishedVideo[]>('finished_videos', [
-      {
-        id: '1',
-        title: 'How to Automate Invoices in Excel 2026',
-        channel: 'Entrepreneurs Skool',
-        status: 'Uploaded to Drive',
-        thumbnailUrl: '/background/bg-gradient-1.png',
-        duration: '4:12',
-        script: 'Welcome to this complete guide on automating your Excel invoices in 2026. In this tutorial, we cover VBA macros, XLOOKUP formulas, and dynamic PDF export.',
-        tags: ['excel tutorial', 'automate invoices', 'excel 2026'],
-        drivePath: 'Entrepreneurs_Skool/Tutorials/2026_08/automate_invoices/',
-        driveUrl: 'https://drive.google.com/drive/folders/tutorial_production_line',
-        createdAt: '2026-08-16'
-      }
-    ]);
+    const list = this.get<FinishedVideo[]>('finished_videos', []);
     return Array.isArray(list) ? list : [];
   }
 
@@ -332,25 +414,32 @@ export class StorageService {
   }
 
   // Workstation Backup & Migration
+  /** Canonical list of persisted keys backed up / restored / reset together. */
+  private static BACKUP_KEYS = [
+    'custom_channels',
+    'active_channel',
+    'custom_users',
+    'deleted_user_ids',
+    'active_user',
+    'google_drive_config',
+    'drive_deliveries',
+    'finished_videos',
+    'custom_thumbnail_assets',
+    'studio_jobs',
+    'external_keyword_api',
+    'onboarding_state',
+    'studio_config',
+    'va_targets',
+    'filter_presets',
+    'screened_keywords_v2',
+  ];
+
   static exportFullBackup(): Record<string, any> {
-    const keys = [
-      'custom_channels',
-      'active_channel',
-      'users',
-      'active_user',
-      'google_drive_config',
-      'drive_deliveries',
-      'finished_videos',
-      'custom_thumbnail_assets',
-      'studio_jobs',
-      'external_keyword_api',
-      'onboarding_state'
-    ];
     const backup: Record<string, any> = {
-      version: '1.0',
+      version: '1.1',
       exportedAt: new Date().toISOString()
     };
-    keys.forEach(k => {
+    this.BACKUP_KEYS.forEach(k => {
       backup[k] = this.get(k, null);
     });
     return backup;
@@ -363,68 +452,23 @@ export class StorageService {
         this.set(k, data[k]);
       }
     });
+    this.emit('*');
     return true;
   }
 
   static resetFactoryData(): void {
-    const keysToRemove = [
-      'custom_channels',
-      'active_channel',
-      'users',
-      'active_user',
-      'google_drive_config',
-      'drive_deliveries',
-      'finished_videos',
-      'custom_thumbnail_assets',
-      'studio_jobs',
-      'onboarding_state'
-    ];
-    keysToRemove.forEach(k => {
+    this.BACKUP_KEYS.forEach(k => {
       this.memoryCache.delete(`${this.prefix}${k}`);
       try {
         localStorage.removeItem(`${this.prefix}${k}`);
       } catch {}
     });
+    this.emit('*');
   }
 
   // Studio Jobs
   static getStudioJobs(): StudioJob[] {
-    const list = this.get<StudioJob[]>('studio_jobs', [
-      {
-        id: 'job_101',
-        title: 'How to Build an Inventory Tracker in Notion',
-        topic: 'Build an Inventory Tracker in Notion',
-        channelId: 'skool',
-        channelName: 'Entrepreneurs Skool',
-        status: 'READY_TO_RECORD',
-        script: 'In this video, I will show you how to build a dynamic inventory tracker in Notion from scratch. First, create a database with relation and formula properties...',
-        voiceId: 'fish-adam-punchy',
-        voiceSpeed: 1.25,
-        audioUrl: '/sample-audio.wav',
-        durationSeconds: 195,
-        deliveredToDrive: false,
-        createdAt: new Date(Date.now() - 3600000).toISOString(),
-        updatedAt: new Date(Date.now() - 1800000).toISOString()
-      },
-      {
-        id: 'job_102',
-        title: 'QuickBooks Online 2026 Reconciliation Masterclass',
-        topic: 'QuickBooks Online 2026 Reconciliation',
-        channelId: 'virtualfd',
-        channelName: 'Your VirtualFD',
-        status: 'COMPLETED',
-        script: 'Welcome back to Your VirtualFD. Today we are doing a deep dive into QuickBooks Online bank feeds and matching rules...',
-        voiceId: 'fish-paul-neutral',
-        voiceSpeed: 1.15,
-        audioUrl: '/sample-audio.wav',
-        durationSeconds: 340,
-        deliveredToDrive: true,
-        drivePath: 'Your_VirtualFD/Tutorials/2026_08/quickbooks_reconciliation/',
-        driveUrl: 'https://drive.google.com/drive/folders/quickbooks',
-        createdAt: new Date(Date.now() - 7200000).toISOString(),
-        updatedAt: new Date(Date.now() - 3600000).toISOString()
-      }
-    ]);
+    const list = this.get<StudioJob[]>('studio_jobs', []);
     return Array.isArray(list) ? list : [];
   }
 
@@ -451,6 +495,81 @@ export class StorageService {
     if (!id) return;
     const list = this.getStudioJobs().filter(j => j.id !== id);
     this.set('studio_jobs', list);
+  }
+
+  // ---- Studio Configuration (the UI-editable control surface) ----------------
+  static getConfig(): StudioConfig {
+    const cfg = this.get<Partial<StudioConfig>>('studio_config', DEFAULT_STUDIO_CONFIG);
+    // Deep-merge so new knobs added in later versions get sane defaults.
+    return {
+      ...DEFAULT_STUDIO_CONFIG,
+      ...cfg,
+      contentTypeMix: { ...DEFAULT_STUDIO_CONFIG.contentTypeMix, ...(cfg?.contentTypeMix || {}) },
+      keyword: {
+        ...DEFAULT_STUDIO_CONFIG.keyword,
+        ...(cfg?.keyword || {}),
+        scoreWeights: {
+          ...DEFAULT_STUDIO_CONFIG.keyword.scoreWeights,
+          ...((cfg?.keyword as any)?.scoreWeights || {}),
+        },
+      },
+      lengthPresets: cfg?.lengthPresets?.length ? cfg.lengthPresets : DEFAULT_STUDIO_CONFIG.lengthPresets,
+      speedPresets: cfg?.speedPresets?.length ? cfg.speedPresets : DEFAULT_STUDIO_CONFIG.speedPresets,
+      standardLanguages: cfg?.standardLanguages?.length ? cfg.standardLanguages : DEFAULT_STUDIO_CONFIG.standardLanguages,
+    };
+  }
+
+  static setConfig(config: StudioConfig): void {
+    if (!config) return;
+    this.set('studio_config', config);
+  }
+
+  static updateConfig(updates: Partial<StudioConfig>): StudioConfig {
+    const next = { ...this.getConfig(), ...updates } as StudioConfig;
+    this.setConfig(next);
+    return next;
+  }
+
+  static resetConfig(): void {
+    this.setConfig({ ...DEFAULT_STUDIO_CONFIG });
+  }
+
+  // ---- Per-VA production targets ---------------------------------------------
+  static getVATargets(): Record<string, VATarget> {
+    const t = this.get<Record<string, VATarget>>('va_targets', {});
+    return t && typeof t === 'object' ? t : {};
+  }
+
+  static getVATarget(userId: string): VATarget {
+    const cfg = this.getConfig();
+    const t = this.getVATargets()[userId];
+    return t || { userId, dailyTarget: cfg.defaultDailyTarget, weeklyTarget: cfg.defaultWeeklyTarget };
+  }
+
+  static setVATarget(target: VATarget): void {
+    if (!target || !target.userId) return;
+    const all = this.getVATargets();
+    all[target.userId] = target;
+    this.set('va_targets', all);
+  }
+
+  // ---- Saved keyword-filter presets ------------------------------------------
+  static getFilterPresets(): FilterPreset[] {
+    const list = this.get<FilterPreset[]>('filter_presets', []);
+    return Array.isArray(list) ? list : [];
+  }
+
+  static saveFilterPreset(preset: FilterPreset): void {
+    if (!preset || !preset.id) return;
+    const list = this.getFilterPresets();
+    const idx = list.findIndex(p => p.id === preset.id);
+    if (idx >= 0) list[idx] = preset; else list.push(preset);
+    this.set('filter_presets', list);
+  }
+
+  static deleteFilterPreset(id: string): void {
+    if (!id) return;
+    this.set('filter_presets', this.getFilterPresets().filter(p => p.id !== id));
   }
 
   // Onboarding / Setup Wizard State

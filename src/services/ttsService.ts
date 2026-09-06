@@ -44,18 +44,54 @@ export const AVAILABLE_VOICES: VoiceOption[] = [
   }
 ];
 
-export class TTSService {
+export interface TTSResult {
+  blob: Blob;
+  durationSeconds: number;
+  /** Which provider actually produced the audio. */
+  provider?: 'elevenlabs' | 'fish-audio' | 'openai' | 'placeholder';
   /**
-   * Synthesizes audio using Fish Audio / ElevenLabs / OpenAI or falls back to standard Web Speech / synthesized tone.
+   * True when NO real TTS provider was configured and we returned a silent/tone
+   * PLACEHOLDER track — not real narration. Callers should warn the operator.
+   */
+  isPlaceholder?: boolean;
+  /** Human-readable note for the UI (e.g. why the placeholder was used). */
+  warning?: string;
+}
+
+export class TTSService {
+  /** Measure a real audio blob's duration; falls back to a word-count estimate. */
+  private static async measureDuration(blob: Blob, wordEstimate: number): Promise<number> {
+    try {
+      const AC: typeof AudioContext =
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return wordEstimate;
+      const ctx = new AC();
+      const arr = await blob.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(arr.slice(0));
+      ctx.close?.();
+      const d = Math.round(decoded.duration);
+      return d > 0 ? d : wordEstimate;
+    } catch {
+      return wordEstimate;
+    }
+  }
+
+  /**
+   * Synthesizes audio via ElevenLabs / Fish Audio / OpenAI depending on the
+   * selected voice and which provider keys are configured. If NONE is
+   * configured it returns a clearly-flagged placeholder track (isPlaceholder),
+   * never silently passing a tone off as narration.
    */
   static async synthesizeVoice(
     text: string,
     voiceId: string,
     speed: number = 1.0,
     onProgress?: (percent: number) => void
-  ): Promise<{ blob: Blob; durationSeconds: number }> {
+  ): Promise<TTSResult> {
     const elevenKey = StorageService.getApiKey('elevenlabs');
+    const fishKey = StorageService.getApiKey('fishaudio');
     const openAiKey = StorageService.getApiKey('openai');
+    const wordEstimate = Math.max(5, Math.round(text.split(/\s+/).filter(Boolean).length / 2.5));
 
     onProgress?.(25);
 
@@ -79,15 +115,37 @@ export class TTSService {
         if (!res.ok) throw new Error(`ElevenLabs error ${res.status}`);
         onProgress?.(85);
         const blob = await res.blob();
-        const duration = Math.max(5, Math.round(text.split(' ').length / 2.5));
+        const durationSeconds = await this.measureDuration(blob, wordEstimate);
         onProgress?.(100);
-        return { blob, durationSeconds: duration };
+        return { blob, durationSeconds, provider: 'elevenlabs' };
       } catch (err) {
-        console.warn('ElevenLabs failed, falling back to local synthesizer:', err);
+        console.warn('ElevenLabs failed, trying next provider:', err);
       }
     }
 
-    // 2. OpenAI TTS Provider
+    // 2. Fish Audio Provider (the advertised default for `fish-*` voices)
+    if (voiceId.startsWith('fish-') && fishKey) {
+      try {
+        const res = await fetch('https://api.fish.audio/v1/tts', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${fishKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ text, format: 'mp3', latency: 'normal' })
+        });
+        if (!res.ok) throw new Error(`Fish Audio error ${res.status}`);
+        onProgress?.(85);
+        const blob = await res.blob();
+        const durationSeconds = await this.measureDuration(blob, wordEstimate);
+        onProgress?.(100);
+        return { blob, durationSeconds, provider: 'fish-audio' };
+      } catch (err) {
+        console.warn('Fish Audio failed, trying next provider:', err);
+      }
+    }
+
+    // 3. OpenAI TTS Provider (general fallback for any voice when keyed)
     if (openAiKey) {
       try {
         const res = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -107,15 +165,17 @@ export class TTSService {
         if (!res.ok) throw new Error(`OpenAI TTS error ${res.status}`);
         onProgress?.(90);
         const blob = await res.blob();
-        const duration = Math.max(5, Math.round(text.split(' ').length / 2.5));
+        const durationSeconds = await this.measureDuration(blob, wordEstimate);
         onProgress?.(100);
-        return { blob, durationSeconds: duration };
+        return { blob, durationSeconds, provider: 'openai' };
       } catch (err) {
-        console.warn('OpenAI TTS failed, falling back to local synthesizer:', err);
+        console.warn('OpenAI TTS failed, falling back to placeholder track:', err);
       }
     }
 
-    // 3. Robust Web Audio Offline Audio Synthesizer (Instant local audio buffer)
+    // 4. PLACEHOLDER — no real TTS provider configured. This is NOT narration;
+    //    it is a silent-cadence timing track so the pipeline can proceed. The
+    //    result is flagged so the UI can prompt the operator to add a key.
     onProgress?.(60);
     await new Promise(r => setTimeout(r, 600));
     
@@ -148,21 +208,30 @@ export class TTSService {
     writeString(36, 'data');
     view.setUint32(40, numSamples * 2, true);
 
-    // Soft modulated vocal resonance
+    // Quiet cadence tick so the track has audible structure for timing/preview,
+    // but low enough to never be mistaken for real narration.
     let offset = 44;
     const pitch = voiceId.includes('female') || voiceId.includes('sarah') ? 220 : 130;
     for (let i = 0; i < numSamples; i++) {
       const t = i / sampleRate;
-      // Speech envelope cadence
-      const cadence = Math.sin(2 * Math.PI * 3.5 * t) > 0.1 ? 1 : 0.05;
-      const sample = Math.sin(2 * Math.PI * pitch * t) * 0.3 * cadence +
-                     Math.sin(2 * Math.PI * (pitch * 2) * t) * 0.15 * cadence;
+      const cadence = Math.sin(2 * Math.PI * 3.5 * t) > 0.1 ? 1 : 0.03;
+      const sample = (Math.sin(2 * Math.PI * pitch * t) * 0.08 +
+                      Math.sin(2 * Math.PI * (pitch * 2) * t) * 0.04) * cadence;
       view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
       offset += 2;
     }
 
     const wavBlob = new Blob([view], { type: 'audio/wav' });
     onProgress?.(100);
-    return { blob: wavBlob, durationSeconds };
+    console.warn(
+      '[TTS] No ElevenLabs / Fish Audio / OpenAI key configured — returned a PLACEHOLDER timing track, not narration. Add a provider key in Settings → Credentials for real voiceover.'
+    );
+    return {
+      blob: wavBlob,
+      durationSeconds,
+      provider: 'placeholder',
+      isPlaceholder: true,
+      warning: 'No TTS provider configured — this is a silent placeholder track, not real narration. Add an ElevenLabs, Fish Audio, or OpenAI key in Settings to generate voiceover.',
+    };
   }
 }

@@ -14,6 +14,8 @@ import {
   getTutorialJobById,
   updateTutorialJob,
   listTutorialJobsByParent,
+  listThumbnailsForSubject,
+  getTutorialSettings,
 } from "@repo/db";
 import {
   probeMedia,
@@ -24,6 +26,7 @@ import {
 } from "@repo/media-core";
 import { deriveLogoSubject } from "@repo/domain";
 import { firstNSentences } from "../../utils/thumbnail/prompt-builder.js";
+import { ensureManualTutorialThumbnail } from "../../utils/tutorial/manual-thumbnail.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
 import {
   buildNewVideoTreatmentArgs,
@@ -313,8 +316,27 @@ export function createTutorialSpliceProcessor(
       // Skip translated children (source_job_id set): no thumbnails for the
       // localized versions for now — thumbnails are produced on the English
       // original only (owner directive 2026-08-23).
-      if (!tutorialJob.parent_job_id && !tutorialJob.source_job_id) {
+      // Localized children need their own thumbnail. Their translated title,
+      // target channel and language let the normal resolver pick the correct
+      // host and branding automatically.
+      if (!tutorialJob.parent_job_id) {
         try {
+          const productionSettings = await getTutorialSettings(db);
+          if (productionSettings.thumbnail_generation_mode === "manual") {
+            const languages = tutorialJob.source_job_id
+              ? [tutorialJob.language ?? "en"]
+              : ["en", "de", "fr", "it", "nl", "sv"];
+            const manualThumbnails = await Promise.all(
+              languages.map((targetLanguage) => ensureManualTutorialThumbnail(db, tutorialJob, { targetLanguage })),
+            );
+            console.log(JSON.stringify({
+              level: "info",
+              message: "Procedural language thumbnail set ready for VA review",
+              job_id: jobId,
+              thumbnail_ids: manualThumbnails.map((thumbnail) => thumbnail.id),
+              created: manualThumbnails.filter((thumbnail) => thumbnail.created).length,
+            }));
+          } else {
           const excerpt = firstNSentences(tutorialJob.script_text ?? "", 5);
           // The SOFTWARE this tutorial is about. Without it the brief compiler
           // has no product to brand and the thumbnail never names the tool —
@@ -322,6 +344,19 @@ export function createTutorialSpliceProcessor(
           // title does not identify a product; the field is then omitted and
           // the existing title-derived fallback applies unchanged.
           const logoSubject = deriveLogoSubject(tutorialJob.title);
+          // A localization is a language variant of the English creative, not
+          // a fresh composition. Reuse the VA-selected English archetype while
+          // the target channel still supplies its own host and branding.
+          const sourceThumbnails = tutorialJob.source_job_id
+            ? await listThumbnailsForSubject(
+                db,
+                "tutorial_job",
+                tutorialJob.source_job_id,
+              )
+            : [];
+          const sourceArchetypeId = sourceThumbnails.find(
+            (thumbnail) => thumbnail.is_selected,
+          )?.archetype_id;
           await queues.thumbnail.add(
             "thumbnail",
             {
@@ -333,10 +368,12 @@ export function createTutorialSpliceProcessor(
               topic: tutorialJob.title,
               scriptExcerpt: excerpt,
               ...(logoSubject !== null ? { logoSubject } : {}),
-              language: "en",
+              ...(sourceArchetypeId ? { archetypeId: sourceArchetypeId } : {}),
+              language: tutorialJob.language ?? "en",
             },
             { jobId: `thumbnail-${jobId}`, attempts: 2 },
           );
+          }
         } catch (thumbErr) {
           console.error(
             JSON.stringify({

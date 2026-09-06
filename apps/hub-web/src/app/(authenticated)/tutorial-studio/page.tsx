@@ -4,6 +4,7 @@ import { getSession } from "../_lib/v2-auth";
 import { db } from "@/lib/db";
 import {
   listTutorialJobsByUser,
+  listTutorialJobs,
   listPromptPresets,
   getTutorialSettings,
 } from "@repo/db";
@@ -48,7 +49,9 @@ export default async function ProductionPage() {
     channels,
     providerAvailability,
   ] = await Promise.all([
-    listTutorialJobsByUser(db, session.userId, 100),
+    session.role === "ADMIN"
+      ? listTutorialJobs(db, 100)
+      : listTutorialJobsByUser(db, session.userId, 100),
     listPromptPresets(db),
     getTutorialSettings(db),
     getTutorialTotals(),

@@ -431,7 +431,8 @@ export async function requestThumbnail(
       const rule =
         rawRule ??
         (await getThumbnailFormatRule(db, "OTHER").catch(() => undefined));
-      const maxWords = rule?.text_max_words ?? 5;
+      // Network contract: action + subject, three words maximum.
+      const maxWords = Math.min(rule?.text_max_words ?? 3, 3);
       const derived = await deriveHeadline({
         title: args.title,
         operatorHeadline: args.headlineText ?? null,

@@ -57,7 +57,8 @@ If there are style instructions in the reference image, follow them and don't ke
 
 Style: Ensure an extremely premium, high-end visual aesthetic. It should look highly curated, flawless, and exclusive.
 
-Match the reference image's composition, lighting, color scheme (topic adjusted), and visual energy. Use vibrant colors and high contrast.`;
+Match the reference image's composition, lighting, color scheme (topic adjusted), and visual energy. Use vibrant colors and high contrast.
+Text must be black for contrast and have no mistakes. Only one person on the Thumbnail.`;
 
   return prompt.trim().slice(0, MAX_PROMPT_CHARS);
 }

@@ -212,7 +212,7 @@ export function compileThumbnailBrief(
   const layoutArchetype = rule?.layout_archetype ?? "centred_object";
   let emotion = rule?.emotion_register ?? "authentic";
   let gaze = rule?.gaze_policy ?? "direct";
-  const maxWords = rule?.text_max_words ?? 5;
+  const maxWords = Math.min(rule?.text_max_words ?? 3, 3);
   const compositeText = rule?.composite_text ?? false;
   const scaleMin = toScale(rule?.subject_scale_min ?? null);
   const scaleMax = toScale(rule?.subject_scale_max ?? null);
@@ -669,18 +669,18 @@ export interface DeriveHeadlineResult {
  * Reduce a video title to a thumbnail headline that COMPLEMENTS it (same
  * promise, different words), per DECISIONS §3.2.4 and plan §B3. Order:
  *   1. text_max_words === 0  -> null (legal and often correct — §A5.2)
- *   2. operator typed a headline -> verbatim, never override a human
+ *   2. operator typed a headline -> preserve its intent, enforce the word cap
  *   3. else LLM: <= maxWords words carrying the curiosity gap, NOT the title
  *   4. LLM unavailable -> title_fallback (RECORDED + surfaced, never silent)
  *
  * `llm` is injected so this is unit-testable; pass the real requestLLMText
  * wrapper in production.
  *
- * BOTH generated paths now run through `condenseHeadline`. Asking a model for
+ * Every non-empty path now runs through `condenseHeadline`. Asking a model for
  * three words and printing whatever it returns is how "Sage Accounting Painless
  * Month Ends" reached a thumbnail; the mechanical pass is what makes the ceiling
- * real. The operator path is deliberately NOT condensed — a human who typed the
- * text meant it.
+ * real. Operator text keeps priority, but it cannot bypass the layout's hard
+ * maximum (three words for tutorial thumbnails).
  */
 export async function deriveHeadline(args: {
   title: string;
@@ -694,14 +694,13 @@ export async function deriveHeadline(args: {
   llm?: (prompt: string) => Promise<string>;
 }): Promise<DeriveHeadlineResult> {
   if (args.maxWords <= 0) return { headline: null, source: "none" };
-  const op = args.operatorHeadline?.trim();
-  if (op) return { headline: op, source: "operator" };
-
   const condense = (text: string): string =>
     condenseHeadline(text, {
       maxWords: args.maxWords,
       logoSubject: args.logoSubject ?? null,
     });
+  const op = args.operatorHeadline?.trim();
+  if (op) return { headline: condense(op), source: "operator" };
   // The fallback is a CONDENSED title, not the first N words of it. Still
   // recorded as `title_fallback` so the UI keeps badging it (standing rule §0)
   // — the label describes where the words came from, not how good they are.

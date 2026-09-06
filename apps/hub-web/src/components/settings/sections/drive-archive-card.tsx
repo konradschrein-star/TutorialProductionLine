@@ -43,7 +43,10 @@ function fmtBytes(n: number | null): string {
   if (n === null) return "—";
   if (n === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  const i = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(n) / Math.log(1024)),
+  );
   return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
@@ -68,15 +71,26 @@ function Dot({ color }: { color: string }) {
   );
 }
 
-export function DriveArchiveCard() {
+export function DriveArchiveCard({
+  canManage = false,
+}: {
+  canManage?: boolean;
+}) {
   const [health, setHealth] = useState<DriveHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [oauthStatus] = useState(() =>
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("drive_oauth"),
+  );
 
   useEffect(() => {
     let alive = true;
     fetch("/api/storage/drive/health")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
+      )
       .then((d: DriveHealth) => {
         if (alive) {
           setHealth(d);
@@ -96,7 +110,10 @@ export function DriveArchiveCard() {
 
   const budgetPct =
     health && health.dailyBudgetBytes > 0
-      ? Math.min(100, (health.dailyBudgetUsedBytes / health.dailyBudgetBytes) * 100)
+      ? Math.min(
+          100,
+          (health.dailyBudgetUsedBytes / health.dailyBudgetBytes) * 100,
+        )
       : 0;
 
   const statusColor = !health
@@ -141,6 +158,76 @@ export function DriveArchiveCard() {
           {statusLabel}
         </span>
       </div>
+
+      {canManage && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <a
+            href="/api/storage/drive/oauth/start"
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "7px 10px",
+              borderRadius: 6,
+              border: "1px solid rgba(255,255,255,.12)",
+              background: "rgba(255,255,255,.06)",
+              color: LABEL,
+              textDecoration: "none",
+            }}
+          >
+            {health?.configured
+              ? "Reconnect Google Drive"
+              : "Connect Google Drive"}
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setError(null);
+              fetch("/api/storage/drive/health")
+                .then((r) =>
+                  r.ok
+                    ? r.json()
+                    : Promise.reject(new Error(`HTTP ${r.status}`)),
+                )
+                .then((d: DriveHealth) => setHealth(d))
+                .catch((e: unknown) =>
+                  setError(e instanceof Error ? e.message : "failed to load"),
+                )
+                .finally(() => setLoading(false));
+            }}
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "7px 10px",
+              borderRadius: 6,
+              border: "1px solid rgba(255,255,255,.12)",
+              background: "transparent",
+              color: LABEL,
+            }}
+          >
+            Refresh status
+          </button>
+        </div>
+      )}
+
+      {oauthStatus && (
+        <div
+          style={{
+            fontSize: 11,
+            color: oauthStatus === "connected" ? GOOD : BAD,
+            padding: "7px 9px",
+            borderRadius: 6,
+            background:
+              oauthStatus === "connected"
+                ? "rgba(90,200,120,.08)"
+                : "rgba(224,96,94,.08)",
+          }}
+        >
+          {oauthStatus === "connected"
+            ? "Google Drive connected. Enable automatic delivery above when you are ready."
+            : `Google Drive authorization failed: ${oauthStatus.replaceAll("_", " ")}`}
+        </div>
+      )}
 
       {loading && (
         <p style={{ fontSize: 12, color: HINT, margin: 0 }}>Loading…</p>

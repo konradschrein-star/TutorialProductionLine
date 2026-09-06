@@ -60,6 +60,30 @@ app.get('/api/languages', (req, res) => {
 });
 
 /**
+ * Keyword autocomplete proxy (Google + YouTube suggest).
+ * Mirrors the Vite dev proxy so the "Discover keywords" feature also works in a
+ * production static build. The client calls /api/google-suggest?client=firefox&q=...
+ * (add &ds=yt for YouTube suggestions); we forward the query string upstream.
+ */
+app.get('/api/google-suggest', async (req, res) => {
+  try {
+    const qs = new URLSearchParams(req.query).toString();
+    const upstream = `https://suggestqueries.google.com/complete/search?${qs}`;
+    const r = await fetch(upstream, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TutorialStudio/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await r.text();
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.status(r.ok ? 200 : r.status).send(text);
+  } catch (e) {
+    console.warn('[suggest] proxy failed:', e.message);
+    res.status(502).json({ error: 'suggest_proxy_failed', message: e.message });
+  }
+});
+
+/**
  * Google Drive Connection Test Endpoint
  */
 app.post('/api/drive/test', (req, res) => {
@@ -109,17 +133,18 @@ app.post('/api/drive/upload', upload.single('file'), (req, res) => {
   const { jobId, channelName, targetPath, fileName } = req.body;
   const file = req.file;
 
-  const mockFileId = `gdrive_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const viewUrl = `https://drive.google.com/drive/folders/${mockFileId}`;
-
+  // This reference server does NOT implement a real Google Drive upload. Report
+  // confirmed:false and NO viewUrl so the client records the delivery as PENDING
+  // instead of falsely claiming the file is in Google Drive. Wire a real Drive
+  // SDK here (service-account upload) to return confirmed:true + a real viewUrl.
   res.json({
     ok: true,
+    confirmed: false,
     jobId,
-    fileId: mockFileId,
     channelName,
     drivePath: targetPath || `Tutorials/${channelName}/`,
     fileName: fileName || file?.originalname || 'tutorial.mp4',
-    viewUrl,
+    note: 'Drive upload not implemented in the reference server; delivery recorded as pending.',
     uploadedAt: new Date().toISOString()
   });
 });

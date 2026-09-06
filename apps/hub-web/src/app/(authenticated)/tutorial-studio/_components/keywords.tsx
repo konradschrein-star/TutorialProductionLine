@@ -9,11 +9,7 @@ import { V2Button } from "../../_components";
  * with complete Admin iframe controls.
  */
 
-export interface ProductionKeywordsProps {
-  onUseSeed?: (seed: { id: number; title: string }) => void;
-}
-
-export function ProductionKeywords(_props: ProductionKeywordsProps) {
+export function ProductionKeywords() {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -116,9 +112,6 @@ export function ProductionKeywords(_props: ProductionKeywordsProps) {
           />
           <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
             Keyword Tool (Video ERP)
-          </span>
-          <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>
-            · 38 Software Packets Active
           </span>
         </div>
 

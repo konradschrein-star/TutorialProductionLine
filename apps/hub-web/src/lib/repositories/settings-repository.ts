@@ -47,6 +47,7 @@ export async function getSection(
   const columnMap: Record<SettingsSectionId, keyof typeof row> = {
     storage: "storage",
     notifications: "notifications",
+    uploader: "uploader",
   };
 
   return row[columnMap[sectionId]] ?? null;
@@ -64,6 +65,7 @@ export async function updateSection(
   const columnMap: Record<SettingsSectionId, string> = {
     storage: "storage",
     notifications: "notifications",
+    uploader: "uploader",
   };
 
   const columnName = columnMap[sectionId];

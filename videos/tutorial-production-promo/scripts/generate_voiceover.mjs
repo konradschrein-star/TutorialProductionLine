@@ -12,7 +12,10 @@ if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir, { recursive: true });
 }
 
-const FISH_API_KEY = process.env.FISH_API_KEY || "sk-fish-OZZGFrrzYu63Lg6QYMxfbv5dhQLCDrKLSTX_Ptc8D_o";
+const FISH_API_KEY = process.env.FISH_API_KEY;
+if (!FISH_API_KEY) {
+  throw new Error('FISH_API_KEY is required');
+}
 const FISH_VOICE_ID = "395ba76e58c04fd49467755b8182384e"; // Konrad's neural voice model
 const FISH_API_BASE = "https://api.fish.audio";
 

@@ -8,6 +8,7 @@ import { GeneratePanel } from "./generate-panel";
 import { LibraryPanel } from "./library-panel";
 import { BrandingForm, type ChannelBrandingData } from "./branding-form";
 import { Composer } from "./composer";
+import { ProductionThumbnails } from "../../tutorial-studio/_components/thumbnails";
 import type { ThumbnailArchetype } from "@repo/db";
 import type { ActiveFormat } from "@/lib/formats";
 import type { ChannelOption } from "@/components/thumbnails/types";
@@ -22,6 +23,7 @@ import type { ChannelOption } from "@/components/thumbnails/types";
  */
 
 const TABS = [
+  { id: "videos", label: "Videos", icon: "smart_display" },
   { id: "composer", label: "Composer", icon: "dashboard_customize" },
   { id: "archetypes", label: "Archetypes", icon: "grid_view" },
   { id: "generate", label: "Generate", icon: "auto_awesome" },
@@ -43,6 +45,8 @@ interface Props {
   channels: ChannelOption[];
   formats: ActiveFormat[];
   channelData: Record<string, ChannelBrandingData>;
+  initialJobId: string | null;
+  canConfigure: boolean;
 }
 
 export function ThumbnailStudioClient({
@@ -50,14 +54,20 @@ export function ThumbnailStudioClient({
   channels,
   formats,
   channelData,
+  initialJobId,
+  canConfigure,
 }: Props) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabId>("composer");
+  const [tab, setTab] = useState<TabId>(initialJobId ? "composer" : "videos");
+  const [activeJobId, setActiveJobId] = useState<string | null>(initialJobId);
   const [editing, setEditing] = useState<ThumbnailArchetype | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [generateWith, setGenerateWith] = useState<string | null>(null);
 
   const globalCount = archetypes.filter((a) => a.channel_id === null).length;
+  const visibleTabs = TABS.filter(
+    (item) => canConfigure || item.id === "videos" || item.id === "composer",
+  );
 
   function openEditor(a: ThumbnailArchetype | null) {
     setEditing(a);
@@ -95,8 +105,7 @@ export function ThumbnailStudioClient({
             Thumbnail Studio
           </h1>
           <p style={{ fontSize: 12.5, color: TEXT_2, margin: 0 }}>
-            Global thumbnail engine — reference-driven archetypes, every format
-            and channel. Defaults to 16:9 at 1K.
+            Choose a finished video, compose its language thumbnails, then approve them for delivery.
           </p>
         </div>
         <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
@@ -146,13 +155,19 @@ export function ThumbnailStudioClient({
           flexWrap: "wrap",
         }}
       >
-        {TABS.map((t) => {
+        {visibleTabs.map((t) => {
           const on = tab === t.id;
           return (
             <button
               key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                setTab(t.id);
+                if (t.id === "videos" && activeJobId) {
+                  setActiveJobId(null);
+                  router.replace("/thumbnails", { scroll: false });
+                }
+              }}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -184,7 +199,16 @@ export function ThumbnailStudioClient({
         })}
       </div>
 
-      {tab === "composer" && <Composer />}
+      {tab === "composer" && (activeJobId ? (
+        <Composer jobId={activeJobId} />
+      ) : (
+        <div style={{ padding: 36, border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, textAlign: "center", color: TEXT_2 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_1 }}>Choose a video before composing</div>
+          <div style={{ marginTop: 7, fontSize: 12 }}>Every thumbnail must belong to a finished video. Open one from the Videos tab.</div>
+          <button type="button" onClick={() => setTab("videos")} style={{ marginTop: 16, padding: "9px 16px", borderRadius: 7, border: 0, background: "var(--v2-accent)", color: "#081000", fontWeight: 800, cursor: "pointer" }}>Choose video</button>
+        </div>
+      ))}
+      {tab === "videos" && <ProductionThumbnails initialJobId={activeJobId} />}
 
       {/* AI generation depends on media-gateway infra that is not always
           present. The Composer above is the primary, fully-offline tool; the

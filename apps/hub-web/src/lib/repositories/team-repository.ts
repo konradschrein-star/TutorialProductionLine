@@ -1,5 +1,5 @@
 import { eq, desc, sql, and } from 'drizzle-orm';
-import { db, users, contentJobs } from '../db';
+import { db, users } from '../db';
 
 /**
  * Team Repository
@@ -20,7 +20,11 @@ export interface User {
 export interface UserWithStats extends User {
   jobs_completed: number;
   jobs_in_progress: number;
+  jobs_working_now: number;
   avg_time_per_job_hours: number | null;
+  online_seconds_total: number;
+  last_seen_at: Date | null;
+  is_online: boolean;
 }
 
 /**
@@ -33,19 +37,26 @@ export async function listUsersWithStats(): Promise<UserWithStats[]> {
     .select({
       user: users,
       jobs_completed: sql<number>`
-        cast(count(CASE WHEN cj.status = 'PUBLISHED' THEN 1 END) as integer)
+        cast(count(CASE WHEN tj.status = 'COMPLETED' THEN 1 END) as integer)
       `,
       jobs_in_progress: sql<number>`
-        cast(count(CASE WHEN cj.status NOT IN ('PUBLISHED', 'FAILED_QMS', 'FAILED_GENERAL', 'FAILED_RENDER', 'FAILED_UPLOAD') THEN 1 END) as integer)
+        cast(count(CASE WHEN tj.id IS NOT NULL AND tj.status NOT IN
+          ('COMPLETED', 'FAILED_SCRIPT', 'FAILED_AUDIO', 'FAILED_SPLICE', 'CANCELLED')
+          THEN 1 END) as integer)
+      `,
+      jobs_working_now: sql<number>`
+        cast(count(CASE WHEN tj.status IN
+          ('GENERATING_SCRIPT', 'GENERATING_AUDIO', 'READY_TO_RECORD', 'AWAITING_UPLOAD', 'SPLICING')
+          THEN 1 END) as integer)
       `,
       avg_time_hours: sql<number | null>`
-        avg(EXTRACT(EPOCH FROM (cj.updated_at - cj.created_at)) / 3600)
+        avg(EXTRACT(EPOCH FROM (tj.updated_at - tj.created_at)) / 3600)
       `,
     })
     .from(users)
     .leftJoin(
-      sql`content_jobs cj`,
-      sql`(${users.id} = cj.assigned_production_va_id OR ${users.id} = cj.assigned_uploader_va_id)`
+      sql`tutorial_jobs tj`,
+      sql`${users.id} = tj.created_by`
     )
     .groupBy(users.id)
     .orderBy(desc(users.created_at));
@@ -54,7 +65,13 @@ export async function listUsersWithStats(): Promise<UserWithStats[]> {
     ...row.user,
     jobs_completed: row.jobs_completed || 0,
     jobs_in_progress: row.jobs_in_progress || 0,
+    jobs_working_now: row.jobs_working_now || 0,
     avg_time_per_job_hours: row.avg_time_hours != null ? Number(row.avg_time_hours) : null,
+    online_seconds_total: Number(row.user.online_seconds_total ?? 0),
+    last_seen_at: row.user.last_seen_at ?? null,
+    is_online:
+      row.user.last_seen_at instanceof Date &&
+      Date.now() - row.user.last_seen_at.getTime() < 2 * 60 * 1000,
   }));
 }
 

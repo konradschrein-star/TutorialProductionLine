@@ -20,7 +20,7 @@ const PAGES = [
     href: "/tutorial-studio/video-stitcher",
     icon: "video_library",
   },
-  { label: "Thumbnails", href: "/thumbnails", icon: "image" },
+  { label: "Thumbnail Studio", href: "/thumbnails", icon: "image" },
   { label: "Channels", href: "/channels", icon: "subscriptions" },
   { label: "System Health", href: "/system-health", icon: "health_and_safety" },
   { label: "Team", href: "/team", icon: "group" },

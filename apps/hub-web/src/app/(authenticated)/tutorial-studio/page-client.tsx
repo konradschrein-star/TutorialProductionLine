@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { V2Button } from "../_components";
 import { ProductionDashboard } from "./_components/dashboard";
 import { LocalizePanel } from "./_components/localize-panel";
@@ -10,7 +11,6 @@ import { ProductionCreate } from "./_components/create";
 import { ProductionStudio } from "./_components/studio";
 import { ProductionSettings } from "./_components/settings";
 import { ProductionKeywords } from "./_components/keywords";
-import { ProductionThumbnails } from "./_components/thumbnails";
 import { ProductionRanking } from "./_components/ranking";
 import { TtsHealthBadge } from "./_components/tts-health-badge";
 import { UploadsTable } from "./_components/uploads";
@@ -24,27 +24,24 @@ import type { TutorialSettingsRow } from "@repo/db";
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
+  // Keywords feed creation, so keep them adjacent in workflow order.
+  { id: "keywords", label: "Keywords" },
   { id: "create", label: "Create" },
   { id: "studio", label: "Studio" },
-  // Master video delivery & upload tracking table for manual uploaders
+  // Thumbnail approval happens before localization/rendering.
+  { id: "thumbnails", label: "Thumbnail Studio" },
+  { id: "review", label: "Review" },
+  { id: "localize", label: "Localized" },
+  // Delivery follows localization because the uploader consumes the complete
+  // language bundle, not the English source in isolation.
   { id: "uploads", label: "Uploads" },
   // RANKING lane. Tier-list videos are a separate content format with their
   // own worker pipeline, but the VA who runs them is this VA, so the entry
   // point belongs here rather than in a second tool they would have to learn.
   { id: "ranking", label: "Ranking" },
-  // End-of-day review. Deliberately AFTER the production tabs: it is the last
-  // thing a VA does, and it is a look back at what they finished rather than
-  // another queue to work through.
-  { id: "review", label: "Review" },
-  { id: "localize", label: "Localize" },
-  { id: "thumbnails", label: "Thumbnails" },
-  { id: "keywords", label: "Keywords" },
   { id: "settings", label: "Settings" },
 ] as const;
 
-
-/** Tabs an uploader VA (manage:thumbnails, no view:production) may see. */
-const THUMBNAIL_ONLY_TABS = new Set<TabId>(["thumbnails"]);
 
 /**
  * Ranking / tier-list production is an optional add-on. This deployment has not
@@ -118,7 +115,12 @@ interface ProductionClientProps {
   canManage: boolean;
   /** edit:tutorial-workflow — a producer VA may tune voice/speed/hotkey/prompts. */
   canEditWorkflow: boolean;
-  totals: { total: number; week: number };
+  totals: {
+    total: number;
+    week: number;
+    translations: number;
+    translationsWeek: number;
+  };
   leaderboard: LeaderboardEntry[];
   myCompleted: number;
   userId: string;
@@ -173,30 +175,52 @@ export function ProductionClient({
    * Dashboard shows throughput, Studio shows the queue and a finished video.
    * That is the demo.
    */
-  const visibleTabs = TABS.filter((t) =>
-    THUMBNAIL_ONLY_TABS.has(t.id) ? canFixThumbnails : canProduce,
+  const visibleTabs = useMemo(
+    () =>
+      TABS.filter((candidate) =>
+        candidate.id === "thumbnails" ? canFixThumbnails || canProduce : canProduce,
+      ),
+    [canFixThumbnails, canProduce],
   );
   // Default landing tab per role. A ?tab=<id> deep-link (e.g. the Keywords
   // sidebar item -> /tutorial-studio?tab=keywords) overrides it, but ONLY when
   // that tab is actually visible to this user — otherwise an UPLOADER_VA
   // following a Keywords link would land on a tab they cannot use. Read once at
   // mount via the lazy initializer; tab switches thereafter stay local state.
-  const defaultTab: TabId = canProduce ? "create" : "thumbnails";
+  const defaultTab: TabId = "create";
   const [tab, setTab] = useState<TabId>(() => {
     const requested = searchParams.get("tab");
     return requested && visibleTabs.some((t) => t.id === requested)
       ? (requested as TabId)
       : defaultTab;
   });
+
+  // Next keeps the same page component mounted when a sidebar link only
+  // changes ?tab=. Mirror the URL after every such navigation; otherwise the
+  // Delivery & Uploads and Keywords links look clickable but leave the old tab
+  // on screen until a full reload.
+  useEffect(() => {
+    const requested = searchParams.get("tab");
+    if (requested && visibleTabs.some((candidate) => candidate.id === requested)) {
+      setTab(requested as TabId);
+    } else if (!requested && !visibleTabs.some((candidate) => candidate.id === tab)) {
+      setTab(defaultTab);
+    }
+  }, [searchParams, tab, visibleTabs]);
+
+  // There is one thumbnail surface: /thumbnails. The former in-page fixer was
+  // a second, competing Thumbnail section with different capabilities.
+  useEffect(() => {
+    if (!canProduce && canFixThumbnails) router.replace("/thumbnails");
+  }, [canProduce, canFixThumbnails, router]);
   const [jobs, setJobs] = useState<TutorialJob[]>(initialJobs);
-  // A seed keyword the VA picked from the "Initial Keywords" fallback, waiting
-  // to prefill the Create form. Set when they press "Create tutorial" there;
-  // consumed (and cleared) by ProductionCreate once it has loaded it.
-  const [pendingSeed, setPendingSeed] = useState<{
-    id: number;
-    title: string;
-  } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * Status transitions we have already toasted (`${id}:${status}`), so a job
+   * finishing/failing announces itself exactly once — never again on later
+   * polls, and never twice if the state updater is invoked twice.
+   */
+  const notifiedTransitions = useRef<Set<string>>(new Set());
   /**
    * Detail fetches already attempted, so a field that is legitimately EMPTY
    * does not re-request the same job on every 5s tick forever.
@@ -229,10 +253,34 @@ export function ProductionClient({
       // carried over the same way, or the "Steps" panel in Review Script would
       // blank out five seconds after the page loads.
       let needsDetail: string[] = [];
+      // Status changes to announce once this poll settles. A job that finishes,
+      // fails, or becomes ready to record must tell the VA — otherwise it just
+      // silently leaves (or changes section in) the worklist and looks lost.
+      const announce: Array<{ kind: "done" | "failed" | "ready"; title: string }> =
+        [];
       setJobs((prev) => {
         const prevById = new Map(prev.map((j) => [j.id, j]));
         const merged = data.jobs.map((j) => {
           const known = prevById.get(j.id);
+          if (known && known.status !== j.status) {
+            const key = `${j.id}:${j.status}`;
+            if (!notifiedTransitions.current.has(key)) {
+              const title = j.title || "Your video";
+              if (j.status === "COMPLETED") {
+                notifiedTransitions.current.add(key);
+                announce.push({ kind: "done", title });
+              } else if (String(j.status).startsWith("FAILED")) {
+                notifiedTransitions.current.add(key);
+                announce.push({ kind: "failed", title });
+              } else if (
+                j.status === "READY_TO_RECORD" &&
+                known.status !== "READY_TO_RECORD"
+              ) {
+                notifiedTransitions.current.add(key);
+                announce.push({ kind: "ready", title });
+              }
+            }
+          }
           if (!known) return j;
           return {
             ...j,
@@ -250,6 +298,22 @@ export function ProductionClient({
           .slice(0, 5);
         return merged;
       });
+
+      // Announce transitions (outside the updater). Completed & ready are
+      // reassuring successes; a failure is loud and long-lived so the VA sees
+      // it and knows the video is in "Your Jobs" flagged red, not lost.
+      for (const a of announce) {
+        if (a.kind === "done") {
+          toast.success(`“${a.title}” finished — find it in Finished Videos.`);
+        } else if (a.kind === "ready") {
+          toast.success(`“${a.title}” is ready to record.`);
+        } else {
+          toast.error(
+            `“${a.title}” failed while processing. It's flagged in Your Jobs — open it to see why and retry. It was not lost.`,
+            { duration: 12000 },
+          );
+        }
+      }
 
       for (const id of needsDetail) {
         const row = data.jobs.find((j) => j.id === id);
@@ -333,7 +397,14 @@ export function ProductionClient({
           <V2Button
             key={t.id}
             variant={tab === t.id ? "accent" : "outline"}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              if (t.id === "thumbnails") {
+                router.push("/thumbnails");
+                return;
+              }
+              setTab(t.id);
+              router.replace(`/tutorial-studio?tab=${t.id}`, { scroll: false });
+            }}
           >
             {t.label}
             {t.id === "studio" && readyCount > 0 && (
@@ -409,8 +480,6 @@ export function ProductionClient({
           onCreated={() => {
             void refresh();
           }}
-          pendingSeed={pendingSeed}
-          onSeedConsumed={() => setPendingSeed(null)}
         />
       )}
       {tab === "studio" && (
@@ -435,15 +504,7 @@ export function ProductionClient({
         ))}
       {tab === "review" && <Review />}
       {tab === "localize" && <LocalizePanel />}
-      {tab === "thumbnails" && canFixThumbnails && <ProductionThumbnails />}
-      {tab === "keywords" && (
-        <ProductionKeywords
-          onUseSeed={(seed) => {
-            setPendingSeed(seed);
-            setTab("create");
-          }}
-        />
-      )}
+      {tab === "keywords" && <ProductionKeywords />}
       <RecordingUploadQueue />
       {tab === "settings" && (
         <ProductionSettings

@@ -15,6 +15,16 @@
     --text-primary: #0f172a;
     --text-muted: #64748b;
     --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+
+    /* Brand accent (overridden at runtime from StudioConfig.brandAccent) */
+    --accent: #6366f1;
+    --accent-soft: rgba(99, 102, 241, 0.12);
+    --accent-foreground: #ffffff;
+    /* Semantic status */
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #2563eb;
   }
 
   /* Dark Mode Defaults (DaVinci Resolve / Palantir Pro Workstation) */
@@ -29,6 +39,14 @@
     --text-primary: #f3f4f6;
     --text-muted: #9ca3af;
     --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+
+    --accent: #818cf8;
+    --accent-soft: rgba(129, 140, 248, 0.16);
+    --accent-foreground: #0a0c10;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #f87171;
+    --info: #60a5fa;
   }
 
   body {
@@ -121,11 +139,60 @@
     linear-gradient(to bottom, var(--border-color) 1px, transparent 1px);
 }
 
+/* Brand accent button */
+.btn-accent {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+.btn-accent:hover { opacity: 0.9; }
+.btn-accent:active { transform: scale(0.99); }
+.btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Semantic soft badges — one class per status, driven by tokens */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+}
+.badge-neutral { background: var(--bg-surface-200); color: var(--text-muted); border-color: var(--border-color); }
+.badge-success { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.badge-warning { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+.badge-danger  { background: color-mix(in srgb, var(--danger) 14%, transparent);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+.badge-info    { background: color-mix(in srgb, var(--info) 14%, transparent);    color: var(--info);    border-color: color-mix(in srgb, var(--info) 30%, transparent); }
+.badge-accent  { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Consistent keyboard focus ring */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 
-.animate-fadeIn {
-  animation: fadeIn 0.2s ease-out forwards;
+.animate-fadeIn { animation: fadeIn 0.2s ease-out forwards; }
+.animate-modalIn { animation: modalIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-toastIn { animation: toastIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn, .animate-modalIn, .animate-toastIn { animation: none; }
 }

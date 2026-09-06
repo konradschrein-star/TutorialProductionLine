@@ -40,6 +40,8 @@
     "db:push": "tsc --build && drizzle-kit push",
     "db:studio": "tsc --build && drizzle-kit studio",
     "seed": "tsx src/seed.ts",
+    "create:tutorial-viewer": "tsx src/create-tutorial-viewer.ts",
+    "migrate:tutorial-ship": "tsx src/apply-tutorial-ship-migrations.ts",
     "provision:fonts": "tsx scripts/provision-fonts.ts",
     "seed:casually-explained": "tsx src/seed-casually-explained-template.ts",
     "seed:subtitle-presets": "tsx src/seed-subtitle-presets.ts",

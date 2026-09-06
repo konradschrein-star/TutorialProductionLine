@@ -228,31 +228,6 @@ export async function POST(req: NextRequest) {
       });
   }
 
-  // If this job came from the "Initial Keywords" fallback (keyword_ref
-  // "seed:<id>"), advance that seed keyword's state to IN_PROGRESS so the
-  // fallback list tracks it — the same way picking a board keyword advances the
-  // board. Only bump from NEW so a manual DONE is never clobbered. Best-effort.
-  if (data.keyword_ref && data.keyword_ref.startsWith("seed:")) {
-    const seedId = Number(data.keyword_ref.slice("seed:".length));
-    if (Number.isInteger(seedId) && seedId > 0) {
-      await db
-        .execute(
-          sql`UPDATE seed_keywords SET status = 'IN_PROGRESS', updated_at = now()
-              WHERE id = ${seedId} AND status = 'NEW' AND deleted_at IS NULL`,
-        )
-        .catch((err: unknown) => {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
-              message: "could not advance seed keyword to IN_PROGRESS",
-              keyword_ref: data.keyword_ref,
-              error: String(err).slice(0, 200),
-            }),
-          );
-        });
-    }
-  }
-
   const redisUrl = process.env["REDIS_URL"];
   if (!redisUrl) {
     return NextResponse.json({ error: "REDIS_URL not set" }, { status: 500 });

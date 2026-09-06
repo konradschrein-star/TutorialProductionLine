@@ -68,7 +68,10 @@ describe('GoogleDriveService Unit Tests', () => {
     });
 
     expect(delivery.jobId).toBe('job_test_123');
-    expect(delivery.status).toBe('IN_GOOGLE_DRIVE');
+    // With no reachable/confirming backend the delivery is honestly recorded as
+    // PENDING ('DELIVERING') with NO fabricated Drive URL — never a fake "in Drive".
+    expect(delivery.status).toBe('DELIVERING');
+    expect(delivery.viewUrl).toBeUndefined();
 
     const logs = StorageService.getDriveDeliveries();
     expect(logs.some(d => d.jobId === 'job_test_123')).toBe(true);

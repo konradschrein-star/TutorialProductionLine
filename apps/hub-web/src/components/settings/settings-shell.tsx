@@ -3,15 +3,16 @@
 import { StorageSection } from "./sections/storage-section";
 import { NotificationsSection } from "./sections/notifications-section";
 import { CredentialsCard, type CredentialRow } from "./credentials-card";
+import { UploaderSection } from "./sections/uploader-section";
 import { SettingsErrorBoundary } from "./settings-error-boundary";
 import { ToastContainer } from "@/components/layout/toast";
 
 /**
- * Settings — reworked (§3.3). Only three things remain, every one of which does
- * something real:
+ * Settings shell. Every rendered section is wired to a runtime consumer:
  *   - Credentials (the ONE secrets area; shows reality; ADMIN only)
  *   - Storage (bytes, live disk truth, enforced)
  *   - Alerts (Telegram)
+ *   - Distribution uploader controls (safe/dry-run by default)
  * Theme/appearance lives on the page shell (a cookie). Deleted: General,
  * Pipeline, Rendering, Channels, Security.
  */
@@ -72,6 +73,15 @@ export function SettingsShell({
           />
         </SettingsErrorBoundary>
 
+        <div id="uploader">
+          <SettingsErrorBoundary sectionName="Uploader">
+            <UploaderSection
+              initialData={initialData.uploader}
+              canEdit={canEdit}
+            />
+          </SettingsErrorBoundary>
+        </div>
+
         <div
           style={{
             display: "grid",
@@ -84,6 +94,7 @@ export function SettingsShell({
             <StorageSection
               initialData={initialData.storage}
               storageStat={storageStat}
+              canManageCredentials={canManageCredentials}
             />
           </SettingsErrorBoundary>
 

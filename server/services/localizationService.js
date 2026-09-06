@@ -110,16 +110,24 @@ ${originalScript}`;
     }
   }
 
-  // Offline simulation fallback
-  await new Promise(r => setTimeout(r, 600));
+  // No translation provider available/succeeded. Do NOT fabricate a fake
+  // translation (the previous version returned canned GERMAN for EVERY target
+  // language). Return the ORIGINAL English content, explicitly flagged as
+  // untranslated so the caller/UI can surface it honestly instead of shipping
+  // wrong-language output.
+  console.warn(
+    `[localization] No Groq/DeepSeek key succeeded for ${langObj.name}; returning untranslated original.`
+  );
   return {
     language: langObj.name,
     languageCode: langObj.code,
-    localized_title: `[${langObj.name}] ${originalTopic}`,
-    localized_script: `In diesem Tutorial zeige ich dir, wie du ${originalTopic} machst... Wenn dir das hilft, abonniere den Kanal... Erstens, öffne die Einstellungen... Zweitens, wähle deine Konfiguration... und klicke auf Speichern...`,
-    localized_description: `Lerne wie du ${originalTopic} in diesem kurzen Schritt-für-Schritt-Tutorial machst.\n\n📌 Was du lernst:\n- Komplette Anleitung\n- Tipps & Tricks\n\n🔔 Kanal abonnieren für tägliche Tutorials!`,
-    localized_tags: [`${originalTopic} ${langObj.name}`, 'tutorial', 'anleitung', 'schritt für schritt'],
-    thumbnail_text_top: 'SCHNELL LERNEN',
-    thumbnail_text_bottom: 'SCHRITT FÜR SCHRITT'
+    translationFailed: true,
+    warning: `Translation into ${langObj.name} was not performed (no working translation provider). Original English content returned — configure a Groq or DeepSeek key to enable real localization.`,
+    localized_title: originalTopic,
+    localized_script: originalScript,
+    localized_description: `Learn how to ${originalTopic} in this step-by-step tutorial.`,
+    localized_tags: [originalTopic, 'tutorial', 'how to', 'step by step'],
+    thumbnail_text_top: 'HOW TO',
+    thumbnail_text_bottom: 'STEP BY STEP'
   };
 }

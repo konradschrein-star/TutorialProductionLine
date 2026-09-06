@@ -88,6 +88,30 @@ describe("tutorial + clip forge trees are separate roots", () => {
     expect(plan.segments[0]).toBe("_Tutorials");
   });
 
+  it("groups uploader-ready tutorial variants under one bundle leaf", () => {
+    const sourceId = "f00dcafe-0000-0000-0000-000000000000";
+    const english = planTutorialFolder({
+      jobId: sourceId,
+      title: "How To X",
+      channelName: "USA Tutorials",
+      completedAt: AT,
+      languageCode: "en",
+      bundleFolderName: "Upload Bundles",
+    });
+    const german = planTutorialFolder({
+      jobId: "de000000-0000-0000-0000-000000000000",
+      title: "So geht X",
+      channelName: "German Tutorials",
+      completedAt: AT,
+      sourceJobId: sourceId,
+      sourceTitle: "How To X",
+      languageCode: "de",
+      bundleFolderName: "Upload Bundles",
+    });
+    expect(german.segments.slice(0, -1)).toEqual(english.segments);
+    expect(german.segments.at(-1)).toBe("de");
+  });
+
   it("clip forge lives in its own root, never nested in Content Forge", () => {
     const plan = planClipForgeFolder({
       clipId: "c1000000-0000-0000-0000-000000000000",

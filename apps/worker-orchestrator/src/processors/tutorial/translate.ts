@@ -21,10 +21,13 @@ import {
   getTutorialSettings,
   getChannelVoice,
   getVoiceForLanguage,
+  createThumbnailRecord,
   tutorialJobs,
+  thumbnails,
   channels,
   eq,
   and,
+  desc,
 } from "@repo/db";
 import { generateScript } from "../../utils/tutorial/llm-registry.js";
 import { generateTutorialUploadMetadata } from "../../utils/tutorial/upload-metadata.js";
@@ -679,6 +682,55 @@ export function createTutorialTranslateProcessor(
           progress: 50,
         });
         childId = child.id;
+      }
+
+      // A VA can prepare and approve all localized thumbnails before this
+      // localized video/TTS job exists. Those early assets live on the English
+      // source keyed by target language. Bind the approved one to the child as
+      // soon as the child is created so splice and Drive delivery use it and do
+      // not generate a second, unrelated thumbnail later.
+      const [alreadyBoundThumbnail] = await db
+        .select({ id: thumbnails.id })
+        .from(thumbnails)
+        .where(
+          and(
+            eq(thumbnails.subject_kind, "tutorial_job"),
+            eq(thumbnails.subject_id, childId),
+          ),
+        )
+        .limit(1);
+      if (!alreadyBoundThumbnail) {
+        const [preparedThumbnail] = await db
+          .select()
+          .from(thumbnails)
+          .where(
+            and(
+              eq(thumbnails.subject_kind, "tutorial_job"),
+              eq(thumbnails.subject_id, source.id),
+              eq(thumbnails.language, targetLanguage),
+              eq(thumbnails.status, "completed"),
+            ),
+          )
+          .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
+          .limit(1);
+        if (preparedThumbnail) {
+          const {
+            id: preparedId,
+            subject_id: _preparedSubjectId,
+            channel_id: _preparedChannelId,
+            created_at: _preparedCreatedAt,
+            updated_at: _preparedUpdatedAt,
+            ...preparedFields
+          } = preparedThumbnail;
+          await createThumbnailRecord(db, {
+            ...preparedFields,
+            subject_id: childId,
+            channel_id: targetChannelId,
+            parent_thumbnail_id: preparedId,
+            language: targetLanguage,
+            is_selected: true,
+          });
+        }
       }
 
       console.log(

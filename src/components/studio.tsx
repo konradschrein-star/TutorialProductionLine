@@ -27,8 +27,10 @@ import {
 import { StudioJob, StudioJobStatus } from '../types';
 import { StorageService } from '../services/storageService';
 import { AIService } from '../services/aiService';
-import { TTSService, AVAILABLE_VOICES } from '../services/ttsService';
+import { TTSService } from '../services/ttsService';
 import { GoogleDriveService } from '../services/googleDriveService';
+import { useToast } from './ui/Feedback';
+import { useConfig } from '../hooks/useStore';
 
 interface StudioProps {
   jobs: StudioJob[];
@@ -36,24 +38,25 @@ interface StudioProps {
   activeChannelFilter?: string;
 }
 
-const SPEED_PRESETS = [1.0, 1.15, 1.25, 1.4, 1.5, 1.6];
-const ASSUMED_CAPTURE_FPS = 30;
-
-const STATUS_LABELS: Record<StudioJobStatus, { label: string; bg: string; text: string; border: string }> = {
-  QUEUED: { label: 'Queued', bg: 'bg-indigo-500/10', text: 'text-indigo-400', border: 'border-indigo-500/30' },
-  GENERATING_SCRIPT: { label: 'Generating Script', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
-  GENERATING_AUDIO: { label: 'Synthesizing Audio', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
-  READY_TO_RECORD: { label: 'Ready to Record', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/30' },
-  AWAITING_UPLOAD: { label: 'Awaiting Upload', bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/30' },
-  SPLICING: { label: 'Splicing & Rendering', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
-  COMPLETED: { label: 'Completed', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/30' },
-  FAILED_SCRIPT: { label: 'Failed Script', bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
-  FAILED_AUDIO: { label: 'Failed Audio', bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
-  FAILED_SPLICE: { label: 'Failed Splice', bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
-  CANCELLED: { label: 'Cancelled', bg: 'bg-surface-300', text: 'text-muted', border: 'border-border' }
+const STATUS_LABELS: Record<StudioJobStatus, { label: string; badge: string }> = {
+  QUEUED: { label: 'Queued', badge: 'badge-info' },
+  GENERATING_SCRIPT: { label: 'Generating Script', badge: 'badge-warning' },
+  GENERATING_AUDIO: { label: 'Synthesizing Audio', badge: 'badge-warning' },
+  READY_TO_RECORD: { label: 'Ready to Record', badge: 'badge-success' },
+  AWAITING_UPLOAD: { label: 'Awaiting Upload', badge: 'badge-info' },
+  SPLICING: { label: 'Splicing & Rendering', badge: 'badge-warning' },
+  COMPLETED: { label: 'Completed', badge: 'badge-success' },
+  FAILED_SCRIPT: { label: 'Failed Script', badge: 'badge-danger' },
+  FAILED_AUDIO: { label: 'Failed Audio', badge: 'badge-danger' },
+  FAILED_SPLICE: { label: 'Failed Splice', badge: 'badge-danger' },
+  CANCELLED: { label: 'Cancelled', badge: 'badge-neutral' }
 };
 
 export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, activeChannelFilter = 'all' }) => {
+  const toast = useToast();
+  const config = useConfig();
+  const SPEED_PRESETS = config.speedPresets;
+  const ASSUMED_CAPTURE_FPS = config.captureFps;
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [editingScriptJobId, setEditingScriptJobId] = useState<string | null>(null);
   const [scriptDraft, setScriptDraft] = useState<string>('');
@@ -105,7 +108,7 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
       });
       onJobUpdate();
     } catch (e: any) {
-      alert('Audio synthesis failed: ' + e.message);
+      toast('Audio synthesis failed: ' + e.message, 'error');
     } finally {
       setIsSynthesizing(prev => ({ ...prev, [job.id]: false }));
     }
@@ -210,8 +213,9 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
         driveUrl: delItem.viewUrl
       });
       onJobUpdate();
+      toast('Take delivered to Google Drive.', 'success');
     } catch (e: any) {
-      alert('Delivery failed: ' + e.message);
+      toast('Delivery failed: ' + e.message, 'error');
     } finally {
       setIsDelivering(prev => ({ ...prev, [job.id]: false }));
     }
@@ -243,18 +247,18 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
                 <div className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-surface-100">
                   <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}>
+                      <span className={`badge ${statusConfig.badge} uppercase`}>
                         {statusConfig.label}
                       </span>
                       <span className="text-[10px] font-mono text-muted uppercase px-2 py-0.5 rounded bg-surface-200 border border-border">
                         {job.channelName}
                       </span>
                       {job.deliveredToDrive ? (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <span className="badge badge-success">
                           <FolderCheck className="w-3 h-3" /> In Google Drive
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono text-muted border border-border flex items-center gap-1">
+                        <span className="badge badge-neutral">
                           <Clock className="w-3 h-3" /> Awaiting Delivery
                         </span>
                       )}
@@ -316,7 +320,7 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
                       <button
                         onClick={() => handleTriggerDriveDelivery(job)}
                         disabled={isDeliv}
-                        className="btn-outline px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 text-emerald-400 border-emerald-500/40"
+                        className="btn-outline px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 text-success"
                       >
                         <FolderCheck className={`w-3.5 h-3.5 ${isDeliv ? 'animate-spin' : ''}`} />
                         {isDeliv ? 'Delivering...' : 'Push to Drive'}
@@ -391,7 +395,7 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
                     {job.audioUrl && (
                       <div className="p-3 rounded-lg bg-surface-100 border border-border flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2 text-xs">
-                          <Volume2 className="w-4 h-4 text-emerald-500" />
+                          <Volume2 className="w-4 h-4 text-success" />
                           <span className="font-mono font-bold text-foreground">TTS Audio Track</span>
                           <span className="text-[10px] font-mono text-muted">({job.durationSeconds}s duration)</span>
                         </div>
@@ -476,8 +480,8 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
 
                     {/* Delivery & Path Details */}
                     {job.deliveredToDrive && (
-                      <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-xs font-mono">
-                        <div className="flex items-center gap-2 text-emerald-400">
+                      <div className="p-2.5 rounded-lg badge-success flex items-center justify-between text-xs font-mono">
+                        <div className="flex items-center gap-2 text-success">
                           <FolderCheck className="w-4 h-4" />
                           <span>Delivered to Drive: <strong className="text-foreground">{job.drivePath}</strong></span>
                         </div>
@@ -486,7 +490,7 @@ export const StandaloneStudio: React.FC<StudioProps> = ({ jobs, onJobUpdate, act
                             href={job.driveUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+                            className="text-xs text-success hover:underline flex items-center gap-1"
                           >
                             Open Folder <ExternalLink className="w-3 h-3" />
                           </a>

@@ -10,9 +10,25 @@ import { tutorialJobs, users } from "@repo/db";
  */
 
 export interface TutorialTotals {
+  /** English originals completed (all-time). The headline production number. */
   total: number;
+  /** English originals completed in the last 7 days. */
   week: number;
+  /** Translated variants completed (all-time) — shown as the secondary number. */
+  translations: number;
+  /** Translated variants completed in the last 7 days. */
+  translationsWeek: number;
 }
+
+/**
+ * Admin/owner accounts (e.g. Konrad) are NOT tracked production. They bulk-seed
+ * and test, which would drown out the VAs' real output. Every production metric
+ * below excludes them so the numbers reflect the VA floor only.
+ */
+const NOT_ADMIN = sql`${tutorialJobs.created_by} NOT IN (select id from users where role = 'ADMIN')`;
+/** English original vs translated variant (a translation points at its source). */
+const IS_ENGLISH = sql`${tutorialJobs.source_job_id} is null`;
+const IS_TRANSLATION = sql`${tutorialJobs.source_job_id} is not null`;
 
 export interface LeaderboardEntry {
   userId: string | null;
@@ -41,21 +57,23 @@ export interface VADailyEntry {
 }
 
 export async function getTutorialTotals(): Promise<TutorialTotals> {
-  const [total] = await db
-    .select({ count: sql<number>`cast(count(*) as integer)` })
+  // One pass, filtered counts: English vs translation, all-time vs last 7 days.
+  // Admin/owner jobs excluded (NOT_ADMIN) so this is real VA production only.
+  const [row] = await db
+    .select({
+      englishTotal: sql<number>`cast(count(*) filter (where ${IS_ENGLISH}) as integer)`,
+      englishWeek: sql<number>`cast(count(*) filter (where ${IS_ENGLISH} and ${tutorialJobs.completed_at} >= now() - interval '7 days') as integer)`,
+      translations: sql<number>`cast(count(*) filter (where ${IS_TRANSLATION}) as integer)`,
+      translationsWeek: sql<number>`cast(count(*) filter (where ${IS_TRANSLATION} and ${tutorialJobs.completed_at} >= now() - interval '7 days') as integer)`,
+    })
     .from(tutorialJobs)
-    .where(sql`${tutorialJobs.status} = 'COMPLETED'`);
-
-  const [week] = await db
-    .select({ count: sql<number>`cast(count(*) as integer)` })
-    .from(tutorialJobs)
-    .where(
-      sql`${tutorialJobs.status} = 'COMPLETED' AND ${tutorialJobs.completed_at} >= now() - interval '7 days'`,
-    );
+    .where(sql`${tutorialJobs.status} = 'COMPLETED' AND ${NOT_ADMIN}`);
 
   return {
-    total: total?.count ?? 0,
-    week: week?.count ?? 0,
+    total: row?.englishTotal ?? 0,
+    week: row?.englishWeek ?? 0,
+    translations: row?.translations ?? 0,
+    translationsWeek: row?.translationsWeek ?? 0,
   };
 }
 
@@ -68,6 +86,7 @@ export async function getTutorialLeaderboard(): Promise<LeaderboardEntry[]> {
     })
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
+    .where(NOT_ADMIN)
     .groupBy(tutorialJobs.created_by, users.name)
     .orderBy(
       sql`count(*) filter (where ${tutorialJobs.status} = 'COMPLETED') desc`,
@@ -92,6 +111,7 @@ export async function getVAStats(): Promise<VAStats[]> {
     })
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
+    .where(NOT_ADMIN)
     .groupBy(tutorialJobs.created_by, users.name)
     .orderBy(
       sql`count(*) filter (where ${tutorialJobs.status} = 'COMPLETED') desc`,
@@ -131,7 +151,7 @@ export async function getVADailyTimeseries(): Promise<VADailyPoint[]> {
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.completed_at} >= now() - interval '28 days'`,
+      sql`${tutorialJobs.status} = 'COMPLETED' and ${NOT_ADMIN} and ${tutorialJobs.completed_at} >= now() - interval '28 days'`,
     )
     .groupBy(
       tutorialJobs.created_by,
@@ -160,7 +180,7 @@ export async function getVADailyLeaderboard(): Promise<VADailyEntry[]> {
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.completed_at} >= current_date`,
+      sql`${tutorialJobs.status} = 'COMPLETED' and ${NOT_ADMIN} and ${tutorialJobs.completed_at} >= current_date`,
     )
     .groupBy(tutorialJobs.created_by, users.name)
     .orderBy(sql`count(*) desc`);

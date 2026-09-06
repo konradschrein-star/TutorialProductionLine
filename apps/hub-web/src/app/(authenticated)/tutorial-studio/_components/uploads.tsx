@@ -15,9 +15,24 @@ interface TranslationDeliveryItem {
   uploadedAt: string | null;
   uploadedBy: string | null;
   youtubeUploadUrl: string | null;
+  uploaderStatus: string | null;
+  youtubeVisibility: string | null;
+  scheduledFor: string | null;
+  youtubePublishedAt: string | null;
+  uploadVerifiedAt: string | null;
   driveFileId: string | null;
   driveUrl: string | null;
   completedAt: string | null;
+  description: string | null;
+  tags: string[] | null;
+  deliveredToDrive: boolean;
+  driveState: "uploaded" | "uploading" | "failed" | "held" | "pending";
+  driveArtifactCount: number;
+  driveFolderPath: string | null;
+  driveError: string | null;
+  thumbnailId: string | null;
+  thumbnailKind: "none" | "automatic" | "ai";
+  thumbnailApproved: boolean;
 }
 
 interface VideoDeliveryRow {
@@ -35,11 +50,53 @@ interface VideoDeliveryRow {
   uploadedAt: string | null;
   uploadedBy: string | null;
   youtubeUploadUrl: string | null;
+  uploaderStatus: string | null;
+  youtubeVisibility: string | null;
+  scheduledFor: string | null;
+  youtubePublishedAt: string | null;
+  uploadVerifiedAt: string | null;
   driveFileId: string | null;
   driveUrl: string | null;
   completedAt: string | null;
   createdAt: string;
   translations: TranslationDeliveryItem[];
+  description: string | null;
+  tags: string[] | null;
+  deliveredToDrive: boolean;
+  driveState: "uploaded" | "uploading" | "failed" | "held" | "pending";
+  driveArtifactCount: number;
+  driveFolderPath: string | null;
+  driveError: string | null;
+  thumbnailId: string | null;
+  thumbnailKind: "none" | "automatic" | "ai";
+  thumbnailApproved: boolean;
+}
+
+interface UploaderStatus {
+  connected: boolean;
+  error?: string;
+  operationsUrl: string;
+  channels: Array<{
+    id: string;
+    name: string;
+    language: string;
+    youtubeChannelId: string;
+    isPrimary: boolean;
+    channelUrl?: string | null;
+    studioUrl?: string;
+  }>;
+  jobs: Array<{
+    id: string;
+    sourceJobId: string | null;
+    channel: string | null;
+    profile: string | null;
+    title: string | null;
+    state: string;
+    progress: number;
+    currentStep: string | null;
+    videoId: string | null;
+    updatedAt: string | null;
+  }>;
 }
 
 const LANGUAGE_FLAGS: Record<string, string> = {
@@ -49,7 +106,84 @@ const LANGUAGE_FLAGS: Record<string, string> = {
   Japanese: "🇯🇵",
   Korean: "🇰🇷",
   English: "🇺🇸",
+  en: "🇺🇸",
+  de: "🇩🇪",
+  fr: "🇫🇷",
+  it: "🇮🇹",
+  nl: "🇳🇱",
+  sv: "🇸🇪",
 };
+
+function uploadStateLabel(item: {
+  uploaderStatus: string | null;
+  youtubeVisibility: string | null;
+  scheduledFor: string | null;
+  isUploaded: boolean;
+}): string {
+  if (item.uploaderStatus === "scheduled" && item.scheduledFor) {
+    return `Scheduled ${new Date(item.scheduledFor).toLocaleString()}`;
+  }
+  if (item.uploaderStatus === "uploading") return "Uploading";
+  if (item.uploaderStatus === "waiting_to_be_uploaded") return "Waiting for uploader";
+  if (item.uploaderStatus === "failed") return "Uploader failed";
+  if (item.uploaderStatus === "uploaded" || item.isUploaded) {
+    return item.youtubeVisibility === "public" ? "Public · verified" : "Uploaded";
+  }
+  return "Not queued";
+}
+
+const UPLOADER_CHANNEL_BY_LANGUAGE: Record<string, string> = {
+  en: "tutorial_usa",
+  de: "tutorial_german",
+  fr: "tutorial_french",
+  it: "tutorial_italian",
+  nl: "tutorial_dutch",
+  sv: "tutorial_swedish",
+};
+
+function videoIdFromUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const id = url.hostname === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : url.searchParams.get("v") ?? url.pathname.match(/\/shorts\/([^/?]+)/)?.[1];
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function ThumbnailPreview({ jobId, thumbnailId, kind, approved }: { jobId: string; thumbnailId: string | null; kind: string; approved: boolean }) {
+  return (
+    <a
+      href={`/thumbnails?jobId=${jobId}`}
+      title="Open this video in Thumbnail Studio"
+      style={{ display: "block", width: 144, aspectRatio: "16 / 9", borderRadius: 7, overflow: "hidden", flexShrink: 0, position: "relative", background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,.12)" }}
+    >
+      {thumbnailId ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`/api/thumbnails/image/${thumbnailId}`} alt="Thumbnail" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      ) : (
+        <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#fca5a5", fontSize: 10 }}>No thumbnail</span>
+      )}
+      <span style={{ position: "absolute", left: 5, bottom: 5, padding: "2px 5px", borderRadius: 4, background: "rgba(0,0,0,.78)", color: approved ? "#86efac" : "#fff", fontSize: 8, textTransform: "uppercase" }}>
+        {kind}{approved ? " · approved" : ""}
+      </span>
+    </a>
+  );
+}
+
+function MetadataBlock({ description, tags }: { description: string | null; tags: string[] | null }) {
+  return (
+    <div style={{ marginTop: 8, padding: 9, borderRadius: 7, background: "rgba(0,0,0,.24)", fontSize: 11, color: "var(--v2-text-2)", whiteSpace: "pre-wrap" }}>
+      <strong style={{ color: "#fff" }}>Description</strong>
+      <div style={{ marginTop: 4 }}>{description || "Not generated"}</div>
+      <strong style={{ color: "#fff", display: "block", marginTop: 7 }}>Tags</strong>
+      <div>{tags?.length ? tags.join(", ") : "Not generated"}</div>
+    </div>
+  );
+}
 
 export function UploadsTable() {
   const [videos, setVideos] = useState<VideoDeliveryRow[]>([]);
@@ -58,6 +192,7 @@ export function UploadsTable() {
   const [filter, setFilter] = useState<"ALL" | "PENDING" | "UPLOADED">("ALL");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [uploader, setUploader] = useState<UploaderStatus | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -73,16 +208,38 @@ export function UploadsTable() {
     }
   }, []);
 
+  const loadUploader = useCallback(async () => {
+    try {
+      const res = await fetch("/api/production/uploader-status", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setUploader((await res.json()) as UploaderStatus);
+    } catch (error) {
+      setUploader({
+        connected: false,
+        error: error instanceof Error ? error.message : "Uploader unavailable",
+        operationsUrl: "/uploader-ops/",
+        channels: [],
+        jobs: [],
+      });
+    }
+  }, []);
+
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    void (async () => {
+      // Receipt reconciliation runs in uploader-status; fetch the table after
+      // it so newly proven uploads are visible immediately.
+      await loadUploader();
+      await loadData();
+    })();
+    const timer = setInterval(() => void loadUploader(), 15_000);
+    return () => clearInterval(timer);
+  }, [loadData, loadUploader]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+      // One lightweight accordion row at a time. Keeping dozens of translated
+      // metadata blocks mounted caused the severe full-page re-render lag.
+      return prev.has(id) ? new Set() : new Set([id]);
     });
   };
 
@@ -92,6 +249,7 @@ export function UploadsTable() {
     isChildTranslation = false,
     parentId?: string,
   ) => {
+    if (currentStatus) return;
     const newStatus = !currentStatus;
     setTogglingId(jobId);
 
@@ -233,6 +391,49 @@ export function UploadsTable() {
           </V2Button>
         </div>
       </div>
+
+      {/* Exact channel identities and uploader connection. These links are
+          deliberately derived from immutable UC ids, never from handles. */}
+      <GlassCard style={{ padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>
+              YouTube channel network
+            </div>
+            <div style={{ fontSize: 11, color: uploader?.connected ? "#4ade80" : "#facc15", marginTop: 3 }}>
+              {uploader?.connected
+                ? "Uploader connected · receipts sync automatically"
+                : `Uploader disconnected${uploader?.error ? ` · ${uploader.error}` : ""}`}
+            </div>
+          </div>
+          <a href={uploader?.operationsUrl ?? "/uploader-ops/"} target="_blank" rel="noreferrer" style={{ color: "var(--v2-accent)", fontSize: 11, fontWeight: 700 }}>
+            Open uploader operations ↗
+          </a>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 12 }}>
+          {(uploader?.channels ?? []).map((channel) => {
+            const latest = uploader?.jobs.find(
+              (job) => job.channel === UPLOADER_CHANNEL_BY_LANGUAGE[channel.language],
+            );
+            return (
+              <div key={channel.id} style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{channel.name}</span>
+                  <span style={{ fontSize: 9, color: "var(--v2-text-2)", textTransform: "uppercase" }}>{channel.language}</span>
+                </div>
+                <div style={{ fontSize: 9, color: "var(--v2-text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis" }}>{channel.youtubeChannelId}</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 7, fontSize: 10 }}>
+                  {channel.channelUrl && <a href={channel.channelUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd" }}>Channel ↗</a>}
+                  <a href={channel.studioUrl ?? "https://studio.youtube.com/"} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd" }}>Studio ↗</a>
+                  <span style={{ marginLeft: "auto", color: latest?.state === "succeeded" ? "#4ade80" : latest ? "#facc15" : "var(--v2-text-3)" }}>
+                    {latest?.state ?? "not verified"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </GlassCard>
 
       {/* Filters & Search */}
       <div
@@ -397,8 +598,12 @@ export function UploadsTable() {
 
                       {/* Video Title & details */}
                       <td style={{ verticalAlign: "top", padding: "14px 14px" }}>
-                        <div style={{ fontWeight: 700, color: "#fff", fontSize: 14 }}>
-                          {v.title}
+                        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          <ThumbnailPreview jobId={v.id} thumbnailId={v.thumbnailId} kind={v.thumbnailKind} approved={v.thumbnailApproved} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, color: "#fff", fontSize: 14 }}>{v.title}</div>
+                            <a href={`/thumbnails?jobId=${v.id}`} style={{ color: "var(--v2-accent)", fontSize: 10 }}>Open in Thumbnail Studio ↗</a>
+                          </div>
                         </div>
                         <div
                           style={{
@@ -434,7 +639,7 @@ export function UploadsTable() {
                         </div>
 
                         {/* Outfolded Translations list */}
-                        {isExpanded && hasTranslations && (
+                        {isExpanded && (
                           <div
                             style={{
                               marginTop: 12,
@@ -457,11 +662,13 @@ export function UploadsTable() {
                                 marginBottom: 2,
                               }}
                             >
-                              Localized Translations ({v.translations.length} languages):
+                              Metadata & localized versions ({v.translations.length} languages)
                             </div>
+                            <MetadataBlock description={v.description} tags={v.tags} />
                             {v.translations.map((t) => {
                               const isChildToggling = togglingId === t.id;
                               const flag = LANGUAGE_FLAGS[t.language] ?? "🌐";
+                              const videoId = videoIdFromUrl(t.youtubeUploadUrl);
 
                               return (
                                 <div
@@ -478,6 +685,7 @@ export function UploadsTable() {
                                 >
                                   <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
                                     <span style={{ fontSize: 16 }}>{flag}</span>
+                                    <ThumbnailPreview jobId={t.id} thumbnailId={t.thumbnailId} kind={t.thumbnailKind} approved={t.thumbnailApproved} />
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div
                                         style={{
@@ -492,12 +700,23 @@ export function UploadsTable() {
                                         {t.title}
                                       </div>
                                       <div style={{ fontSize: 10, color: "var(--v2-text-2)" }}>
-                                        {t.language} · {t.isUploaded ? "Uploaded" : "Pending Upload"}
+                                        {t.language} · Drive: {t.driveState} ({t.driveArtifactCount} files) · {uploadStateLabel(t)}
                                       </div>
+                                      <MetadataBlock description={t.description} tags={t.tags} />
                                     </div>
                                   </div>
 
                                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    {t.youtubeUploadUrl && (
+                                      <a href={t.youtubeUploadUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontSize: 11 }}>
+                                        YouTube ↗
+                                      </a>
+                                    )}
+                                    {videoId && (
+                                      <a href={`https://studio.youtube.com/video/${videoId}/edit`} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd", fontSize: 11 }}>
+                                        Studio ↗
+                                      </a>
+                                    )}
                                     {/* Translation Drive Link */}
                                     {t.driveUrl ? (
                                       <a
@@ -556,7 +775,7 @@ export function UploadsTable() {
                                     {/* Translation Mark as Uploaded Toggle */}
                                     <button
                                       type="button"
-                                      disabled={isChildToggling}
+                                      disabled={isChildToggling || t.isUploaded}
                                       onClick={() => handleToggleUploaded(t.id, t.isUploaded, true, v.id)}
                                       style={{
                                         padding: "3px 8px",
@@ -570,7 +789,7 @@ export function UploadsTable() {
                                         color: t.isUploaded ? "#4ade80" : "#facc15",
                                       }}
                                     >
-                                      {t.isUploaded ? "✓ Uploaded" : "Mark Uploaded"}
+                                      {t.isUploaded ? "✓ Already uploaded" : "Mark Uploaded"}
                                     </button>
                                   </div>
                                 </div>
@@ -594,7 +813,7 @@ export function UploadsTable() {
 
                       {/* Drive Link */}
                       <td style={{ verticalAlign: "top", padding: "14px 14px" }}>
-                        {v.driveUrl ? (
+                        {v.driveState === "uploaded" && v.driveUrl ? (
                           <a
                             href={v.driveUrl}
                             target="_blank"
@@ -616,11 +835,11 @@ export function UploadsTable() {
                             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
                               cloud
                             </span>
-                            Drive File
+                            In Drive · {v.driveArtifactCount} files
                           </a>
                         ) : (
-                          <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>
-                            Local Only
+                          <span title={v.driveError ?? undefined} style={{ fontSize: 11, color: v.driveState === "held" || v.driveState === "failed" ? "#fca5a5" : "var(--v2-text-2)" }}>
+                            {v.driveState === "held" ? "Held by QA" : v.driveState === "failed" ? "Drive failed" : v.driveState === "uploading" ? "Uploading to Drive…" : "Pending Drive"}
                           </span>
                         )}
                       </td>
@@ -654,9 +873,20 @@ export function UploadsTable() {
 
                       {/* Upload Status & Action */}
                       <td style={{ verticalAlign: "top", padding: "14px 14px", textAlign: "right" }}>
+                        <div style={{ marginBottom: 7, fontSize: 10, color: v.uploaderStatus === "failed" ? "#f87171" : "var(--v2-text-2)" }}>
+                          {uploadStateLabel(v)}
+                        </div>
+                        {v.youtubeUploadUrl && (
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 7, fontSize: 10 }}>
+                            <a href={v.youtubeUploadUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd" }}>YouTube ↗</a>
+                            {videoIdFromUrl(v.youtubeUploadUrl) && (
+                              <a href={`https://studio.youtube.com/video/${videoIdFromUrl(v.youtubeUploadUrl)}/edit`} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd" }}>Studio ↗</a>
+                            )}
+                          </div>
+                        )}
                         <button
                           type="button"
-                          disabled={isToggling}
+                          disabled={isToggling || v.isUploaded}
                           onClick={() => handleToggleUploaded(v.id, v.isUploaded)}
                           style={{
                             padding: "6px 12px",
@@ -677,7 +907,7 @@ export function UploadsTable() {
                           <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
                             {v.isUploaded ? "check_circle" : "publish"}
                           </span>
-                          {v.isUploaded ? "Uploaded" : "Mark as Uploaded"}
+                          {v.isUploaded ? "Already uploaded" : "Mark as Uploaded"}
                         </button>
                       </td>
                     </tr>

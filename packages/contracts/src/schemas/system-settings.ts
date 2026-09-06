@@ -3,8 +3,8 @@ import { z } from "zod";
 /**
  * System Settings Schemas
  *
- * Reworked (§3.3): only two sections survive as stored settings — Storage and
- * Alerts. DELETED: General, Pipeline, AI Services, Rendering, Channels, Security
+ * Operator-editable sections are Storage, Alerts, and Uploader. DELETED:
+ * General, Pipeline, AI Services, Rendering, Channels, Security
  * (per-format or dedicated-page concerns, or "nothing to set"). Credentials moved
  * to the ONE secrets area (encrypted_secrets); theme is a cookie, not a setting.
  */
@@ -23,6 +23,15 @@ export const StorageSettingsSchema = z.object({
     .min(1)
     .max(1_099_511_627_776) // 1 TiB ceiling
     .default(DEFAULT_MAX_UPLOAD_BYTES),
+  driveEnabled: z.boolean().default(false),
+  driveRootFolderName: z.string().min(1).max(120).default("Content Forge"),
+  driveTutorialsFolderName: z.string().min(1).max(120).default("_Tutorials"),
+  driveRequestsPerSecond: z.number().int().min(1).max(20).default(4),
+  driveBatchSize: z.number().int().min(1).max(50).default(5),
+  driveScanIntervalMinutes: z.number().int().min(1).max(1440).default(5),
+  driveLookbackDays: z.number().int().min(0).max(3650).default(14),
+  driveMaxAttempts: z.number().int().min(1).max(20).default(5),
+  driveDailyBudgetGb: z.number().int().min(1).max(740).default(500),
 });
 
 export type StorageSettings = z.infer<typeof StorageSettingsSchema>;
@@ -53,9 +62,43 @@ export type AlertsSettings = z.infer<typeof AlertsSettingsSchema>;
 export const NotificationsSettingsSchema = AlertsSettingsSchema;
 export type NotificationsSettings = AlertsSettings;
 
+// ── Distribution uploader ───────────────────────────────────────────────────
+// Non-secret operator controls for the separate YouTube uploader. Authentication
+// material remains in encrypted_secrets; this object is safe to return to the UI.
+
+export const UploaderSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  executionMode: z.enum(["dry_run", "live"]).default("dry_run"),
+  transport: z
+    .enum(["youtube_data_api", "browser_assisted"])
+    .default("youtube_data_api"),
+  dashboardApiUrl: z
+    .string()
+    .url()
+    .default("http://127.0.0.1:8744/uploader-ops/api/v1/jobs"),
+  operationsUrl: z.string().min(1).default("/uploader-ops/"),
+  callbackPublicUrl: z.string().url().optional(),
+  defaultVisibility: z
+    .enum(["private", "unlisted", "scheduled"])
+    .default("private"),
+  timezone: z.string().min(1).max(100).default("Europe/Berlin"),
+  scheduleLeadMinutes: z.number().int().min(15).max(43_200).default(120),
+  maxConcurrentUploads: z.number().int().min(1).max(3).default(1),
+  minMinutesBetweenStarts: z.number().int().min(1).max(1_440).default(10),
+  maxUploadsPerDay: z.number().int().min(1).max(100).default(20),
+  retryMaxAttempts: z.number().int().min(1).max(10).default(3),
+  requireManualRelease: z.boolean().default(true),
+});
+
+export type UploaderSettings = z.infer<typeof UploaderSettingsSchema>;
+
 // ─── Section Registry ───────────────────────────────────────────────────────
 
-export const SETTINGS_SECTION_IDS = ["storage", "notifications"] as const;
+export const SETTINGS_SECTION_IDS = [
+  "storage",
+  "notifications",
+  "uploader",
+] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 
@@ -77,6 +120,12 @@ export const SETTINGS_SECTIONS: ReadonlyArray<{
     description: "Telegram alerts when something breaks",
     implemented: true,
   },
+  {
+    id: "uploader",
+    label: "Uploader",
+    description: "Safe distribution defaults, scheduling and connection",
+    implemented: true,
+  },
 ];
 
 /**
@@ -90,6 +139,8 @@ export function getSchemaForSection(
       return StorageSettingsSchema;
     case "notifications":
       return AlertsSettingsSchema;
+    case "uploader":
+      return UploaderSettingsSchema;
     default: {
       const _exhaustive: never = sectionId;
       throw new Error(`Unknown settings section: ${_exhaustive}`);

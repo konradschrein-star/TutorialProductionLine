@@ -50,6 +50,12 @@ export interface IntradayPoint {
   hour: number; // fractional hour-of-day (0..24) of completed_at
 }
 
+/**
+ * Admin/owner accounts (e.g. Konrad) are not tracked production — they bulk-seed
+ * and test. Every per-VA metric below excludes them so the floor view is honest.
+ */
+const NOT_ADMIN = sql`${tutorialJobs.created_by} NOT IN (select id from users where role = 'ADMIN')`;
+
 // minutes between two timestamp columns, guarded so a>=b and both present
 function stepMin(a: unknown, b: unknown) {
   return sql<string>`round(avg(extract(epoch from (${a} - ${b})) / 60.0) filter (where ${a} is not null and ${b} is not null and ${a} >= ${b}), 1)`;
@@ -71,7 +77,7 @@ export async function getVAStepDurations(
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
+      sql`${NOT_ADMIN} and ${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
     )
     .groupBy(tutorialJobs.created_by, users.name)
     .orderBy(
@@ -85,9 +91,12 @@ export async function getVAStepDurations(
       record: r.record_min == null ? null : Number(r.record_min),
       finish: r.finish_min == null ? null : Number(r.finish_min),
     };
+    // Bottleneck is the slowest VA hands-on step. "finish" (splice) is the
+    // automated stitcher — not VA labour — so it never counts as a bottleneck.
     let bottleneck: StepKey | null = null;
     let worst = -1;
     for (const k of STEP_KEYS) {
+      if (k === "finish") continue;
       const v = steps[k];
       if (v != null && v > worst) {
         worst = v;
@@ -119,7 +128,7 @@ export async function getScriptTimeByDow(
     })
     .from(tutorialJobs)
     .where(
-      sql`${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
+      sql`${NOT_ADMIN} and ${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
     )
     .groupBy(sql`extract(dow from ${tutorialJobs.created_at})`)
     .orderBy(sql`extract(dow from ${tutorialJobs.created_at})`);
@@ -180,7 +189,7 @@ export async function getVaEventTimeline(
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.source_job_id} is null and ${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
+      sql`${NOT_ADMIN} and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.created_at} >= now() - (${windowDays} || ' days')::interval`,
     )
     .orderBy(sql`${tutorialJobs.created_at} desc`)
     .limit(5000);
@@ -207,7 +216,9 @@ export async function getKnownVAs(): Promise<Array<{ id: string; name: string; e
     })
     .from(users)
     .where(
-      sql`${users.role} IN ('PRODUCTION_VA', 'TUTORIAL_VA') OR ${users.name} ILIKE '%VA%'`,
+      // Active VA accounts only, never admins/owners. Retired (soft-deleted)
+      // seed duplicates and the admin drop out so no phantom VA cards render.
+      sql`${users.is_active} = true AND ${users.role} <> 'ADMIN' AND (${users.role} IN ('PRODUCTION_VA', 'TUTORIAL_VA') OR ${users.name} ILIKE '%VA%')`,
     )
     .orderBy(users.name);
 
@@ -234,7 +245,7 @@ export async function getIntradayProduction(
     .from(tutorialJobs)
     .leftJoin(users, sql`${users.id} = ${tutorialJobs.created_by}`)
     .where(
-      sql`${tutorialJobs.status} = 'COMPLETED' and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.completed_at} >= now() - (${windowDays} || ' days')::interval`,
+      sql`${tutorialJobs.status} = 'COMPLETED' and ${NOT_ADMIN} and ${tutorialJobs.source_job_id} is null and ${tutorialJobs.completed_at} >= now() - (${windowDays} || ' days')::interval`,
     )
     .orderBy(sql`${tutorialJobs.completed_at} asc`)
     .limit(3000);

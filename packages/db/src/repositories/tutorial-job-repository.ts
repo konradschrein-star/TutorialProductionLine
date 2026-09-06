@@ -89,6 +89,20 @@ export async function listTutorialJobsByUser(
     .limit(limit);
 }
 
+/** Admin/operator overview of every root tutorial, regardless of producer. */
+export async function listTutorialJobs(
+  db: DrizzleClient,
+  limit = 100,
+  includeTranslations = false,
+): Promise<TutorialJob[]> {
+  return db
+    .select()
+    .from(tutorialJobs)
+    .where(includeTranslations ? undefined : isNull(tutorialJobs.source_job_id))
+    .orderBy(desc(tutorialJobs.created_at))
+    .limit(limit);
+}
+
 
 export async function listTutorialJobsByStatus(
   db: DrizzleClient,

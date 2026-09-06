@@ -37,7 +37,10 @@ interface Payload {
   windowDays: number;
 }
 
-const STEP_ORDER: StepKey[] = ["script", "audio", "record", "finish"];
+// Splice/"finish" is the automated stitcher (recorded → completed). The VA does
+// not spend hands-on time on it, so it is deliberately left out of the per-VA
+// time breakdown and bottleneck — tracking it as VA labour was misleading.
+const STEP_ORDER: StepKey[] = ["script", "audio", "record"];
 const STEP_LABEL: Record<StepKey, string> = {
   script: "Script",
   audio: "Audio",
@@ -104,8 +107,7 @@ export function StepMetricsPanel() {
     if (!data) return 1;
     let m = 0;
     for (const v of data.steps) {
-      const t =
-        (v.script_min ?? 0) + (v.audio_min ?? 0) + (v.record_min ?? 0) + (v.finish_min ?? 0);
+      const t = (v.script_min ?? 0) + (v.audio_min ?? 0) + (v.record_min ?? 0);
       if (t > m) m = t;
     }
     return m || 1;
@@ -236,7 +238,7 @@ export function StepMetricsPanel() {
               </div>
             </div>
             {data.steps.filter((v) => v.completed > 0).map((v) => {
-              const total = (v.script_min ?? 0) + (v.audio_min ?? 0) + (v.record_min ?? 0) + (v.finish_min ?? 0);
+              const total = (v.script_min ?? 0) + (v.audio_min ?? 0) + (v.record_min ?? 0);
               return (
                 <div key={v.userId ?? v.name ?? Math.random()} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ width: 150, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
