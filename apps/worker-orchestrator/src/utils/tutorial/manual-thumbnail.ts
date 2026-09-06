@@ -70,7 +70,7 @@ function headlinePaths(
   const runs = lines.map((line) => font.layout(line.toUpperCase()));
   const widest = Math.max(...runs.map((run) => run.advanceWidth), 1);
   const fontSize = Math.max(
-    58,
+    1,
     Math.min(88, (maxWidth / widest) * font.unitsPerEm),
   );
   const scale = fontSize / font.unitsPerEm;
