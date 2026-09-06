@@ -83,6 +83,63 @@ export interface ReceiptCandidate {
   attributes: Record<string, unknown>;
 }
 
+type TutorialJobReceiptProjection = Partial<typeof tutorialJobs.$inferInsert>;
+
+/**
+ * Project the immutable exchange journal onto the Tutorial Studio job row.
+ *
+ * The dispatch/receipt tables remain the source of truth. This compatibility
+ * projection keeps the existing Studio upload views honest without weakening
+ * the terminal proof gate: only a `succeeded` receipt may mark an upload as
+ * verified, and its visibility must come from the frozen dispatch attributes.
+ */
+export function tutorialJobProjectionForReceipt(
+  candidate: ReceiptCandidate,
+  receipt: TutorialUploaderReceipt,
+): TutorialJobReceiptProjection {
+  const happenedAt = new Date(receipt.occurred_at);
+  const common: TutorialJobReceiptProjection = {
+    uploader_job_id: candidate.exchangeJobId,
+    uploader_event_id: `${receipt.job_id}:r${receipt.revision}:s${receipt.sequence}`,
+    uploader_last_callback_at: happenedAt,
+    updated_at: happenedAt,
+  };
+
+  if (receipt.state === "succeeded" && receipt.result !== null) {
+    const visibility = candidate.attributes["visibility"];
+    if (visibility !== "private" && visibility !== "unlisted") {
+      throw new TutorialUploaderExchangeError(
+        "receipt_candidate_attributes_invalid",
+        "succeeded receipt has no valid frozen visibility",
+      );
+    }
+    return {
+      ...common,
+      uploader_status: "uploaded",
+      youtube_visibility: visibility,
+      scheduled_for: null,
+      is_uploaded: true,
+      uploaded_at: happenedAt,
+      youtube_published_at: null,
+      uploaded_by: "tutorial-uploader",
+      youtube_upload_url: receipt.result.video_url,
+      upload_verified_at: happenedAt,
+    };
+  }
+
+  if (TERMINAL_RECEIPT_STATES.has(receipt.state)) {
+    return { ...common, uploader_status: "failed" };
+  }
+
+  return {
+    ...common,
+    uploader_status:
+      receipt.state === "active" || receipt.state === "applied_reported"
+        ? "uploading"
+        : "waiting_to_be_uploaded",
+  };
+}
+
 export interface PublishRecord {
   dispatchId: string;
   manifest: TutorialUploaderJob;
@@ -1289,18 +1346,10 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
         );
       }
 
-      if (receipt.state === "succeeded" && result !== null) {
-        await tx
-          .update(tutorialJobs)
-          .set({
-            is_uploaded: true,
-            uploaded_at: new Date(receipt.occurred_at),
-            uploaded_by: "tutorial-uploader",
-            youtube_upload_url: result.video_url,
-            updated_at: now,
-          })
-          .where(eq(tutorialJobs.id, candidate.tutorialJobId));
-      }
+      await tx
+        .update(tutorialJobs)
+        .set(tutorialJobProjectionForReceipt(candidate, receipt))
+        .where(eq(tutorialJobs.id, candidate.tutorialJobId));
       return "inserted" as const;
     });
   }

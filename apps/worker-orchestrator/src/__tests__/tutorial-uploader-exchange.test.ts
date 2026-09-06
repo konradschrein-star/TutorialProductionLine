@@ -16,6 +16,7 @@ import {
 import {
   publishTutorialUploaderCandidate,
   runTutorialUploaderExchangeOnce,
+  tutorialJobProjectionForReceipt,
   TutorialUploaderExchangeError,
   type LocalAssetInspection,
   type PublishCandidate,
@@ -480,6 +481,62 @@ describe("Tutorial Studio uploader Drive publication", () => {
 });
 
 describe("Tutorial Studio uploader receipt reconciliation", () => {
+  it("projects a proven private success into verified Studio upload state", () => {
+    const identity = receiptCandidate("a".repeat(64));
+    const terminal = makeReceipt(identity, 1, "succeeded");
+
+    expect(tutorialJobProjectionForReceipt(identity, terminal)).toMatchObject({
+      uploader_status: "uploaded",
+      youtube_visibility: "private",
+      is_uploaded: true,
+      uploaded_by: "tutorial-uploader",
+      youtube_upload_url: "https://www.youtube.com/watch?v=AbCdEfGhI_1",
+      uploader_job_id: EXCHANGE_JOB_ID,
+    });
+    expect(
+      tutorialJobProjectionForReceipt(identity, terminal).upload_verified_at,
+    ).toEqual(new Date("2026-09-04T13:00:01Z"));
+  });
+
+  it("projects progress and terminal failure without claiming an upload", () => {
+    const identity = receiptCandidate("b".repeat(64));
+
+    expect(
+      tutorialJobProjectionForReceipt(
+        identity,
+        makeReceipt(identity, 1, "active"),
+      ),
+    ).toMatchObject({ uploader_status: "uploading" });
+    expect(
+      tutorialJobProjectionForReceipt(
+        identity,
+        makeReceipt(identity, 1, "failed", {
+          progress: 1,
+          error: {
+            code: "publisher_failed",
+            message: "publisher failed",
+            retryable: false,
+          },
+        }),
+      ),
+    ).toMatchObject({ uploader_status: "failed" });
+  });
+
+  it("refuses to project success without a valid frozen visibility", () => {
+    const identity = receiptCandidate("c".repeat(64), {
+      attributes: { ...ATTRIBUTES, visibility: "public" },
+    });
+
+    expect(() =>
+      tutorialJobProjectionForReceipt(
+        identity,
+        makeReceipt(identity, 1, "succeeded"),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "receipt_candidate_attributes_invalid" }),
+    );
+  });
+
   it("persists a contiguous journal and projects only a fully-proven success", async () => {
     const repository = new FakeRepository();
     const identity = receiptCandidate("a".repeat(64));
