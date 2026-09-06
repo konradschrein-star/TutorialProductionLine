@@ -74,8 +74,8 @@ describe("tutorial uploader dispatch gate", () => {
     ).toThrowError(expect.objectContaining({ code }));
   });
 
-  it("permits only de/fr/es/ja/ko localized children", () => {
-    for (const language of ["de", "fr", "es", "ja", "ko"]) {
+  it("permits only de/fr/it/sv localized children", () => {
+    for (const language of ["de", "fr", "it", "sv"]) {
       expect(() =>
         validateDispatchCandidate(
           {
@@ -93,8 +93,8 @@ describe("tutorial uploader dispatch gate", () => {
         {
           ...complete,
           sourceJobId: "11111111-1111-4111-8111-111111111111",
-          language: "it",
-          channelLanguage: "it",
+          language: "nl",
+          channelLanguage: "nl",
         },
         request,
       ),
