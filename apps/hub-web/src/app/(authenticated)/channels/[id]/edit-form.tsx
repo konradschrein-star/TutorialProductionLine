@@ -3,7 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AUTOMATIC_TUTORIAL_LANGUAGE_CODES } from "@repo/contracts";
+import {
+  AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+  isActiveTutorialUploadLanguage,
+} from "@repo/contracts";
 import { updateChannel } from "@/app/actions/channels";
 import type { Channel } from "@/lib/repositories/channel-repository";
 
@@ -13,13 +16,16 @@ const CHANNEL_LANGUAGE_NAMES: Record<string, string> = {
   fr: "French",
   it: "Italian",
   sv: "Swedish",
+  nl: "Dutch (archive only)",
 };
-const CHANNEL_LANGUAGES = ["en", ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES].map(
-  (code) => ({
-    code,
-    name: CHANNEL_LANGUAGE_NAMES[code] ?? code.toUpperCase(),
-  }),
-);
+const CHANNEL_LANGUAGES = [
+  "en",
+  ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+  "nl",
+].map((code) => ({
+  code,
+  name: CHANNEL_LANGUAGE_NAMES[code] ?? code.toUpperCase(),
+}));
 
 interface Props {
   channel: Channel;
@@ -67,7 +73,9 @@ export function V2ChannelEditForm({ channel }: Props) {
       youtube_channel_id: youtubeChannelId,
       language,
       is_primary: isPrimary,
-      uploader_channel_key: uploaderChannelKey,
+      uploader_channel_key: isActiveTutorialUploadLanguage(language)
+        ? uploaderChannelKey
+        : null,
     });
     if (result.success) {
       router.push("/channels");
@@ -138,13 +146,14 @@ export function V2ChannelEditForm({ channel }: Props) {
           type="text"
           value={uploaderChannelKey}
           onChange={(e) => setUploaderChannelKey(e.target.value)}
+          disabled={!isActiveTutorialUploadLanguage(language)}
           style={{ ...inputStyle(false), fontFamily: "monospace" }}
           placeholder="tutorial_usa"
         />
         <span style={{ fontSize: 10, color: "rgba(205,195,215,0.55)" }}>
-          Exact isolated-profile key configured in the uploader. Leave blank to
-          block automated dispatch for this channel; it is never inferred from
-          the YouTube ID, handle, or language.
+          {isActiveTutorialUploadLanguage(language)
+            ? "Exact isolated-profile key configured in the uploader. Leave blank to block automated dispatch; it is never inferred."
+            : "Archive-only languages cannot be mapped to automated uploads."}
         </span>
       </div>
 

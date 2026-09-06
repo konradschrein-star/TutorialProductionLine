@@ -50,6 +50,7 @@ export function createThumbnailProcessor(db: DrizzleClient) {
           data.subjectKind,
           data.subjectId,
           rule,
+          data.language,
         ).catch((err) =>
           console.error(
             JSON.stringify({

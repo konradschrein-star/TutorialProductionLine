@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db, tutorialJobs } from "@/lib/db";
+import { channels, db, tutorialJobs } from "@/lib/db";
 import {
   DEFAULT_STANDARD_LANGUAGES,
   TARGET_LANGUAGE_CODES,
@@ -12,7 +12,10 @@ import {
   createRedisConnection,
   createTutorialTranslateQueue,
 } from "@repo/queue";
-import type { TutorialTranslatePayload } from "@repo/contracts";
+import {
+  normalizeTutorialLanguage,
+  type TutorialTranslatePayload,
+} from "@repo/contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -46,9 +49,7 @@ export async function POST(req: NextRequest) {
 
   if (
     mode === "automatic" &&
-    languages.some(
-      (language) => !DEFAULT_STANDARD_LANGUAGES.includes(language),
-    )
+    languages.some((language) => !DEFAULT_STANDARD_LANGUAGES.includes(language))
   ) {
     return NextResponse.json(
       {
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest) {
       status: tutorialJobs.status,
       recordingPath: tutorialJobs.recording_path,
       scriptText: tutorialJobs.script_text,
+      sourceJobId: tutorialJobs.source_job_id,
+      language: tutorialJobs.language,
     })
     .from(tutorialJobs)
     .where(eq(tutorialJobs.id, sourceJobId))
@@ -106,9 +109,42 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
+  if (
+    source.sourceJobId !== null ||
+    normalizeTutorialLanguage(source.language) !== "en"
+  ) {
+    return NextResponse.json(
+      { error: "translation source must be an explicit English original" },
+      { status: 409 },
+    );
+  }
   if (!source.recordingPath || !source.scriptText) {
     return NextResponse.json(
       { error: "source job has no recording or script to translate" },
+      { status: 409 },
+    );
+  }
+
+  const channelRows = await db
+    .select({ id: channels.id, language: channels.language })
+    .from(channels)
+    .where(eq(channels.accepts_tutorials, true));
+  const channelIssues = requested.flatMap((language) => {
+    const matches = channelRows.filter(
+      (channel) => normalizeTutorialLanguage(channel.language) === language,
+    );
+    return matches.length === 1
+      ? []
+      : [
+          `${language}: ${matches.length === 0 ? "target channel missing" : `target channel ambiguous (${matches.length} matches)`}`,
+        ];
+  });
+  if (channelIssues.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Translation channel configuration is incomplete or ambiguous",
+        reasons: channelIssues,
+      },
       { status: 409 },
     );
   }
@@ -124,17 +160,22 @@ export async function POST(req: NextRequest) {
     const queue = createTutorialTranslateQueue(conn);
     for (const lang of requested) {
       // Skip if a translation child already exists for this language.
-      const [existing] = await db
-        .select({ id: tutorialJobs.id })
+      const existing = await db
+        .select({ id: tutorialJobs.id, language: tutorialJobs.language })
         .from(tutorialJobs)
-        .where(
-          and(
-            eq(tutorialJobs.source_job_id, sourceJobId),
-            eq(tutorialJobs.language, lang),
-          ),
-        )
-        .limit(1);
-      if (existing) continue;
+        .where(eq(tutorialJobs.source_job_id, sourceJobId));
+      const languageMatches = existing.filter(
+        (candidate) => normalizeTutorialLanguage(candidate.language) === lang,
+      );
+      if (languageMatches.length > 1) {
+        return NextResponse.json(
+          {
+            error: `Translation variant ${lang} is ambiguous (${languageMatches.length} jobs)`,
+          },
+          { status: 409 },
+        );
+      }
+      if (languageMatches.length === 1) continue;
 
       await queue.add(
         "tutorial-translate",

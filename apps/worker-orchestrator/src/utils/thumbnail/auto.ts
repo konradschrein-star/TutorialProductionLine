@@ -1,4 +1,5 @@
 import type { DrizzleClient } from "@repo/db";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 import {
   listThumbnailsForSubject,
   resolveAutopilotPolicy,
@@ -64,8 +65,15 @@ export async function generateThumbnailForJob(
       opts.subjectKind,
       opts.subjectId,
     ).catch(() => []);
+    const requestedLanguage = normalizeTutorialLanguage(opts.language);
     const done = existing.find(
-      (t) => t.status === "completed" && t.output_path,
+      (t) =>
+        t.status === "completed" &&
+        t.output_path &&
+        (!requestedLanguage ||
+          normalizeTutorialLanguage(t.language) === requestedLanguage) &&
+        (opts.subjectKind !== "tutorial_job" ||
+          (Boolean(opts.channelId) && t.channel_id === opts.channelId)),
     );
     if (done) {
       return {
@@ -97,7 +105,19 @@ export async function generateThumbnailForJob(
       opts.subjectKind,
       opts.subjectId,
       rule,
-    ).catch(() => {});
+      opts.language,
+    ).catch((error) => {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          message: "Automatic thumbnail selection failed (non-blocking)",
+          subject_kind: opts.subjectKind,
+          subject_id: opts.subjectId,
+          language: opts.language ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    });
   }
 
   // Loud on the way out. The reason this system produced 57 consecutive

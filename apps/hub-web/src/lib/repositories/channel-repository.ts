@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { db, channels } from "../db";
-import { normalizeUploaderChannelKey } from "../tutorial/uploader-channel-key";
+import { validateTutorialUploaderChannelKey } from "../tutorial/uploader-channel-key";
 
 /**
  * Channel Repository
@@ -153,7 +153,8 @@ export async function createChannel(data: {
       youtube_channel_id: youtubeId,
       name: data.name,
       language: data.language ?? "en",
-      uploader_channel_key: normalizeUploaderChannelKey(
+      uploader_channel_key: validateTutorialUploaderChannelKey(
+        data.language ?? "en",
         data.uploader_channel_key,
       ),
       // This is a tutorial tool — every channel should be selectable for
@@ -183,15 +184,29 @@ export async function updateChannel(
     uploader_channel_key: string | null;
   }>,
 ): Promise<Channel | null> {
-  const normalized =
+  const [current] = await db
+    .select({
+      language: channels.language,
+      uploaderChannelKey: channels.uploader_channel_key,
+    })
+    .from(channels)
+    .where(eq(channels.id, id))
+    .limit(1);
+  if (!current) return null;
+  const finalLanguage = data.language ?? current.language;
+  const finalUploaderKey = validateTutorialUploaderChannelKey(
+    finalLanguage,
     data.uploader_channel_key === undefined
-      ? data
-      : {
-          ...data,
-          uploader_channel_key: normalizeUploaderChannelKey(
-            data.uploader_channel_key,
-          ),
-        };
+      ? current.uploaderChannelKey
+      : data.uploader_channel_key,
+  );
+  const normalized = {
+    ...data,
+    ...(data.uploader_channel_key !== undefined ||
+    finalUploaderKey !== current.uploaderChannelKey
+      ? { uploader_channel_key: finalUploaderKey }
+      : {}),
+  };
   const result = await db
     .update(channels)
     .set({

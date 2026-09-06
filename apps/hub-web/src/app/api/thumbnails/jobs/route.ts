@@ -11,6 +11,7 @@ import {
   channels,
   users,
 } from "@/lib/db";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 
 /**
  * GET /api/thumbnails/jobs?q=<title fragment>&kind=all|content_job|tutorial_job
@@ -51,6 +52,7 @@ interface JobHit {
   format: string;
   channelId: string | null;
   channelName: string | null;
+  language: string | null;
   createdAt: string;
   /**
    * Who produced the video. For a tutorial job that is `created_by` — the
@@ -88,7 +90,8 @@ export async function GET(req: NextRequest) {
   const jobId = (req.nextUrl.searchParams.get("jobId") ?? "").trim();
   const kind = req.nextUrl.searchParams.get("kind") ?? "all";
   const pattern = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-  const ownProducerScope = session.role === "PRODUCTION_VA" || session.role === "TUTORIAL_VA";
+  const ownProducerScope =
+    session.role === "PRODUCTION_VA" || session.role === "TUTORIAL_VA";
 
   // Pagination: the tab used to hard-cap at 25 with no way to see the rest, so a
   // line with 100+ finished videos could never reach the older ones. The client
@@ -112,7 +115,8 @@ export async function GET(req: NextRequest) {
     const filters = [
       inArray(contentJobs.status, [...FINISHED_CONTENT_STATUSES]),
     ];
-    if (ownProducerScope) filters.push(eq(contentJobs.assigned_production_va_id, session.userId));
+    if (ownProducerScope)
+      filters.push(eq(contentJobs.assigned_production_va_id, session.userId));
     if (jobId) filters.push(eq(contentJobs.id, jobId));
     if (q) filters.push(ilike(contentJobs.title, pattern));
     const rows = await db
@@ -144,6 +148,7 @@ export async function GET(req: NextRequest) {
         format: r.format,
         channelId: r.channelId ?? null,
         channelName: r.channelName ?? null,
+        language: null,
         createdAt: r.createdAt.toISOString(),
         producerName: r.producerName ?? r.producerEmail ?? null,
         producerRole: r.producerRole ?? null,
@@ -157,7 +162,8 @@ export async function GET(req: NextRequest) {
 
   if (kind === "all" || kind === "tutorial_job") {
     const filters = [eq(tutorialJobs.status, "COMPLETED")];
-    if (ownProducerScope) filters.push(eq(tutorialJobs.created_by, session.userId));
+    if (ownProducerScope)
+      filters.push(eq(tutorialJobs.created_by, session.userId));
     if (jobId) filters.push(eq(tutorialJobs.id, jobId));
     if (q) filters.push(ilike(tutorialJobs.title, pattern));
     const rows = await db
@@ -167,6 +173,7 @@ export async function GET(req: NextRequest) {
         status: tutorialJobs.status,
         channelId: tutorialJobs.channel_id,
         channelName: channels.name,
+        language: tutorialJobs.language,
         createdAt: tutorialJobs.created_at,
         producerName: users.name,
         producerEmail: users.email,
@@ -188,6 +195,7 @@ export async function GET(req: NextRequest) {
         format: "TUTORIAL_STUDIO",
         channelId: r.channelId ?? null,
         channelName: r.channelName ?? null,
+        language: normalizeTutorialLanguage(r.language),
         createdAt: r.createdAt.toISOString(),
         producerName: r.producerName ?? r.producerEmail ?? null,
         producerRole: r.producerRole ?? null,
@@ -209,7 +217,9 @@ export async function GET(req: NextRequest) {
         subjectId: thumbnails.subject_id,
         total: sql<number>`count(*)::int`,
         completed: sql<number>`count(*) filter (where ${thumbnails.status} = 'completed')::int`,
-        selected: sql<number>`count(*) filter (where ${thumbnails.is_selected})::int`,
+        selected: sql<number>`count(*) filter (where ${thumbnails.is_selected} and ${thumbnails.status} = 'completed')::int`,
+        language: thumbnails.language,
+        channelId: thumbnails.channel_id,
       })
       .from(thumbnails)
       .where(
@@ -222,25 +232,46 @@ export async function GET(req: NextRequest) {
           ),
         ),
       )
-      .groupBy(thumbnails.subject_kind, thumbnails.subject_id);
-    const byKey = new Map(
-      counts.map((c) => [`${c.subjectKind}:${c.subjectId}`, c]),
-    );
+      .groupBy(
+        thumbnails.subject_kind,
+        thumbnails.subject_id,
+        thumbnails.language,
+        thumbnails.channel_id,
+      );
+    const matchesHit = (
+      hit: JobHit,
+      thumbnail: {
+        subjectKind: string;
+        subjectId: string;
+        language: string | null;
+        channelId: string | null;
+      },
+    ) =>
+      thumbnail.subjectKind === hit.kind &&
+      thumbnail.subjectId === hit.id &&
+      (hit.kind !== "tutorial_job" ||
+        (normalizeTutorialLanguage(thumbnail.language) === hit.language &&
+          thumbnail.channelId === hit.channelId));
     for (const hit of hits) {
-      const c = byKey.get(`${hit.kind}:${hit.id}`);
-      if (!c) continue;
-      hit.thumbnailCount = c.total;
-      hit.completedCount = c.completed;
-      hit.hasSelected = c.selected > 0;
+      const owned = counts.filter((count) => matchesHit(hit, count));
+      hit.thumbnailCount = owned.reduce((sum, count) => sum + count.total, 0);
+      hit.completedCount = owned.reduce(
+        (sum, count) => sum + count.completed,
+        0,
+      );
+      hit.hasSelected =
+        owned.reduce((sum, count) => sum + count.selected, 0) > 0;
     }
 
-    // The picture to show per row. Ordered selected-first then newest, so the
-    // first row seen per subject is the one that would ship.
+    // The picture to show per row. Ordered selected-first then newest. This is
+    // only a preview; dispatch still fails closed without an exact owned pick.
     const previews = await db
       .select({
         id: thumbnails.id,
         subjectKind: thumbnails.subject_kind,
         subjectId: thumbnails.subject_id,
+        language: thumbnails.language,
+        channelId: thumbnails.channel_id,
       })
       .from(thumbnails)
       .where(
@@ -260,7 +291,8 @@ export async function GET(req: NextRequest) {
     const previewByKey = new Map<string, string>();
     for (const p of previews) {
       const key = `${p.subjectKind}:${p.subjectId}`;
-      if (!previewByKey.has(key)) previewByKey.set(key, p.id);
+      const hit = hits.find((candidate) => matchesHit(candidate, p));
+      if (hit && !previewByKey.has(key)) previewByKey.set(key, p.id);
     }
     for (const hit of hits) {
       hit.previewThumbnailId =
@@ -269,7 +301,8 @@ export async function GET(req: NextRequest) {
   }
 
   hits.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  const hasMore = contentOverflow || tutorialOverflow || hits.length > requested;
+  const hasMore =
+    contentOverflow || tutorialOverflow || hits.length > requested;
   return NextResponse.json({
     // Stated, not implied. Consumers render this rather than guessing.
     scope: ownProducerScope ? "own_producer" : "all_producers",

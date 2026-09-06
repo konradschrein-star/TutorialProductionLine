@@ -11,6 +11,11 @@ import {
   thumbnails,
   tutorialUploadDispatches,
 } from "@/lib/db";
+import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
+import {
+  DispatchGateError,
+  validateDispatchCandidate,
+} from "@/lib/tutorial/uploader-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +59,7 @@ export interface TranslationDeliveryItem {
   thumbnailId: string | null;
   thumbnailKind: "none" | "automatic" | "ai";
   thumbnailApproved: boolean;
+  dispatchBlockers: string[];
   uploader: UploaderDispatchView | null;
 }
 
@@ -93,6 +99,7 @@ export interface VideoDeliveryRow {
   thumbnailId: string | null;
   thumbnailKind: "none" | "automatic" | "ai";
   thumbnailApproved: boolean;
+  dispatchBlockers: string[];
 }
 
 /**
@@ -119,6 +126,10 @@ export async function GET(request: Request): Promise<NextResponse> {
         keywordRef: tutorialJobs.keyword_ref,
         ktUrl: tutorialJobs.kt_url,
         channelName: channels.name,
+        channelId: tutorialJobs.channel_id,
+        language: tutorialJobs.language,
+        channelLanguage: channels.language,
+        uploaderChannelKey: channels.uploader_channel_key,
         createdById: tutorialJobs.created_by,
         creatorName: users.name,
         creatorEmail: users.email,
@@ -138,6 +149,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         createdAt: tutorialJobs.created_at,
         description: tutorialJobs.description,
         tags: tutorialJobs.tags,
+        thumbnailTextTop: tutorialJobs.thumbnail_text_top,
+        thumbnailTextBottom: tutorialJobs.thumbnail_text_bottom,
         deliveredToDrive: tutorialJobs.delivered_to_drive,
         outputQaStatus: tutorialJobs.output_qa_status,
         outputQaDetail: tutorialJobs.output_qa_detail,
@@ -171,6 +184,9 @@ export async function GET(request: Request): Promise<NextResponse> {
               id: tutorialJobs.id,
               sourceJobId: tutorialJobs.source_job_id,
               language: tutorialJobs.language,
+              channelId: tutorialJobs.channel_id,
+              channelLanguage: channels.language,
+              uploaderChannelKey: channels.uploader_channel_key,
               title: tutorialJobs.title,
               status: tutorialJobs.status,
               finalPath: tutorialJobs.final_path,
@@ -186,11 +202,14 @@ export async function GET(request: Request): Promise<NextResponse> {
               completedAt: tutorialJobs.completed_at,
               description: tutorialJobs.description,
               tags: tutorialJobs.tags,
+              thumbnailTextTop: tutorialJobs.thumbnail_text_top,
+              thumbnailTextBottom: tutorialJobs.thumbnail_text_bottom,
               deliveredToDrive: tutorialJobs.delivered_to_drive,
               outputQaStatus: tutorialJobs.output_qa_status,
               outputQaDetail: tutorialJobs.output_qa_detail,
             })
             .from(tutorialJobs)
+            .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
             .where(
               and(
                 isNotNull(tutorialJobs.source_job_id),
@@ -224,14 +243,17 @@ export async function GET(request: Request): Promise<NextResponse> {
             )
         : [];
 
-    const driveMap = new Map<string, {
-      driveFileId: string | null;
-      driveUrl: string | null;
-      state: string;
-      count: number;
-      folderPath: string | null;
-      error: string | null;
-    }>();
+    const driveMap = new Map<
+      string,
+      {
+        driveFileId: string | null;
+        driveUrl: string | null;
+        state: string;
+        count: number;
+        folderPath: string | null;
+        error: string | null;
+      }
+    >();
     for (const a of artRows) {
       const previous = driveMap.get(a.jobId);
       const count = (previous?.count ?? 0) + (a.state === "uploaded" ? 1 : 0);
@@ -239,7 +261,10 @@ export async function GET(request: Request): Promise<NextResponse> {
         driveMap.set(a.jobId, {
           driveFileId: a.driveFileId,
           driveUrl:
-            (a.driveFolderId ? `https://drive.google.com/drive/folders/${a.driveFolderId}` : null) ?? a.driveWebLink ??
+            (a.driveFolderId
+              ? `https://drive.google.com/drive/folders/${a.driveFolderId}`
+              : null) ??
+            a.driveWebLink ??
             (a.driveFileId
               ? `https://drive.google.com/file/d/${a.driveFileId}/view`
               : null),
@@ -254,42 +279,86 @@ export async function GET(request: Request): Promise<NextResponse> {
       }
     }
 
-    const thumbRows = allJobIds.length > 0
-      ? await db
-          .select({
-            id: thumbnails.id,
-            subjectId: thumbnails.subject_id,
-            generationKind: thumbnails.generation_kind,
-            providerUsed: thumbnails.provider_used,
-            promptMode: thumbnails.prompt_mode,
-            reviewVerdict: thumbnails.review_verdict,
-            isSelected: thumbnails.is_selected,
-            createdAt: thumbnails.created_at,
-          })
-          .from(thumbnails)
-          .where(and(
-            eq(thumbnails.subject_kind, "tutorial_job"),
-            eq(thumbnails.status, "completed"),
-            inArray(thumbnails.subject_id, allJobIds),
-          ))
-          .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
-      : [];
-    const thumbnailMap = new Map<string, typeof thumbRows[number]>();
-    for (const thumbnail of thumbRows) {
-      if (!thumbnailMap.has(thumbnail.subjectId)) thumbnailMap.set(thumbnail.subjectId, thumbnail);
-    }
-    const thumbnailKind = (thumbnail: typeof thumbRows[number] | undefined): "none" | "automatic" | "ai" => {
+    const thumbRows =
+      allJobIds.length > 0
+        ? await db
+            .select({
+              id: thumbnails.id,
+              subjectId: thumbnails.subject_id,
+              generationKind: thumbnails.generation_kind,
+              providerUsed: thumbnails.provider_used,
+              promptMode: thumbnails.prompt_mode,
+              reviewVerdict: thumbnails.review_verdict,
+              isSelected: thumbnails.is_selected,
+              language: thumbnails.language,
+              channelId: thumbnails.channel_id,
+              status: thumbnails.status,
+              outputPath: thumbnails.output_path,
+              createdAt: thumbnails.created_at,
+            })
+            .from(thumbnails)
+            .where(
+              and(
+                eq(thumbnails.subject_kind, "tutorial_job"),
+                eq(thumbnails.status, "completed"),
+                inArray(thumbnails.subject_id, allJobIds),
+              ),
+            )
+            .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
+        : [];
+    const thumbnailSelection = (job: {
+      id: string;
+      language: string | null;
+      channelId: string | null;
+    }) =>
+      assessTutorialThumbnailSelection(
+        job,
+        thumbRows.filter((thumbnail) => thumbnail.subjectId === job.id),
+      );
+    const thumbnailKind = (
+      thumbnail: (typeof thumbRows)[number] | undefined,
+    ): "none" | "automatic" | "ai" => {
       if (!thumbnail) return "none";
-      if (thumbnail.generationKind === "edit" || thumbnail.promptMode === "manual") return "automatic";
+      if (
+        thumbnail.generationKind === "edit" ||
+        thumbnail.promptMode === "manual"
+      )
+        return "automatic";
       if (thumbnail.providerUsed) return "ai";
       return "automatic";
     };
-    const driveState = (delivered: boolean, qa: string | null, drive: ReturnType<typeof driveMap.get>) => {
+    const driveState = (
+      delivered: boolean,
+      qa: string | null,
+      drive: ReturnType<typeof driveMap.get>,
+    ) => {
       if (delivered && drive?.state === "uploaded") return "uploaded" as const;
       if (qa === "failed") return "held" as const;
       if (drive?.state === "uploading") return "uploading" as const;
       if (drive?.state === "failed") return "failed" as const;
       return "pending" as const;
+    };
+    const dispatchBlockers = (
+      candidate: Parameters<typeof validateDispatchCandidate>[0],
+      selection: ReturnType<typeof assessTutorialThumbnailSelection>,
+    ): string[] => {
+      const blockers = [...selection.reasons];
+      try {
+        validateDispatchCandidate(candidate, {
+          visibility: "private",
+          made_for_kids: false,
+          monetization: "off",
+        });
+      } catch (error) {
+        blockers.unshift(
+          error instanceof DispatchGateError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
+      }
+      return blockers;
     };
 
     // 4. Read the Studio projection of uploader receipts. The uploader remains
@@ -333,7 +402,10 @@ export async function GET(request: Request): Promise<NextResponse> {
         translationsMap.set(c.sourceJobId, []);
       }
       const d = driveMap.get(c.id);
-      const thumbnail = thumbnailMap.get(c.id);
+      const selection = thumbnailSelection(c);
+      const thumbnail = selection.thumbnail
+        ? thumbRows.find((row) => row.id === selection.thumbnail!.id)
+        : undefined;
       translationsMap.get(c.sourceJobId)!.push({
         id: c.id,
         sourceJobId: c.sourceJobId,
@@ -359,10 +431,32 @@ export async function GET(request: Request): Promise<NextResponse> {
         driveState: driveState(c.deliveredToDrive, c.outputQaStatus, d),
         driveArtifactCount: d?.count ?? 0,
         driveFolderPath: d?.folderPath ?? null,
-        driveError: d?.error ?? (c.outputQaStatus === "failed" ? "Held by output QA" : null),
+        driveError:
+          d?.error ??
+          (c.outputQaStatus === "failed" ? "Held by output QA" : null),
         thumbnailId: thumbnail?.id ?? null,
         thumbnailKind: thumbnailKind(thumbnail),
-        thumbnailApproved: thumbnail?.reviewVerdict === "acceptable" || thumbnail?.reviewVerdict === "strong",
+        thumbnailApproved:
+          thumbnail?.reviewVerdict === "acceptable" ||
+          thumbnail?.reviewVerdict === "strong",
+        dispatchBlockers: dispatchBlockers(
+          {
+            status: c.status,
+            isUploaded: c.isUploaded,
+            sourceJobId: c.sourceJobId,
+            language: c.language,
+            channelId: c.channelId,
+            channelLanguage: c.channelLanguage,
+            title: c.title,
+            description: c.description,
+            tags: c.tags,
+            finalPath: c.finalPath,
+            uploaderChannelKey: c.uploaderChannelKey,
+            thumbnailTextTop: c.thumbnailTextTop,
+            thumbnailTextBottom: c.thumbnailTextBottom,
+          },
+          selection,
+        ),
         uploader: dispatchMap.get(c.id) ?? null,
       });
     }
@@ -370,7 +464,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     // 6. Build final response rows
     const videos: VideoDeliveryRow[] = parents.map((p) => {
       const d = driveMap.get(p.id);
-      const thumbnail = thumbnailMap.get(p.id);
+      const selection = thumbnailSelection(p);
+      const thumbnail = selection.thumbnail
+        ? thumbRows.find((row) => row.id === selection.thumbnail!.id)
+        : undefined;
       return {
         id: p.id,
         title: p.title,
@@ -403,10 +500,32 @@ export async function GET(request: Request): Promise<NextResponse> {
         driveState: driveState(p.deliveredToDrive, p.outputQaStatus, d),
         driveArtifactCount: d?.count ?? 0,
         driveFolderPath: d?.folderPath ?? null,
-        driveError: d?.error ?? (p.outputQaStatus === "failed" ? "Held by output QA" : null),
+        driveError:
+          d?.error ??
+          (p.outputQaStatus === "failed" ? "Held by output QA" : null),
         thumbnailId: thumbnail?.id ?? null,
         thumbnailKind: thumbnailKind(thumbnail),
-        thumbnailApproved: thumbnail?.reviewVerdict === "acceptable" || thumbnail?.reviewVerdict === "strong",
+        thumbnailApproved:
+          thumbnail?.reviewVerdict === "acceptable" ||
+          thumbnail?.reviewVerdict === "strong",
+        dispatchBlockers: dispatchBlockers(
+          {
+            status: p.status,
+            isUploaded: p.isUploaded,
+            sourceJobId: null,
+            language: p.language,
+            channelId: p.channelId,
+            channelLanguage: p.channelLanguage,
+            title: p.title,
+            description: p.description,
+            tags: p.tags,
+            finalPath: p.finalPath,
+            uploaderChannelKey: p.uploaderChannelKey,
+            thumbnailTextTop: p.thumbnailTextTop,
+            thumbnailTextBottom: p.thumbnailTextBottom,
+          },
+          selection,
+        ),
       };
     });
 

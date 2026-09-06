@@ -140,6 +140,29 @@ describe("renderProgrammatic", () => {
     expect(prompt).toContain("The Silent Money Machine");
     expect(prompt).toContain("Do not repeat the video title");
   });
+
+  it("locks localized tutorial copy to two lines and its explicit language", () => {
+    const brief = compileThumbnailBrief({
+      format: "TUTORIAL_STUDIO",
+      channelId: "channel-de",
+      language: "de",
+      title: "Notion richtig einrichten",
+      headline: "NOTION RICHTIG\nIN 2 MINUTEN",
+      headlineSource: "operator",
+      topic: null,
+      scriptExcerpt: null,
+      rule: null,
+      brand: null,
+      archetypeLayoutInstructions: null,
+      archetypeBasePrompt: null,
+    });
+    const prompt = renderProgrammatic(brief);
+    expect(prompt).toContain(
+      'exactly two lines: LINE 1 "NOTION RICHTIG"; LINE 2 "IN 2 MINUTEN"',
+    );
+    expect(prompt).toContain("language de");
+    expect(prompt).toContain("Do not merge, translate, or repeat either line");
+  });
   it("fits the 2000-char backend ceiling with a full brief + persona, keeping the load-bearing directives", () => {
     // The regression this pins: veo_fleet/veoforge/vup REJECT prompts over
     // 2000 chars, and production died on exactly that ("prompt exceeds 2000

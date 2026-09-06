@@ -83,6 +83,7 @@ export async function GET() {
       language: channels.language,
       youtubeChannelId: channels.youtube_channel_id,
       isPrimary: channels.is_primary,
+      uploaderChannelKey: channels.uploader_channel_key,
     })
     .from(channels)
     .where(eq(channels.accepts_tutorials, true));

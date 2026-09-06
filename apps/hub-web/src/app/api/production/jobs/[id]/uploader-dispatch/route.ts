@@ -16,6 +16,7 @@ import {
   DispatchRequestSchema,
   validateDispatchCandidate,
 } from "@/lib/tutorial/uploader-dispatch";
+import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -98,10 +99,13 @@ export async function POST(
       isUploaded: tutorialJobs.is_uploaded,
       sourceJobId: tutorialJobs.source_job_id,
       language: tutorialJobs.language,
+      channelId: tutorialJobs.channel_id,
       title: tutorialJobs.title,
       description: tutorialJobs.description,
       tags: tutorialJobs.tags,
       finalPath: tutorialJobs.final_path,
+      thumbnailTextTop: tutorialJobs.thumbnail_text_top,
+      thumbnailTextBottom: tutorialJobs.thumbnail_text_bottom,
       channelLanguage: channels.language,
       uploaderChannelKey: channels.uploader_channel_key,
     })
@@ -122,30 +126,32 @@ export async function POST(
     await assertLocalDispatchAsset(job.finalPath!, "video");
 
     const selectedThumbnails = await db
-      .select({ id: thumbnails.id, outputPath: thumbnails.output_path })
+      .select({
+        id: thumbnails.id,
+        language: thumbnails.language,
+        channelId: thumbnails.channel_id,
+        status: thumbnails.status,
+        isSelected: thumbnails.is_selected,
+        outputPath: thumbnails.output_path,
+      })
       .from(thumbnails)
       .where(
         and(
           eq(thumbnails.subject_kind, "tutorial_job"),
           eq(thumbnails.subject_id, tutorialJobId),
-          eq(thumbnails.status, "completed"),
           eq(thumbnails.is_selected, true),
         ),
       );
-    if (selectedThumbnails.length !== 1) {
+    const selection = assessTutorialThumbnailSelection(job, selectedThumbnails);
+    if (!selection.ready || !selection.thumbnail) {
       throw new DispatchGateError(
         "selected_thumbnail_invalid",
-        `Exactly one selected completed thumbnail is required; found ${selectedThumbnails.length}`,
+        selection.reasons.join("; "),
       );
     }
-    const selectedThumbnail = selectedThumbnails[0]!;
-    if (!selectedThumbnail.outputPath?.trim()) {
-      throw new DispatchGateError(
-        "selected_thumbnail_path_missing",
-        "Selected completed thumbnail has no local output path",
-      );
-    }
-    await assertLocalDispatchAsset(selectedThumbnail.outputPath, "thumbnail");
+    const selectedThumbnail = selection.thumbnail;
+    const selectedThumbnailPath = selectedThumbnail.outputPath!;
+    await assertLocalDispatchAsset(selectedThumbnailPath, "thumbnail");
 
     const idempotencyKey = `tutorial:${tutorialJobId}:upload:r1`;
     const inserted = await db
@@ -157,7 +163,7 @@ export async function POST(
         channel_key: job.uploaderChannelKey!.trim(),
         video_path: job.finalPath!.trim(),
         thumbnail_id: selectedThumbnail.id,
-        thumbnail_path: selectedThumbnail.outputPath,
+        thumbnail_path: selectedThumbnailPath,
         state: "requested",
         attributes,
         requested_by: session.userId,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeUploaderChannelKey } from "../uploader-channel-key";
+import {
+  normalizeUploaderChannelKey,
+  validateTutorialUploaderChannelKey,
+} from "../uploader-channel-key";
 
 describe("normalizeUploaderChannelKey", () => {
   it("uses null as the fail-closed representation of no mapping", () => {
@@ -21,4 +24,19 @@ describe("normalizeUploaderChannelKey", () => {
       );
     },
   );
+});
+
+describe("validateTutorialUploaderChannelKey", () => {
+  it("accepts explicit mappings for the five active languages", () => {
+    expect(
+      validateTutorialUploaderChannelKey("German", "tutorial_german"),
+    ).toBe("tutorial_german");
+  });
+
+  it("keeps Dutch as archive-only", () => {
+    expect(() =>
+      validateTutorialUploaderChannelKey("nl", "tutorial_dutch"),
+    ).toThrow("nl is archive-only");
+    expect(validateTutorialUploaderChannelKey("nl", "")).toBeNull();
+  });
 });

@@ -44,6 +44,7 @@ interface TranslationDeliveryItem {
   thumbnailId: string | null;
   thumbnailKind: "none" | "automatic" | "ai";
   thumbnailApproved: boolean;
+  dispatchBlockers: string[];
   uploader: UploaderDispatchView | null;
 }
 
@@ -83,6 +84,7 @@ interface VideoDeliveryRow {
   thumbnailId: string | null;
   thumbnailKind: "none" | "automatic" | "ai";
   thumbnailApproved: boolean;
+  dispatchBlockers: string[];
 }
 
 interface UploaderStatus {
@@ -95,6 +97,7 @@ interface UploaderStatus {
     language: string;
     youtubeChannelId: string;
     isPrimary: boolean;
+    uploaderChannelKey: string | null;
     channelUrl?: string | null;
     studioUrl?: string;
   }>;
@@ -137,62 +140,125 @@ function uploadStateLabel(item: {
     return `Scheduled ${new Date(item.scheduledFor).toLocaleString()}`;
   }
   if (item.uploaderStatus === "uploading") return "Uploading";
-  if (item.uploaderStatus === "waiting_to_be_uploaded") return "Waiting for uploader";
+  if (item.uploaderStatus === "waiting_to_be_uploaded")
+    return "Waiting for uploader";
   if (item.uploaderStatus === "failed") return "Uploader failed";
   if (item.uploaderStatus === "uploaded" || item.isUploaded) {
-    return item.youtubeVisibility === "public" ? "Public · verified" : "Uploaded";
+    return item.youtubeVisibility === "public"
+      ? "Public · verified"
+      : "Uploaded";
   }
   return "Not queued";
 }
-
-const UPLOADER_CHANNEL_BY_LANGUAGE: Record<string, string> = {
-  en: "tutorial_usa",
-  de: "tutorial_german",
-  fr: "tutorial_french",
-  it: "tutorial_italian",
-  nl: "tutorial_dutch",
-  sv: "tutorial_swedish",
-};
 
 function videoIdFromUrl(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    const id = url.hostname === "youtu.be"
-      ? url.pathname.split("/").filter(Boolean)[0]
-      : url.searchParams.get("v") ?? url.pathname.match(/\/shorts\/([^/?]+)/)?.[1];
+    const id =
+      url.hostname === "youtu.be"
+        ? url.pathname.split("/").filter(Boolean)[0]
+        : (url.searchParams.get("v") ??
+          url.pathname.match(/\/shorts\/([^/?]+)/)?.[1]);
     return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
   } catch {
     return null;
   }
 }
 
-function ThumbnailPreview({ jobId, thumbnailId, kind, approved }: { jobId: string; thumbnailId: string | null; kind: string; approved: boolean }) {
+function ThumbnailPreview({
+  jobId,
+  thumbnailId,
+  kind,
+  approved,
+}: {
+  jobId: string;
+  thumbnailId: string | null;
+  kind: string;
+  approved: boolean;
+}) {
   return (
     <a
       href={`/thumbnails?jobId=${jobId}`}
       title="Open this video in Thumbnail Studio"
-      style={{ display: "block", width: 144, aspectRatio: "16 / 9", borderRadius: 7, overflow: "hidden", flexShrink: 0, position: "relative", background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,.12)" }}
+      style={{
+        display: "block",
+        width: 144,
+        aspectRatio: "16 / 9",
+        borderRadius: 7,
+        overflow: "hidden",
+        flexShrink: 0,
+        position: "relative",
+        background: "rgba(0,0,0,.4)",
+        border: "1px solid rgba(255,255,255,.12)",
+      }}
     >
       {thumbnailId ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={`/api/thumbnails/image/${thumbnailId}`} alt="Thumbnail" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img
+          src={`/api/thumbnails/image/${thumbnailId}`}
+          alt="Thumbnail"
+          loading="lazy"
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
       ) : (
-        <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#fca5a5", fontSize: 10 }}>No thumbnail</span>
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            color: "#fca5a5",
+            fontSize: 10,
+          }}
+        >
+          No thumbnail
+        </span>
       )}
-      <span style={{ position: "absolute", left: 5, bottom: 5, padding: "2px 5px", borderRadius: 4, background: "rgba(0,0,0,.78)", color: approved ? "#86efac" : "#fff", fontSize: 8, textTransform: "uppercase" }}>
-        {kind}{approved ? " · approved" : ""}
+      <span
+        style={{
+          position: "absolute",
+          left: 5,
+          bottom: 5,
+          padding: "2px 5px",
+          borderRadius: 4,
+          background: "rgba(0,0,0,.78)",
+          color: approved ? "#86efac" : "#fff",
+          fontSize: 8,
+          textTransform: "uppercase",
+        }}
+      >
+        {kind}
+        {approved ? " · approved" : ""}
       </span>
     </a>
   );
 }
 
-function MetadataBlock({ description, tags }: { description: string | null; tags: string[] | null }) {
+function MetadataBlock({
+  description,
+  tags,
+}: {
+  description: string | null;
+  tags: string[] | null;
+}) {
   return (
-    <div style={{ marginTop: 8, padding: 9, borderRadius: 7, background: "rgba(0,0,0,.24)", fontSize: 11, color: "var(--v2-text-2)", whiteSpace: "pre-wrap" }}>
+    <div
+      style={{
+        marginTop: 8,
+        padding: 9,
+        borderRadius: 7,
+        background: "rgba(0,0,0,.24)",
+        fontSize: 11,
+        color: "var(--v2-text-2)",
+        whiteSpace: "pre-wrap",
+      }}
+    >
       <strong style={{ color: "#fff" }}>Description</strong>
       <div style={{ marginTop: 4 }}>{description || "Not generated"}</div>
-      <strong style={{ color: "#fff", display: "block", marginTop: 7 }}>Tags</strong>
+      <strong style={{ color: "#fff", display: "block", marginTop: 7 }}>
+        Tags
+      </strong>
       <div>{tags?.length ? tags.join(", ") : "Not generated"}</div>
     </div>
   );
@@ -209,12 +275,14 @@ function UploaderDispatchControl({
   dispatch,
   authorized,
   disabled,
+  disabledReason,
   busy,
   onDispatch,
 }: {
   dispatch: UploaderDispatchView | null;
   authorized: boolean;
   disabled: boolean;
+  disabledReason?: string;
   busy: boolean;
   onDispatch: () => void;
 }) {
@@ -222,29 +290,37 @@ function UploaderDispatchControl({
 
   if (!dispatch) {
     return (
-      <button
-        type="button"
-        disabled={disabled || busy}
-        onClick={onDispatch}
-        title={
-          disabled
-            ? "Confirm audience, monetization, and any required ad suitability above first"
-            : "Create one idempotent uploader request"
-        }
-        style={{
-          padding: "5px 10px",
-          borderRadius: 6,
-          fontSize: 11,
-          fontWeight: 800,
-          cursor: disabled || busy ? "not-allowed" : "pointer",
-          border: "1px solid rgba(96,165,250,0.45)",
-          background: "rgba(59,130,246,0.16)",
-          color: disabled || busy ? "rgba(147,197,253,0.45)" : "#93c5fd",
-          opacity: busy ? 0.65 : 1,
-        }}
-      >
-        {busy ? "Queueing..." : "Queue uploader"}
-      </button>
+      <div style={{ maxWidth: 240 }}>
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={onDispatch}
+          title={
+            disabled
+              ? (disabledReason ??
+                "Confirm audience, monetization, and any required ad suitability above first")
+              : "Create one idempotent uploader request"
+          }
+          style={{
+            padding: "5px 10px",
+            borderRadius: 6,
+            fontSize: 11,
+            fontWeight: 800,
+            cursor: disabled || busy ? "not-allowed" : "pointer",
+            border: "1px solid rgba(96,165,250,0.45)",
+            background: "rgba(59,130,246,0.16)",
+            color: disabled || busy ? "rgba(147,197,253,0.45)" : "#93c5fd",
+            opacity: busy ? 0.65 : 1,
+          }}
+        >
+          {busy ? "Queueing..." : "Queue uploader"}
+        </button>
+        {disabledReason && (
+          <div style={{ marginTop: 4, color: "#fca5a5", fontSize: 9 }}>
+            {disabledReason}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -333,7 +409,9 @@ export function UploadsTable() {
 
   const loadUploader = useCallback(async () => {
     try {
-      const res = await fetch("/api/production/uploader-status", { cache: "no-store" });
+      const res = await fetch("/api/production/uploader-status", {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setUploader((await res.json()) as UploaderStatus);
     } catch (error) {
@@ -601,38 +679,137 @@ export function UploadsTable() {
       {/* Exact channel identities and uploader connection. These links are
           deliberately derived from immutable UC ids, never from handles. */}
       <GlassCard style={{ padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>
               YouTube channel network
             </div>
-            <div style={{ fontSize: 11, color: uploader?.connected ? "#4ade80" : "#facc15", marginTop: 3 }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: uploader?.connected ? "#4ade80" : "#facc15",
+                marginTop: 3,
+              }}
+            >
               {uploader?.connected
                 ? "Uploader connected · receipts sync automatically"
                 : `Uploader disconnected${uploader?.error ? ` · ${uploader.error}` : ""}`}
             </div>
           </div>
-          <a href={uploader?.operationsUrl ?? "/uploader-ops/"} target="_blank" rel="noreferrer" style={{ color: "var(--v2-accent)", fontSize: 11, fontWeight: 700 }}>
+          <a
+            href={uploader?.operationsUrl ?? "/uploader-ops/"}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "var(--v2-accent)", fontSize: 11, fontWeight: 700 }}
+          >
             Open uploader operations ↗
           </a>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 12 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
           {(uploader?.channels ?? []).map((channel) => {
-            const latest = uploader?.jobs.find(
-              (job) => job.channel === UPLOADER_CHANNEL_BY_LANGUAGE[channel.language],
-            );
+            const latest = channel.uploaderChannelKey
+              ? uploader?.jobs.find(
+                  (job) => job.channel === channel.uploaderChannelKey,
+                )
+              : undefined;
             return (
-              <div key={channel.id} style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{channel.name}</span>
-                  <span style={{ fontSize: 9, color: "var(--v2-text-2)", textTransform: "uppercase" }}>{channel.language}</span>
+              <div
+                key={channel.id}
+                style={{
+                  padding: 10,
+                  borderRadius: 8,
+                  background: "rgba(255,255,255,0.035)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 6,
+                  }}
+                >
+                  <span
+                    style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}
+                  >
+                    {channel.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: "var(--v2-text-2)",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {channel.language}
+                  </span>
                 </div>
-                <div style={{ fontSize: 9, color: "var(--v2-text-3)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis" }}>{channel.youtubeChannelId}</div>
-                <div style={{ display: "flex", gap: 8, marginTop: 7, fontSize: 10 }}>
-                  {channel.channelUrl && <a href={channel.channelUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd" }}>Channel ↗</a>}
-                  <a href={channel.studioUrl ?? "https://studio.youtube.com/"} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd" }}>Studio ↗</a>
-                  <span style={{ marginLeft: "auto", color: latest?.state === "succeeded" ? "#4ade80" : latest ? "#facc15" : "var(--v2-text-3)" }}>
-                    {latest?.state ?? "not verified"}
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: "var(--v2-text-3)",
+                    marginTop: 3,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {channel.youtubeChannelId}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 7,
+                    fontSize: 10,
+                  }}
+                >
+                  {channel.channelUrl && (
+                    <a
+                      href={channel.channelUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "#93c5fd" }}
+                    >
+                      Channel ↗
+                    </a>
+                  )}
+                  <a
+                    href={channel.studioUrl ?? "https://studio.youtube.com/"}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#c4b5fd" }}
+                  >
+                    Studio ↗
+                  </a>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      color:
+                        latest?.state === "succeeded"
+                          ? "#4ade80"
+                          : latest
+                            ? "#facc15"
+                            : "var(--v2-text-3)",
+                    }}
+                  >
+                    {channel.uploaderChannelKey
+                      ? (latest?.state ?? "not verified")
+                      : "archive only"}
                   </span>
                 </div>
               </div>
@@ -965,12 +1142,41 @@ export function UploadsTable() {
                       </td>
 
                       {/* Video Title & details */}
-                      <td style={{ verticalAlign: "top", padding: "14px 14px" }}>
-                        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                          <ThumbnailPreview jobId={v.id} thumbnailId={v.thumbnailId} kind={v.thumbnailKind} approved={v.thumbnailApproved} />
+                      <td
+                        style={{ verticalAlign: "top", padding: "14px 14px" }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 12,
+                            alignItems: "flex-start",
+                          }}
+                        >
+                          <ThumbnailPreview
+                            jobId={v.id}
+                            thumbnailId={v.thumbnailId}
+                            kind={v.thumbnailKind}
+                            approved={v.thumbnailApproved}
+                          />
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, color: "#fff", fontSize: 14 }}>{v.title}</div>
-                            <a href={`/thumbnails?jobId=${v.id}`} style={{ color: "var(--v2-accent)", fontSize: 10 }}>Open in Thumbnail Studio ↗</a>
+                            <div
+                              style={{
+                                fontWeight: 700,
+                                color: "#fff",
+                                fontSize: 14,
+                              }}
+                            >
+                              {v.title}
+                            </div>
+                            <a
+                              href={`/thumbnails?jobId=${v.id}`}
+                              style={{
+                                color: "var(--v2-accent)",
+                                fontSize: 10,
+                              }}
+                            >
+                              Open in Thumbnail Studio ↗
+                            </a>
                           </div>
                         </div>
                         <div
@@ -1036,13 +1242,19 @@ export function UploadsTable() {
                                 marginBottom: 2,
                               }}
                             >
-                              Metadata & localized versions ({v.translations.length} languages)
+                              Metadata & localized versions (
+                              {v.translations.length} languages)
                             </div>
-                            <MetadataBlock description={v.description} tags={v.tags} />
+                            <MetadataBlock
+                              description={v.description}
+                              tags={v.tags}
+                            />
                             {v.translations.map((t) => {
                               const isChildToggling = togglingId === t.id;
                               const flag = LANGUAGE_FLAGS[t.language] ?? "🌐";
-                              const videoId = videoIdFromUrl(t.youtubeUploadUrl);
+                              const videoId = videoIdFromUrl(
+                                t.youtubeUploadUrl,
+                              );
 
                               return (
                                 <div
@@ -1067,7 +1279,12 @@ export function UploadsTable() {
                                     }}
                                   >
                                     <span style={{ fontSize: 16 }}>{flag}</span>
-                                    <ThumbnailPreview jobId={t.id} thumbnailId={t.thumbnailId} kind={t.thumbnailKind} approved={t.thumbnailApproved} />
+                                    <ThumbnailPreview
+                                      jobId={t.id}
+                                      thumbnailId={t.thumbnailId}
+                                      kind={t.thumbnailKind}
+                                      approved={t.thumbnailApproved}
+                                    />
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div
                                         style={{
@@ -1081,28 +1298,64 @@ export function UploadsTable() {
                                       >
                                         {t.title}
                                       </div>
-                                      <div style={{ fontSize: 10, color: "var(--v2-text-2)" }}>
-                                        {t.language} · Drive: {t.driveState} ({t.driveArtifactCount} files) · {uploadStateLabel(t)}
+                                      <div
+                                        style={{
+                                          fontSize: 10,
+                                          color: "var(--v2-text-2)",
+                                        }}
+                                      >
+                                        {t.language} · Drive: {t.driveState} (
+                                        {t.driveArtifactCount} files) ·{" "}
+                                        {uploadStateLabel(t)}
                                       </div>
-                                      <MetadataBlock description={t.description} tags={t.tags} />
+                                      <MetadataBlock
+                                        description={t.description}
+                                        tags={t.tags}
+                                      />
                                     </div>
                                   </div>
 
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
                                     {t.youtubeUploadUrl && (
-                                      <a href={t.youtubeUploadUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontSize: 11 }}>
+                                      <a
+                                        href={t.youtubeUploadUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{
+                                          color: "#93c5fd",
+                                          fontSize: 11,
+                                        }}
+                                      >
                                         YouTube ↗
                                       </a>
                                     )}
                                     {videoId && (
-                                      <a href={`https://studio.youtube.com/video/${videoId}/edit`} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd", fontSize: 11 }}>
+                                      <a
+                                        href={`https://studio.youtube.com/video/${videoId}/edit`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{
+                                          color: "#c4b5fd",
+                                          fontSize: 11,
+                                        }}
+                                      >
                                         Studio ↗
                                       </a>
                                     )}
                                     <UploaderDispatchControl
                                       dispatch={t.uploader}
                                       authorized={canDispatch}
-                                      disabled={!dispatchDeclarationsComplete}
+                                      disabled={
+                                        !dispatchDeclarationsComplete ||
+                                        t.dispatchBlockers.length > 0
+                                      }
+                                      disabledReason={t.dispatchBlockers[0]}
                                       busy={dispatchingId === t.id}
                                       onDispatch={() =>
                                         void handleDispatch(t.id)
@@ -1243,7 +1496,9 @@ export function UploadsTable() {
                       </td>
 
                       {/* Drive Link */}
-                      <td style={{ verticalAlign: "top", padding: "14px 14px" }}>
+                      <td
+                        style={{ verticalAlign: "top", padding: "14px 14px" }}
+                      >
                         {v.driveState === "uploaded" && v.driveUrl ? (
                           <a
                             href={v.driveUrl}
@@ -1272,8 +1527,24 @@ export function UploadsTable() {
                             In Drive · {v.driveArtifactCount} files
                           </a>
                         ) : (
-                          <span title={v.driveError ?? undefined} style={{ fontSize: 11, color: v.driveState === "held" || v.driveState === "failed" ? "#fca5a5" : "var(--v2-text-2)" }}>
-                            {v.driveState === "held" ? "Held by QA" : v.driveState === "failed" ? "Drive failed" : v.driveState === "uploading" ? "Uploading to Drive…" : "Pending Drive"}
+                          <span
+                            title={v.driveError ?? undefined}
+                            style={{
+                              fontSize: 11,
+                              color:
+                                v.driveState === "held" ||
+                                v.driveState === "failed"
+                                  ? "#fca5a5"
+                                  : "var(--v2-text-2)",
+                            }}
+                          >
+                            {v.driveState === "held"
+                              ? "Held by QA"
+                              : v.driveState === "failed"
+                                ? "Drive failed"
+                                : v.driveState === "uploading"
+                                  ? "Uploading to Drive…"
+                                  : "Pending Drive"}
                           </span>
                         )}
                       </td>
@@ -1311,15 +1582,52 @@ export function UploadsTable() {
                       </td>
 
                       {/* Upload Status & Action */}
-                      <td style={{ verticalAlign: "top", padding: "14px 14px", textAlign: "right" }}>
-                        <div style={{ marginBottom: 7, fontSize: 10, color: v.uploaderStatus === "failed" ? "#f87171" : "var(--v2-text-2)" }}>
+                      <td
+                        style={{
+                          verticalAlign: "top",
+                          padding: "14px 14px",
+                          textAlign: "right",
+                        }}
+                      >
+                        <div
+                          style={{
+                            marginBottom: 7,
+                            fontSize: 10,
+                            color:
+                              v.uploaderStatus === "failed"
+                                ? "#f87171"
+                                : "var(--v2-text-2)",
+                          }}
+                        >
                           {uploadStateLabel(v)}
                         </div>
                         {v.youtubeUploadUrl && (
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 7, fontSize: 10 }}>
-                            <a href={v.youtubeUploadUrl} target="_blank" rel="noreferrer" style={{ color: "#93c5fd" }}>YouTube ↗</a>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "flex-end",
+                              gap: 8,
+                              marginBottom: 7,
+                              fontSize: 10,
+                            }}
+                          >
+                            <a
+                              href={v.youtubeUploadUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: "#93c5fd" }}
+                            >
+                              YouTube ↗
+                            </a>
                             {videoIdFromUrl(v.youtubeUploadUrl) && (
-                              <a href={`https://studio.youtube.com/video/${videoIdFromUrl(v.youtubeUploadUrl)}/edit`} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd" }}>Studio ↗</a>
+                              <a
+                                href={`https://studio.youtube.com/video/${videoIdFromUrl(v.youtubeUploadUrl)}/edit`}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "#c4b5fd" }}
+                              >
+                                Studio ↗
+                              </a>
                             )}
                           </div>
                         )}
@@ -1334,7 +1642,11 @@ export function UploadsTable() {
                           <UploaderDispatchControl
                             dispatch={v.uploader}
                             authorized={canDispatch}
-                            disabled={!dispatchDeclarationsComplete}
+                            disabled={
+                              !dispatchDeclarationsComplete ||
+                              v.dispatchBlockers.length > 0
+                            }
+                            disabledReason={v.dispatchBlockers[0]}
                             busy={dispatchingId === v.id}
                             onDispatch={() => void handleDispatch(v.id)}
                           />

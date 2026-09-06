@@ -22,12 +22,15 @@ const complete: DispatchCandidate = {
   isUploaded: false,
   sourceJobId: null,
   language: "English",
+  channelId: "channel-en",
   channelLanguage: "en",
   title: "How to configure Notion",
   description: "A complete walkthrough.",
   tags: ["notion tutorial", "notion setup"],
   finalPath: "/media/final.mp4",
   uploaderChannelKey: "english_us",
+  thumbnailTextTop: "SET UP NOTION",
+  thumbnailTextBottom: "THE RIGHT WAY",
 };
 
 describe("tutorial uploader dispatch gate", () => {
@@ -68,6 +71,13 @@ describe("tutorial uploader dispatch gate", () => {
     ["invalid tags", { tags: ["valid", 42] }, "localized_metadata_incomplete"],
     ["final", { finalPath: null }, "final_video_missing"],
     ["mapping", { uploaderChannelKey: null }, "uploader_channel_unmapped"],
+    ["language", { language: null }, "tutorial_language_missing"],
+    ["channel", { channelId: null }, "tutorial_channel_missing"],
+    [
+      "thumbnail copy",
+      { thumbnailTextBottom: null },
+      "localized_thumbnail_copy_incomplete",
+    ],
   ])("fails closed for missing %s", (_name, patch, code) => {
     expect(() =>
       validateDispatchCandidate({ ...complete, ...patch }, request),

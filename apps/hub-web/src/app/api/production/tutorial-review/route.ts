@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, isNotNull, isNull, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, inArray, sql } from "drizzle-orm";
 import { access } from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -10,6 +10,11 @@ import {
   thumbnails,
   storageArtifacts,
 } from "@/lib/db";
+import {
+  isActiveTutorialUploadLanguage,
+  normalizeTutorialLanguage,
+} from "@repo/contracts";
+import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +82,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     .select({
       id: tutorialJobs.id,
       title: tutorialJobs.title,
+      language: tutorialJobs.language,
+      channelId: tutorialJobs.channel_id,
       channelName: channels.name,
       completedAt: tutorialJobs.completed_at,
       finalPath: tutorialJobs.final_path,
@@ -102,6 +109,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         // are auto-delivered, so they never need a separate approval — showing
         // them would make the VA re-approve the same video in four languages.
         isNull(tutorialJobs.source_job_id),
+        sql`lower(trim(${tutorialJobs.language})) in ('en', 'english')`,
         ...(scopeAll ? [] : [eq(tutorialJobs.created_by, session.userId)]),
       ),
     )
@@ -110,21 +118,28 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const ids = rows.map((r) => r.id);
 
-  const variantRows = ids.length > 0
-    ? await db
-        .select({
-          id: tutorialJobs.id,
-          sourceJobId: tutorialJobs.source_job_id,
-          language: tutorialJobs.language,
-          title: tutorialJobs.title,
-        })
-        .from(tutorialJobs)
-        .where(and(
-          isNotNull(tutorialJobs.source_job_id),
-          inArray(tutorialJobs.source_job_id, ids),
-        ))
-    : [];
-  const allThumbnailJobIds = [...ids, ...variantRows.map((variant) => variant.id)];
+  const variantRows =
+    ids.length > 0
+      ? await db
+          .select({
+            id: tutorialJobs.id,
+            sourceJobId: tutorialJobs.source_job_id,
+            language: tutorialJobs.language,
+            title: tutorialJobs.title,
+            channelId: tutorialJobs.channel_id,
+          })
+          .from(tutorialJobs)
+          .where(
+            and(
+              isNotNull(tutorialJobs.source_job_id),
+              inArray(tutorialJobs.source_job_id, ids),
+            ),
+          )
+      : [];
+  const allThumbnailJobIds = [
+    ...ids,
+    ...variantRows.map((variant) => variant.id),
+  ];
 
   // Thumbnails are polymorphic (subject_kind + subject_id, no FK), so they
   // cannot be joined — fetched for these jobs and matched in memory. The row id
@@ -140,6 +155,9 @@ export async function GET(request: Request): Promise<NextResponse> {
             subjectId: thumbnails.subject_id,
             outputPath: thumbnails.output_path,
             isSelected: thumbnails.is_selected,
+            language: thumbnails.language,
+            channelId: thumbnails.channel_id,
+            status: thumbnails.status,
             createdAt: thumbnails.created_at,
           })
           .from(thumbnails)
@@ -155,10 +173,26 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   // Selected first, then newest — so the first hit per subject is the one that
   // ships.
+  const thumbnailOwners = [
+    ...rows.map((row) => ({
+      id: row.id,
+      language: row.language,
+      channelId: row.channelId,
+    })),
+    ...variantRows.map((row) => ({
+      id: row.id,
+      language: row.language,
+      channelId: row.channelId,
+    })),
+  ];
   const thumbBySubject = new Map<string, string>();
-  for (const t of thumbRows) {
-    if (t.outputPath && !thumbBySubject.has(t.subjectId)) {
-      thumbBySubject.set(t.subjectId, t.id);
+  for (const owner of thumbnailOwners) {
+    const selection = assessTutorialThumbnailSelection(
+      owner,
+      thumbRows.filter((thumbnail) => thumbnail.subjectId === owner.id),
+    );
+    if (selection.thumbnail) {
+      thumbBySubject.set(owner.id, selection.thumbnail.id);
     }
   }
 
@@ -207,12 +241,23 @@ export async function GET(request: Request): Promise<NextResponse> {
         : null,
     thumbnailId: thumbBySubject.get(r.id) ?? null,
     thumbnailVariants: [
-      { id: r.id, language: "en", title: r.title, thumbnailId: thumbBySubject.get(r.id) ?? null },
+      {
+        id: r.id,
+        language: "en",
+        title: r.title,
+        thumbnailId: thumbBySubject.get(r.id) ?? null,
+      },
       ...variantRows
-        .filter((variant) => variant.sourceJobId === r.id)
+        .filter(
+          (variant) =>
+            variant.sourceJobId === r.id &&
+            isActiveTutorialUploadLanguage(
+              normalizeTutorialLanguage(variant.language),
+            ),
+        )
         .map((variant) => ({
           id: variant.id,
-          language: variant.language ?? "translated",
+          language: normalizeTutorialLanguage(variant.language)!,
           title: variant.title,
           thumbnailId: thumbBySubject.get(variant.id) ?? null,
         })),

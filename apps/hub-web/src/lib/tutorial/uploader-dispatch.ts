@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { extname, isAbsolute } from "node:path";
 import { z } from "zod";
 import {
+  normalizeTutorialLanguage,
   TutorialUploaderAttributesSchema,
   type TutorialUploaderAttributes,
 } from "@repo/contracts";
@@ -40,22 +41,16 @@ export interface DispatchCandidate {
   isUploaded: boolean | null;
   sourceJobId: string | null;
   language: string | null;
+  channelId: string | null;
   channelLanguage: string | null;
   title: string;
   description: string | null;
   tags: unknown;
   finalPath: string | null;
   uploaderChannelKey: string | null;
+  thumbnailTextTop: string | null;
+  thumbnailTextBottom: string | null;
 }
-
-const LANGUAGE_ALIASES: Record<string, string> = {
-  english: "en",
-  german: "de",
-  french: "fr",
-  spanish: "es",
-  japanese: "ja",
-  korean: "ko",
-};
 
 export class DispatchGateError extends Error {
   constructor(
@@ -65,11 +60,6 @@ export class DispatchGateError extends Error {
     super(message);
     this.name = "DispatchGateError";
   }
-}
-
-function normalizedLanguage(language: string | null): string {
-  const value = language?.trim().toLowerCase() || "en";
-  return LANGUAGE_ALIASES[value] ?? value;
 }
 
 /**
@@ -93,7 +83,13 @@ export function validateDispatchCandidate(
     );
   }
 
-  const language = normalizedLanguage(candidate.language);
+  const language = normalizeTutorialLanguage(candidate.language);
+  if (!language) {
+    throw new DispatchGateError(
+      "tutorial_language_missing",
+      "Tutorial has no explicit language; dispatch will not assume English",
+    );
+  }
   if (candidate.sourceJobId) {
     if (!AUTOMATIC_TRANSLATION_LANGUAGES.some((code) => code === language)) {
       throw new DispatchGateError(
@@ -108,10 +104,13 @@ export function validateDispatchCandidate(
     );
   }
 
-  if (
-    candidate.channelLanguage &&
-    normalizedLanguage(candidate.channelLanguage) !== language
-  ) {
+  if (!candidate.channelId || !candidate.channelLanguage) {
+    throw new DispatchGateError(
+      "tutorial_channel_missing",
+      "Tutorial has no assigned channel with an explicit language",
+    );
+  }
+  if (normalizeTutorialLanguage(candidate.channelLanguage) !== language) {
     throw new DispatchGateError(
       "channel_language_mismatch",
       "Tutorial language does not match its assigned channel",
@@ -157,6 +156,15 @@ export function validateDispatchCandidate(
     throw new DispatchGateError(
       "final_video_missing",
       "Tutorial has no final video path",
+    );
+  }
+  if (
+    !candidate.thumbnailTextTop?.trim() ||
+    !candidate.thumbnailTextBottom?.trim()
+  ) {
+    throw new DispatchGateError(
+      "localized_thumbnail_copy_incomplete",
+      "Localized thumbnail top and bottom copy must both be nonempty",
     );
   }
 

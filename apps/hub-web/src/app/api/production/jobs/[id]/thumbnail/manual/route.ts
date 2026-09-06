@@ -6,11 +6,18 @@ import sharp from "sharp";
 import { and, eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db, thumbnails, tutorialJobs } from "@/lib/db";
+import {
+  channels,
+  db,
+  storageArtifacts,
+  thumbnails,
+  tutorialJobs,
+} from "@/lib/db";
 import {
   THUMBNAIL_PACK_LANGUAGES,
   assessThumbnailPackJob,
 } from "@/lib/tutorial/thumbnail-pack";
+import { resolveTutorialThumbnailVariant } from "@/lib/tutorial/thumbnail-context";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +44,7 @@ export async function POST(
       id: tutorialJobs.id,
       createdBy: tutorialJobs.created_by,
       channelId: tutorialJobs.channel_id,
+      channelLanguage: channels.language,
       sourceJobId: tutorialJobs.source_job_id,
       language: tutorialJobs.language,
       title: tutorialJobs.title,
@@ -48,6 +56,7 @@ export async function POST(
       finalPath: tutorialJobs.final_path,
     })
     .from(tutorialJobs)
+    .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
     .where(eq(tutorialJobs.id, id))
     .limit(1);
 
@@ -64,16 +73,25 @@ export async function POST(
   if (job.createdBy !== session.userId && !privileged) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!job.sourceJobId || !job.language) {
+  let thumbnailContext;
+  try {
+    thumbnailContext = resolveTutorialThumbnailVariant(job);
+  } catch (error) {
     return NextResponse.json(
-      { error: "The four-language pack only accepts localized child jobs" },
+      {
+        error: "Thumbnail variant is not configured safely",
+        reasons: [error instanceof Error ? error.message : String(error)],
+      },
       { status: 409 },
     );
   }
-  const jobLanguage = job.language;
-  if (!THUMBNAIL_PACK_LANGUAGES.includes(jobLanguage)) {
+  const jobLanguage = thumbnailContext.language;
+  if (!THUMBNAIL_PACK_LANGUAGES.some((language) => language === jobLanguage)) {
     return NextResponse.json(
-      { error: "Localized job is outside the automatic four-language pack" },
+      {
+        error:
+          "Tutorial language is archive-only and outside the active upload network",
+      },
       { status: 409 },
     );
   }
@@ -176,7 +194,7 @@ export async function POST(
         .values({
           subject_kind: "tutorial_job",
           subject_id: job.id,
-          channel_id: job.channelId,
+          channel_id: thumbnailContext.channelId,
           language: jobLanguage,
           prompt_mode: "manual",
           prompt_used: layoutJson,
@@ -186,12 +204,15 @@ export async function POST(
           title: job.title,
           headline_text: [job.thumbnailTextTop, job.thumbnailTextBottom]
             .filter(Boolean)
-            .join(" / "),
+            .join("\n"),
+          headline_source: "operator",
           generation_kind: "edit",
           output_path: outputPath,
           requested_backend: "browser-layout",
           provider_used: "browser-layout",
           backend_chain: ["browser-layout"],
+          review_verdict: "acceptable",
+          reviewed_at: new Date(),
           status: "completed",
           is_selected: true,
         })
@@ -199,6 +220,21 @@ export async function POST(
       if (!record) throw new Error("Could not persist thumbnail record");
       return record;
     });
+    await db
+      .update(storageArtifacts)
+      .set({
+        state: "pending",
+        vps_path: outputPath,
+        error_kind: "thumbnail_replaced",
+        error_message: "Selected thumbnail changed; replace Drive copy",
+        updated_at: new Date(),
+      })
+      .where(
+        and(
+          eq(storageArtifacts.job_id, job.id),
+          eq(storageArtifacts.kind, "thumbnail"),
+        ),
+      );
     return NextResponse.json({
       thumbnailId: selected.id,
       language: jobLanguage,

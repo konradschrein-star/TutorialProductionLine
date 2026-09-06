@@ -11,6 +11,7 @@ import type {
 import {
   TutorialTranslatePayloadSchema,
   TUTORIAL_PROVIDERS,
+  normalizeTutorialLanguage,
 } from "@repo/contracts";
 import type { DrizzleClient, ChannelVoice, TutorialJob } from "@repo/db";
 import {
@@ -21,13 +22,10 @@ import {
   getTutorialSettings,
   getChannelVoice,
   getVoiceForLanguage,
-  createThumbnailRecord,
   tutorialJobs,
-  thumbnails,
   channels,
   eq,
   and,
-  desc,
 } from "@repo/db";
 import { generateScript } from "../../utils/tutorial/llm-registry.js";
 import { generateTutorialUploadMetadata } from "../../utils/tutorial/upload-metadata.js";
@@ -39,6 +37,7 @@ import {
 import { withTTSSlot } from "../../utils/tts-gateway.js";
 import { ai33TTSCircuitBreaker } from "../../utils/ai33-circuit-breaker.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
+import { selectTranslationChannel } from "../../utils/tutorial/thumbnail-context.js";
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
@@ -491,6 +490,14 @@ export function createTutorialTranslateProcessor(
       if (!source) {
         throw new Error(`Source tutorial job ${sourceJobId} not found`);
       }
+      if (
+        source.source_job_id !== null ||
+        normalizeTutorialLanguage(source.language) !== "en"
+      ) {
+        throw new Error(
+          `Source tutorial job ${sourceJobId} must be an explicit English original`,
+        );
+      }
       if (source.status !== "COMPLETED") {
         throw new Error(
           `Source tutorial job ${sourceJobId} is ${source.status}, not COMPLETED — cannot translate`,
@@ -507,21 +514,42 @@ export function createTutorialTranslateProcessor(
         );
       }
 
+      // Resolve the target brand before spending translation/TTS quota. There
+      // is no safe fallback to the English source channel: that would select
+      // the English host, profile, Drive folder, and uploader destination.
+      const targetChannels = await db
+        .select({ id: channels.id, language: channels.language })
+        .from(channels)
+        .where(eq(channels.accepts_tutorials, true));
+      const targetChannel = selectTranslationChannel(
+        targetLanguage,
+        targetChannels,
+      );
+
       // Idempotency: a BullMQ retry re-runs this whole processor. Reuse an
       // existing child for (source, language) so a retry never creates a
       // duplicate translated job.
-      const [existingChild] = (await db
+      const childCandidates = (await db
         .select()
         .from(tutorialJobs)
-        .where(
-          and(
-            eq(tutorialJobs.source_job_id, source.id),
-            eq(tutorialJobs.language, targetLanguage),
-          ),
-        )
-        .limit(1)) as TutorialJob[];
+        .where(eq(tutorialJobs.source_job_id, source.id))) as TutorialJob[];
+      const existingChildren = childCandidates.filter(
+        (candidate) =>
+          normalizeTutorialLanguage(candidate.language) === targetLanguage,
+      );
+      if (existingChildren.length > 1) {
+        throw new Error(
+          `Translation child for ${source.id} / ${targetLanguage} is ambiguous (${existingChildren.length} matches)`,
+        );
+      }
+      const existingChild = existingChildren[0];
 
       if (existingChild && existingChild.status === "COMPLETED") {
+        if (existingChild.channel_id !== targetChannel.id) {
+          throw new Error(
+            `Completed translation ${existingChild.id} is assigned to the wrong channel; expected ${targetChannel.id}`,
+          );
+        }
         console.log(
           JSON.stringify({
             level: "info",
@@ -631,20 +659,8 @@ export function createTutorialTranslateProcessor(
 
       // 3c) Route the child to the TARGET-LANGUAGE channel (e.g. German
       //     translations → the German channel) so Drive filing and the future
-      //     uploader target the right brand. Falls back to the source channel.
-      let targetChannelId = source.channel_id;
-      const [langChannel] = await db
-        .select({ id: channels.id })
-        .from(channels)
-        .where(
-          and(
-            eq(channels.language, targetLanguage),
-            eq(channels.accepts_tutorials, true),
-          ),
-        )
-        .limit(1);
-      if (langChannel) targetChannelId = langChannel.id;
-
+      //     uploader target the right brand. Ambiguous/missing routing already
+      //     failed above; the English source channel is never a fallback.
       // 4) Create or reuse the CHILD job (reuses the SOURCE recording).
       if (existingChild) {
         childId = existingChild.id;
@@ -658,7 +674,7 @@ export function createTutorialTranslateProcessor(
           thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
           tts_provider: ttsProvider,
           tts_voice: ttsVoice,
-          channel_id: targetChannelId,
+          channel_id: targetChannel.id,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
@@ -683,62 +699,13 @@ export function createTutorialTranslateProcessor(
           tts_provider: ttsProvider,
           tts_voice: ttsVoice,
           voice_settings: source.voice_settings ?? undefined,
-          channel_id: targetChannelId,
+          channel_id: targetChannel.id,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
           progress: 50,
         });
         childId = child.id;
-      }
-
-      // A VA can prepare and approve all localized thumbnails before this
-      // localized video/TTS job exists. Those early assets live on the English
-      // source keyed by target language. Bind the approved one to the child as
-      // soon as the child is created so splice and Drive delivery use it and do
-      // not generate a second, unrelated thumbnail later.
-      const [alreadyBoundThumbnail] = await db
-        .select({ id: thumbnails.id })
-        .from(thumbnails)
-        .where(
-          and(
-            eq(thumbnails.subject_kind, "tutorial_job"),
-            eq(thumbnails.subject_id, childId),
-          ),
-        )
-        .limit(1);
-      if (!alreadyBoundThumbnail) {
-        const [preparedThumbnail] = await db
-          .select()
-          .from(thumbnails)
-          .where(
-            and(
-              eq(thumbnails.subject_kind, "tutorial_job"),
-              eq(thumbnails.subject_id, source.id),
-              eq(thumbnails.language, targetLanguage),
-              eq(thumbnails.status, "completed"),
-            ),
-          )
-          .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
-          .limit(1);
-        if (preparedThumbnail) {
-          const {
-            id: preparedId,
-            subject_id: _preparedSubjectId,
-            channel_id: _preparedChannelId,
-            created_at: _preparedCreatedAt,
-            updated_at: _preparedUpdatedAt,
-            ...preparedFields
-          } = preparedThumbnail;
-          await createThumbnailRecord(db, {
-            ...preparedFields,
-            subject_id: childId,
-            channel_id: targetChannelId,
-            parent_thumbnail_id: preparedId,
-            language: targetLanguage,
-            is_selected: true,
-          });
-        }
       }
 
       console.log(
@@ -759,7 +726,7 @@ export function createTutorialTranslateProcessor(
           ttsProvider,
           ttsVoice,
           voiceSettings: source.voice_settings ?? null,
-          channelId: source.channel_id,
+          channelId: targetChannel.id,
         });
 
       // 6) Mark the child ready for splice (AWAITING_UPLOAD is the state

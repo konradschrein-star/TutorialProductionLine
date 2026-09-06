@@ -38,12 +38,17 @@ const LANGUAGES = [
   "Swedish",
 ] as const;
 
-const INITIAL_VARIANT_TEXT: Record<(typeof LANGUAGES)[number], string> = {
-  English: "UPLOAD VIDEO",
-  German: "VIDEO HOCHLADEN",
-  French: "IMPORTER VIDÉO",
-  Italian: "CARICA VIDEO",
-  Swedish: "LADDA UPP VIDEO",
+interface VariantCopy {
+  top: string;
+  bottom: string;
+}
+
+const INITIAL_VARIANT_COPY: Record<(typeof LANGUAGES)[number], VariantCopy> = {
+  English: { top: "", bottom: "" },
+  German: { top: "", bottom: "" },
+  French: { top: "", bottom: "" },
+  Italian: { top: "", bottom: "" },
+  Swedish: { top: "", bottom: "" },
 };
 
 const FONT_OPTIONS = [
@@ -71,12 +76,30 @@ const DEFAULT_BGS: BgOption[] = [
   { name: "Neon Glow Studio", url: "/background/bg_6_322338.jpg" },
   { name: "Modern Minimal Tech", url: "/background/bg_9_5717314.jpg" },
   // Built-in CSS studio gradients — no assets required.
-  { name: "Dark Slate", css: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)" },
-  { name: "Soft Blue", css: "linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%)" },
-  { name: "Warm Sunset", css: "linear-gradient(135deg, #f97316 0%, #b91c1c 100%)" },
-  { name: "Fresh Green", css: "linear-gradient(135deg, #10b981 0%, #065f46 100%)" },
-  { name: "Royal Purple", css: "linear-gradient(135deg, #8b5cf6 0%, #3b0764 100%)" },
-  { name: "Neutral Gray", css: "linear-gradient(135deg, #9ca3af 0%, #374151 100%)" },
+  {
+    name: "Dark Slate",
+    css: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
+  },
+  {
+    name: "Soft Blue",
+    css: "linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%)",
+  },
+  {
+    name: "Warm Sunset",
+    css: "linear-gradient(135deg, #f97316 0%, #b91c1c 100%)",
+  },
+  {
+    name: "Fresh Green",
+    css: "linear-gradient(135deg, #10b981 0%, #065f46 100%)",
+  },
+  {
+    name: "Royal Purple",
+    css: "linear-gradient(135deg, #8b5cf6 0%, #3b0764 100%)",
+  },
+  {
+    name: "Neutral Gray",
+    css: "linear-gradient(135deg, #9ca3af 0%, #374151 100%)",
+  },
 ];
 
 // Per-language display order + flag emoji for the grouped PERSONAS library.
@@ -108,16 +131,33 @@ const LANG_NAME_TO_CODE: Record<string, string> = {
 };
 
 const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
-  en: "English", english: "English",
-  de: "German", german: "German",
-  fr: "French", french: "French",
-  it: "Italian", italian: "Italian",
-  sv: "Swedish", swedish: "Swedish",
+  en: "English",
+  english: "English",
+  de: "German",
+  german: "German",
+  fr: "French",
+  french: "French",
+  it: "Italian",
+  italian: "Italian",
+  sv: "Swedish",
+  swedish: "Swedish",
 };
 
 interface ThumbnailBundle {
   rootId: string;
-  variants: Array<{ id: string; language: string; title: string; status: string; videoUrl: string; headline: string | null; approved: boolean }>;
+  ready: boolean;
+  variants: Array<{
+    id: string | null;
+    language: string;
+    title: string | null;
+    status: string | null;
+    videoUrl: string | null;
+    thumbnailTextTop: string | null;
+    thumbnailTextBottom: string | null;
+    approved: boolean;
+    ready: boolean;
+    reasons: string[];
+  }>;
 }
 
 // Rebuilt from the ACTUAL files present in apps/hub-web/public/<folder>/.
@@ -329,49 +369,135 @@ const RAW_PERSONAS: Record<string, { name: string; url: string }[]> = {
 // Legacy UUID/persona uploads were different people from the established
 // language hosts. Keep one person per language and offer only that person's
 // named pose set (pointing, thinking, smiling, etc.).
-const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> = Object.fromEntries(
-  Object.entries(RAW_PERSONAS).map(([language, personas]) => [
-    language,
-    personas.filter((persona) => !/(removalai|persona_|\/new_)/i.test(persona.url)),
-  ]),
-);
+const DEFAULT_PERSONAS: Record<string, { name: string; url: string }[]> =
+  Object.fromEntries(
+    Object.entries(RAW_PERSONAS).map(([language, personas]) => [
+      language,
+      personas.filter(
+        (persona) => !/(removalai|persona_|\/new_)/i.test(persona.url),
+      ),
+    ]),
+  );
 
 const ALL_APP_LOGOS = [
-  "asana.png", "blender.png", "calendly.png", "cashapp.png", "ChatGPT-Logo.png",
-  "clickup.png", "cloudflare.png", "davinciresolve.png", "discord.png", "dropbox.png",
-  "ebay.png", "epicgames.png", "etsy.png", "facebook.png", "figma.png",
-  "gimp.png", "github.png", "gmail.png", "googlecalendar.png", "googlechrome.png",
-  "googledocs.png", "googledrive.png", "googlemaps.png", "googlemeet.png", "googlephotos.png",
-  "googlesheets.png", "gumroad.png", "icloud.png", "imessage.png", "inkscape.png",
-  "instagram.png", "krita.png", "macos.png", "mailchimp.png", "namecheap.png",
-  "netflix.png", "netlify.png", "notion.png", "obsidian.png", "obsstudio.png",
-  "paypal.png", "pinterest.png", "playstation.png", "reddit.png", "replit.png",
-  "roblox.png", "safari.png", "shopify.png", "snapchat.png", "spotify.png",
-  "steam.png", "streamlabs.png", "stripe.png", "telegram.png", "tiktok.png",
-  "todoist.png", "trello.png", "twitch.png", "venmo.png", "vercel.png",
-  "whatsapp.png", "wix.png", "woocommerce.png", "wordpress.png", "youtube.png",
-  "youtubestudio.png", "zapier.png", "zelle.png", "zoom.png",
+  "asana.png",
+  "blender.png",
+  "calendly.png",
+  "cashapp.png",
+  "ChatGPT-Logo.png",
+  "clickup.png",
+  "cloudflare.png",
+  "davinciresolve.png",
+  "discord.png",
+  "dropbox.png",
+  "ebay.png",
+  "epicgames.png",
+  "etsy.png",
+  "facebook.png",
+  "figma.png",
+  "gimp.png",
+  "github.png",
+  "gmail.png",
+  "googlecalendar.png",
+  "googlechrome.png",
+  "googledocs.png",
+  "googledrive.png",
+  "googlemaps.png",
+  "googlemeet.png",
+  "googlephotos.png",
+  "googlesheets.png",
+  "gumroad.png",
+  "icloud.png",
+  "imessage.png",
+  "inkscape.png",
+  "instagram.png",
+  "krita.png",
+  "macos.png",
+  "mailchimp.png",
+  "namecheap.png",
+  "netflix.png",
+  "netlify.png",
+  "notion.png",
+  "obsidian.png",
+  "obsstudio.png",
+  "paypal.png",
+  "pinterest.png",
+  "playstation.png",
+  "reddit.png",
+  "replit.png",
+  "roblox.png",
+  "safari.png",
+  "shopify.png",
+  "snapchat.png",
+  "spotify.png",
+  "steam.png",
+  "streamlabs.png",
+  "stripe.png",
+  "telegram.png",
+  "tiktok.png",
+  "todoist.png",
+  "trello.png",
+  "twitch.png",
+  "venmo.png",
+  "vercel.png",
+  "whatsapp.png",
+  "wix.png",
+  "woocommerce.png",
+  "wordpress.png",
+  "youtube.png",
+  "youtubestudio.png",
+  "zapier.png",
+  "zelle.png",
+  "zoom.png",
 ];
 
 const ALL_SYMBOLS = [
-  "curved-arrow.png", "alert-circle.png", "alert-triangle.png", "badge-check.png",
-  "badge.png", "bell-ring.png", "bell.png", "camera.png", "check-circle.png",
-  "clock.png", "cloud.png", "code.png", "crown.png", "database.png",
-  "diamond.png", "dollar-sign.png", "eye.png", "file-text.png", "flame.png",
-  "gift.png", "globe.png", "heart.png", "key.png", "laptop.png",
-  "lightbulb.png", "lock.png", "megaphone.png", "mic.png", "play.png",
-  "rocket.png", "shield.png", "sparkle.png", "sparkles.png", "star.png",
-  "target.png", "thumbs-up.png", "trending-up.png", "trophy.png", "tv.png",
-  "video.png", "wand-sparkles.png", "zap.png",
+  "curved-arrow.png",
+  "alert-circle.png",
+  "alert-triangle.png",
+  "badge-check.png",
+  "badge.png",
+  "bell-ring.png",
+  "bell.png",
+  "camera.png",
+  "check-circle.png",
+  "clock.png",
+  "cloud.png",
+  "code.png",
+  "crown.png",
+  "database.png",
+  "diamond.png",
+  "dollar-sign.png",
+  "eye.png",
+  "file-text.png",
+  "flame.png",
+  "gift.png",
+  "globe.png",
+  "heart.png",
+  "key.png",
+  "laptop.png",
+  "lightbulb.png",
+  "lock.png",
+  "megaphone.png",
+  "mic.png",
+  "play.png",
+  "rocket.png",
+  "shield.png",
+  "sparkle.png",
+  "sparkles.png",
+  "star.png",
+  "target.png",
+  "thumbs-up.png",
+  "trending-up.png",
+  "trophy.png",
+  "tv.png",
+  "video.png",
+  "wand-sparkles.png",
+  "zap.png",
 ];
 
 type ElementType =
-  | "TEXT"
-  | "PERSON"
-  | "LOGO"
-  | "SYMBOL"
-  | "BACKGROUND"
-  | "UPLOAD";
+  "TEXT" | "PERSON" | "LOGO" | "SYMBOL" | "BACKGROUND" | "UPLOAD";
 
 interface ThumbnailElement {
   id: string;
@@ -408,7 +534,8 @@ interface CustomThumbnailAsset {
   createdAt: string;
 }
 
-type LibraryTab = "CUSTOM" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "LAYERS";
+type LibraryTab =
+  "CUSTOM" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "LAYERS";
 
 // ── localStorage helpers (replicate facade StorageService, plain localStorage) ──
 function readCustomAssets(): CustomThumbnailAsset[] {
@@ -515,39 +642,68 @@ function initialElements(): ThumbnailElement[] {
   ];
 }
 
-function fallbackThumbnailWords(title: string): string {
-  return title
-    .replace(/^(how to|so |comment |come |come si |hoe |sådan |så )/i, "")
-    .replace(/\s+[-–—|:].*$/, "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(" ")
-    .toUpperCase();
-}
-
 function logoForTitle(title: string): string | undefined {
   const normalisedTitle = title.toLowerCase().replace(/[^a-z0-9]/g, "");
   const filename = ALL_APP_LOGOS.find((name) =>
-    normalisedTitle.includes(name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "")),
+    normalisedTitle.includes(
+      name
+        .replace(/\.[^.]+$/, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, ""),
+    ),
   );
   return filename ? `/app_logos_png/${filename}` : undefined;
 }
 
-function ThumbnailPreview({ elements, portrait }: { elements: ThumbnailElement[]; portrait: boolean }) {
+function ThumbnailPreview({
+  elements,
+  portrait,
+}: {
+  elements: ThumbnailElement[];
+  portrait: boolean;
+}) {
   const sourceWidth = portrait ? 450 : 800;
   const sourceHeight = portrait ? 800 : 450;
   const width = portrait ? 170 : 284;
   const scale = width / sourceWidth;
   return (
-    <div style={{ position: "relative", width, height: sourceHeight * scale, overflow: "hidden", background: "#000", borderRadius: 6 }}>
+    <div
+      style={{
+        position: "relative",
+        width,
+        height: sourceHeight * scale,
+        overflow: "hidden",
+        background: "#000",
+        borderRadius: 6,
+      }}
+    >
       {elements.map((element) => {
         if (element.type === "BACKGROUND") {
           return element.url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img key={element.id} src={element.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: element.zIndex }} />
+            <img
+              key={element.id}
+              src={element.url}
+              alt=""
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                zIndex: element.zIndex,
+              }}
+            />
           ) : (
-            <div key={element.id} style={{ position: "absolute", inset: 0, background: element.css, zIndex: element.zIndex }} />
+            <div
+              key={element.id}
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: element.css,
+                zIndex: element.zIndex,
+              }}
+            />
           );
         }
         const common: React.CSSProperties = {
@@ -557,19 +713,43 @@ function ThumbnailPreview({ elements, portrait }: { elements: ThumbnailElement[]
           width: element.width * scale,
           height: element.height * scale,
           zIndex: element.zIndex,
-          transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
+          transform: element.rotation
+            ? `rotate(${element.rotation}deg)`
+            : undefined,
           transformOrigin: "center",
         };
         if (element.type === "TEXT") {
           return (
-            <div key={element.id} style={{ ...common, display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", color: element.color || "#fff", fontFamily: element.fontFamily || "Impact", fontStyle: element.fontStyle || "italic", fontWeight: element.fontWeight || 800, fontSize: (element.fontSize || 64) * scale, lineHeight: 1, WebkitTextStroke: `${(element.strokeWidth ?? 8) * scale}px ${element.strokeColor || "#000"}`, paintOrder: "stroke fill" }}>
+            <div
+              key={element.id}
+              style={{
+                ...common,
+                display: "flex",
+                alignItems: "center",
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                color: element.color || "#fff",
+                fontFamily: element.fontFamily || "Impact",
+                fontStyle: element.fontStyle || "italic",
+                fontWeight: element.fontWeight || 800,
+                fontSize: (element.fontSize || 64) * scale,
+                lineHeight: 1,
+                WebkitTextStroke: `${(element.strokeWidth ?? 8) * scale}px ${element.strokeColor || "#000"}`,
+                paintOrder: "stroke fill",
+              }}
+            >
               {element.text}
             </div>
           );
         }
         return element.url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={element.id} src={element.url} alt="" style={{ ...common, objectFit: "contain" }} />
+          <img
+            key={element.id}
+            src={element.url}
+            alt=""
+            style={{ ...common, objectFit: "contain" }}
+          />
         ) : null;
       })}
     </div>
@@ -595,9 +775,8 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isBatchExporting, setIsBatchExporting] = useState(false);
   const [title, setTitle] = useState("");
-  const [variantText, setVariantText] = useState<Record<string, string>>(
-    INITIAL_VARIANT_TEXT,
-  );
+  const [variantCopy, setVariantCopy] =
+    useState<Record<string, VariantCopy>>(INITIAL_VARIANT_COPY);
   const [bundle, setBundle] = useState<ThumbnailBundle | null>(null);
   const [savingApproval, setSavingApproval] = useState(false);
   const [assetCursor, setAssetCursor] = useState<string | null>(null);
@@ -607,12 +786,27 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   useEffect(() => {
     setLoadingAssets(true);
     fetch("/api/thumbnails/assets?limit=36")
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not load shared assets")))
-      .then((data: { assets: CustomThumbnailAsset[]; hasMore: boolean; nextCursor: string | null }) => {
-        setCustomAssets((local) => [...data.assets, ...local.filter((item) => !data.assets.some((server) => server.id === item.id))]);
-        setAssetHasMore(data.hasMore);
-        setAssetCursor(data.nextCursor);
-      })
+      .then((response) =>
+        response.ok
+          ? response.json()
+          : Promise.reject(new Error("Could not load shared assets")),
+      )
+      .then(
+        (data: {
+          assets: CustomThumbnailAsset[];
+          hasMore: boolean;
+          nextCursor: string | null;
+        }) => {
+          setCustomAssets((local) => [
+            ...data.assets,
+            ...local.filter(
+              (item) => !data.assets.some((server) => server.id === item.id),
+            ),
+          ]);
+          setAssetHasMore(data.hasMore);
+          setAssetCursor(data.nextCursor);
+        },
+      )
       .catch(() => undefined)
       .finally(() => setLoadingAssets(false));
   }, []);
@@ -621,10 +815,21 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     if (!assetCursor || loadingAssets) return;
     setLoadingAssets(true);
     try {
-      const response = await fetch(`/api/thumbnails/assets?limit=36&cursor=${encodeURIComponent(assetCursor)}`);
+      const response = await fetch(
+        `/api/thumbnails/assets?limit=36&cursor=${encodeURIComponent(assetCursor)}`,
+      );
       if (!response.ok) throw new Error("Could not load more assets");
-      const data = await response.json() as { assets: CustomThumbnailAsset[]; hasMore: boolean; nextCursor: string | null };
-      setCustomAssets((previous) => [...previous, ...data.assets.filter((asset) => !previous.some((item) => item.id === asset.id))]);
+      const data = (await response.json()) as {
+        assets: CustomThumbnailAsset[];
+        hasMore: boolean;
+        nextCursor: string | null;
+      };
+      setCustomAssets((previous) => [
+        ...previous,
+        ...data.assets.filter(
+          (asset) => !previous.some((item) => item.id === asset.id),
+        ),
+      ]);
       setAssetHasMore(data.hasMore);
       setAssetCursor(data.nextCursor);
     } catch (error) {
@@ -637,47 +842,79 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   useEffect(() => {
     if (!jobId) return;
     fetch(`/api/production/jobs/${jobId}/thumbnail-bundle`)
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not load video")))
+      .then((response) =>
+        response.ok
+          ? response.json()
+          : Promise.reject(new Error("Could not load video")),
+      )
       .then((data: ThumbnailBundle) => {
         setBundle(data);
-        const words = { ...INITIAL_VARIANT_TEXT } as Record<string, string>;
+        const copy = Object.fromEntries(
+          Object.entries(INITIAL_VARIANT_COPY).map(([language, lines]) => [
+            language,
+            { ...lines },
+          ]),
+        ) as Record<string, VariantCopy>;
         for (const variant of data.variants) {
           const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()];
-          if (language) words[language] = variant.headline || fallbackThumbnailWords(variant.title);
+          if (language) {
+            copy[language] = {
+              top: variant.thumbnailTextTop ?? "",
+              bottom: variant.thumbnailTextBottom ?? "",
+            };
+          }
         }
-        setVariantText(words);
-        const english = data.variants.find((variant) => variant.language.toLowerCase() === "en") ?? data.variants[0];
-        if (english) {
+        setVariantCopy(copy);
+        const english =
+          data.variants.find(
+            (variant) => variant.language.toLowerCase() === "en",
+          ) ?? data.variants[0];
+        if (english?.title) {
           setTitle(english.title);
           const logo = logoForTitle(english.title);
-          setElements((previous) => previous
-            .filter((element) => logo || element.id !== "logo-1")
-            .map((element) => {
-            if (element.id === "text-top") return { ...element, text: words.English };
-            if (element.id === "text-bottom") return { ...element, text: "" };
-            if (element.id === "logo-1") return logo ? { ...element, url: logo } : element;
-            return element;
-          }));
+          setElements((previous) =>
+            previous
+              .filter((element) => logo || element.id !== "logo-1")
+              .map((element) => {
+                if (element.id === "text-top")
+                  return { ...element, text: copy.English?.top ?? "" };
+                if (element.id === "text-bottom")
+                  return { ...element, text: copy.English?.bottom ?? "" };
+                if (element.id === "logo-1")
+                  return logo ? { ...element, url: logo } : element;
+                return element;
+              }),
+          );
         }
       })
-      .catch((error) => alert(error instanceof Error ? error.message : String(error)));
+      .catch((error) =>
+        alert(error instanceof Error ? error.message : String(error)),
+      );
   }, [jobId]);
 
   const selectedElement = elements.find((el) => el.id === selectedId);
-  const activeVariant = bundle?.variants.find(
-    (variant) => (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === activeLang,
-  ) ?? bundle?.variants[0];
+  const activeVariant =
+    bundle?.variants.find(
+      (variant) =>
+        (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") ===
+        activeLang,
+    ) ?? bundle?.variants[0];
   const availableLanguages = bundle
-    ? LANGUAGES.filter((language) => bundle.variants.some(
-        (variant) => (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === language,
-      ))
+    ? LANGUAGES.filter((language) =>
+        bundle.variants.some(
+          (variant) =>
+            (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") ===
+            language,
+        ),
+      )
     : [...LANGUAGES];
 
   const filteredLogos = useMemo(
     () =>
       ALL_APP_LOGOS.filter(
         (name) =>
-          !searchQuery || name.toLowerCase().includes(searchQuery.toLowerCase()),
+          !searchQuery ||
+          name.toLowerCase().includes(searchQuery.toLowerCase()),
       ),
     [searchQuery],
   );
@@ -696,14 +933,16 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   const displayScale = aspectRatio === "9:16" ? 0.65 : 1;
 
   const previewLayouts = availableLanguages.map((language) => {
-    const englishSource = activeLang === "English"
-      ? elements
-      : (layoutsRef.current.English ?? elements);
+    const englishSource =
+      activeLang === "English"
+        ? elements
+        : (layoutsRef.current.English ?? elements);
     return {
       language,
-      elements: language === activeLang
-        ? elements
-        : languageLayout(language, englishSource),
+      elements:
+        language === activeLang
+          ? elements
+          : languageLayout(language, englishSource),
     };
   });
 
@@ -711,42 +950,73 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     const hosts = DEFAULT_PERSONAS[language] ?? [];
     if (hosts.length === 0) return undefined;
     const seed = `${title}:${language}`;
-    const hash = [...seed].reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 7);
+    const hash = [...seed].reduce(
+      (total, char) => (total * 31 + char.charCodeAt(0)) >>> 0,
+      7,
+    );
     return hosts[hash % hosts.length]?.url;
   }
 
-  function languageLayout(language: string, source: ThumbnailElement[]): ThumbnailElement[] {
+  function languageLayout(
+    language: string,
+    source: ThumbnailElement[],
+  ): ThumbnailElement[] {
     const saved = layoutsRef.current[language];
-    if (saved) return saved.map((element) => ({ ...element }));
     const hostUrl = hostForLanguage(language);
-    const words = (variantText[language] ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 3).join(" ").toUpperCase();
-    return source.map((element) => {
+    const copy = variantCopy[language] ?? { top: "", bottom: "" };
+    const base = saved ?? source;
+    return base.map((element) => {
       if (element.id === "text-top") {
-        const fitted = Math.max(24, Math.min(element.fontSize ?? 64, Math.floor((element.width * 1.45) / Math.max(1, words.length))));
-        return { ...element, text: words, fontSize: fitted };
+        const fitted = Math.max(
+          24,
+          Math.min(
+            element.fontSize ?? 64,
+            Math.floor((element.width * 1.45) / Math.max(1, copy.top.length)),
+          ),
+        );
+        return { ...element, text: copy.top, fontSize: fitted };
       }
-      if (element.id === "text-bottom") return { ...element, text: "" };
-      if (element.id === "person-1" && hostUrl) return { ...element, url: hostUrl };
+      if (element.id === "text-bottom") {
+        const fitted = Math.max(
+          24,
+          Math.min(
+            element.fontSize ?? 64,
+            Math.floor(
+              (element.width * 1.45) / Math.max(1, copy.bottom.length),
+            ),
+          ),
+        );
+        return { ...element, text: copy.bottom, fontSize: fitted };
+      }
+      if (element.id === "person-1" && hostUrl && !saved) {
+        return { ...element, url: hostUrl };
+      }
       return { ...element };
     });
   }
 
   function switchLanguage(language: string) {
     if (language === activeLang) return;
-    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
-    const englishSource = activeLang === "English"
-      ? elements
-      : (layoutsRef.current["English"] ?? elements);
+    layoutsRef.current[activeLang] = elements.map((element) => ({
+      ...element,
+    }));
+    const englishSource =
+      activeLang === "English"
+        ? elements
+        : (layoutsRef.current["English"] ?? elements);
     setElements(languageLayout(language, englishSource));
     setSelectedId(null);
     setActiveLang(language);
   }
 
   function selectPersona(language: string, url: string) {
-    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
-    const source = language === activeLang
-      ? elements
-      : languageLayout(language, layoutsRef.current["English"] ?? elements);
+    layoutsRef.current[activeLang] = elements.map((element) => ({
+      ...element,
+    }));
+    const source =
+      language === activeLang
+        ? elements
+        : languageLayout(language, layoutsRef.current["English"] ?? elements);
     const next = source.map((element) =>
       element.id === "person-1" ? { ...element, url } : { ...element },
     );
@@ -778,7 +1048,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     const move = (pointer: PointerEvent) => {
       const angle = Math.atan2(pointer.clientY - cy, pointer.clientX - cx);
       patchElement(element.id, {
-        rotation: Math.round(initialRotation + ((angle - initialAngle) * 180) / Math.PI),
+        rotation: Math.round(
+          initialRotation + ((angle - initialAngle) * 180) / Math.PI,
+        ),
       });
     };
     const stop = () => {
@@ -816,9 +1088,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   function applyBackground(bg: BgOption) {
     setElements((prev) =>
       prev.map((el) =>
-        el.type === "BACKGROUND"
-          ? { ...el, url: bg.url, css: bg.css }
-          : el,
+        el.type === "BACKGROUND" ? { ...el, url: bg.url, css: bg.css } : el,
       ),
     );
   }
@@ -888,11 +1158,27 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     form.append("file", file);
     form.append("category", category);
     try {
-      const response = await fetch("/api/thumbnails/assets", { method: "POST", body: form });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({})) as { error?: string }).error || "Upload failed");
-      const { asset } = await response.json() as { asset: CustomThumbnailAsset };
+      const response = await fetch("/api/thumbnails/assets", {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok)
+        throw new Error(
+          ((await response.json().catch(() => ({}))) as { error?: string })
+            .error || "Upload failed",
+        );
+      const { asset } = (await response.json()) as {
+        asset: CustomThumbnailAsset;
+      };
       setCustomAssets((previous) => [asset, ...previous]);
-      handleAddAsset(category === "BGS" ? "BACKGROUND" : category === "PERSONAS" ? "PERSON" : "LOGO", asset.url);
+      handleAddAsset(
+        category === "BGS"
+          ? "BACKGROUND"
+          : category === "PERSONAS"
+            ? "PERSON"
+            : "LOGO",
+        asset.url,
+      );
       return;
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
@@ -926,7 +1212,10 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
   async function handleDeleteCustomAsset(id: string) {
     if (!id.startsWith("custom_")) {
-      const response = await fetch(`/api/thumbnails/assets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const response = await fetch(
+        `/api/thumbnails/assets?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
       if (!response.ok) {
         alert("Could not delete the shared asset");
         return;
@@ -963,34 +1252,27 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
   async function handleBatchExportZip() {
     if (!canvasRef.current) return;
+    if (bundle && !bundle.ready) {
+      alert(
+        "The five-language bundle is incomplete. Resolve the listed video, metadata, or localized-copy blockers before exporting.",
+      );
+      return;
+    }
     setIsBatchExporting(true);
     setSelectedId(null);
     // Snapshot the current headline text so we can restore it afterwards.
     const originalTop = elements.find((el) => el.id === "text-top")?.text;
     const originalBottom = elements.find((el) => el.id === "text-bottom")?.text;
     const originalPerson = elements.find((el) => el.id === "person-1")?.url;
-    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    layoutsRef.current[activeLang] = elements.map((element) => ({
+      ...element,
+    }));
     const englishSource = layoutsRef.current["English"] ?? elements;
     try {
       const zip = new JSZip();
       for (const lang of availableLanguages) {
-        const words = (variantText[lang] ?? "")
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 3)
-          .join(" ")
-          .toUpperCase();
-        const hostUrl = hostForLanguage(lang);
         const layout = languageLayout(lang, englishSource);
-        setElements(
-          layout.map((el) => {
-            if (el.id === "text-top") return { ...el, text: words };
-            if (el.id === "text-bottom") return { ...el, text: "" };
-            if (el.id === "person-1" && hostUrl) return { ...el, url: hostUrl };
-            return el;
-          }),
-        );
+        setElements(layout);
         // let React flush the text swap before capturing
         await new Promise((r) => setTimeout(r, 250));
         const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
@@ -1002,7 +1284,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       const zipContent = await zip.generateAsync({ type: "blob" });
       saveAs(
         zipContent,
-        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_6channels.zip`,
+        `thumbnail_pack_${(title || "tutorial").replace(/[^a-z0-9]/gi, "_")}_5channels.zip`,
       );
     } catch (err) {
       console.error("Batch export failed:", err);
@@ -1038,25 +1320,33 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
   async function saveVariantApproval(
     variant: ThumbnailBundle["variants"][number],
-    language: string,
+    blob: Blob,
+    layout: ThumbnailElement[],
   ) {
-    const blob = await captureCanvas();
+    if (!variant.id)
+      throw new Error(`${variant.language}: language variant job is missing`);
     const body = new FormData();
     body.append("file", blob, `thumbnail-${variant.language}.png`);
-    body.append("jobId", variant.id);
-    body.append("language", variant.language);
-    body.append("headline", variantText[language] ?? "");
-    body.append("aspectRatio", aspectRatio);
-    const response = await fetch("/api/thumbnails/manual", { method: "POST", body });
+    body.append("layout", JSON.stringify({ aspectRatio, elements: layout }));
+    const response = await fetch(
+      `/api/production/jobs/${variant.id}/thumbnail/manual`,
+      { method: "POST", body },
+    );
     if (!response.ok) {
-      throw new Error((await response.json().catch(() => null))?.error ?? "Save failed");
+      const failure = await response.json().catch(() => null);
+      const reasons = Array.isArray(failure?.reasons)
+        ? `: ${failure.reasons.join("; ")}`
+        : "";
+      throw new Error(`${failure?.error ?? "Save failed"}${reasons}`);
     }
   }
 
   async function saveApproved(all: boolean) {
     if (!bundle) return;
     setSavingApproval(true);
-    layoutsRef.current[activeLang] = elements.map((element) => ({ ...element }));
+    layoutsRef.current[activeLang] = elements.map((element) => ({
+      ...element,
+    }));
     const originalLanguage = activeLang;
     const englishSource = layoutsRef.current.English ?? elements;
     try {
@@ -1064,17 +1354,57 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         ? bundle.variants
         : bundle.variants.filter(
             (variant) =>
-              (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") === activeLang,
+              (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ??
+                "English") === activeLang,
           );
+      const blocked = variants.filter(
+        (variant) => !variant.id || !variant.ready,
+      );
+      if (blocked.length > 0) {
+        throw new Error(
+          blocked
+            .map(
+              (variant) =>
+                `${variant.language}: ${variant.reasons.join("; ") || "variant is not ready"}`,
+            )
+            .join("\n"),
+        );
+      }
+      const rendered: Array<{
+        variant: ThumbnailBundle["variants"][number];
+        blob: Blob;
+        layout: ThumbnailElement[];
+      }> = [];
       for (const variant of variants) {
-        const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
+        const language =
+          CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
         const layout = languageLayout(language, englishSource);
         setElements(layout);
         setActiveLang(language);
         await new Promise((resolve) => setTimeout(resolve, 180));
-        await saveVariantApproval(variant, language);
+        rendered.push({ variant, blob: await captureCanvas(), layout });
       }
-      alert(all ? "All video thumbnails were saved and approved." : `${originalLanguage} thumbnail was saved and approved.`);
+      for (const item of rendered) {
+        await saveVariantApproval(item.variant, item.blob, item.layout);
+      }
+      const savedIds = new Set(rendered.map((item) => item.variant.id));
+      setBundle((current) =>
+        current
+          ? {
+              ...current,
+              variants: current.variants.map((variant) =>
+                savedIds.has(variant.id)
+                  ? { ...variant, approved: true }
+                  : variant,
+              ),
+            }
+          : current,
+      );
+      alert(
+        all
+          ? "All video thumbnails were saved and approved."
+          : `${originalLanguage} thumbnail was saved and approved.`,
+      );
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1113,41 +1443,217 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     <div>
       {bundle && (
         <GlassCard style={{ padding: 14, marginBottom: 14 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: "var(--v2-accent)", letterSpacing: "0.08em" }}>THUMBNAILS FOR THIS VIDEO</div>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.35fr) minmax(300px, 1fr)", gap: 18, marginTop: 10 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              color: "var(--v2-accent)",
+              letterSpacing: "0.08em",
+            }}
+          >
+            THUMBNAILS FOR THIS VIDEO
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(420px, 1.35fr) minmax(300px, 1fr)",
+              gap: 18,
+              marginTop: 10,
+            }}
+          >
             <div>
-              <div style={{ fontSize: 10, fontWeight: 800, color: TEXT_2, marginBottom: 7 }}>VIDEO YOU ARE WORKING ON · {activeLang.toUpperCase()}</div>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  color: TEXT_2,
+                  marginBottom: 7,
+                }}
+              >
+                VIDEO YOU ARE WORKING ON · {activeLang.toUpperCase()}
+              </div>
               {activeVariant && (
                 <>
-                  <video key={activeVariant.id} controls preload="metadata" src={activeVariant.videoUrl} style={{ display: "block", width: "100%", maxHeight: 330, background: "#000", borderRadius: 9 }} />
-                  <div style={{ marginTop: 8, fontSize: 13, color: TEXT_1, fontWeight: 750 }}>{activeVariant.title}</div>
+                  {activeVariant.videoUrl ? (
+                    <video
+                      key={activeVariant.id}
+                      controls
+                      preload="metadata"
+                      src={activeVariant.videoUrl}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        maxHeight: 330,
+                        background: "#000",
+                        borderRadius: 9,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        padding: 18,
+                        borderRadius: 9,
+                        background: "rgba(255,90,90,.09)",
+                        color: "#ffabab",
+                        fontSize: 12,
+                      }}
+                    >
+                      Localized video is missing.
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 13,
+                      color: TEXT_1,
+                      fontWeight: 750,
+                    }}
+                  >
+                    {activeVariant.title ?? "Localized title missing"}
+                  </div>
+                  {!activeVariant.ready && (
+                    <div
+                      style={{ marginTop: 6, color: "#ffabab", fontSize: 11 }}
+                    >
+                      {activeVariant.reasons.join(" · ")}
+                    </div>
+                  )}
                 </>
               )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: TEXT_2, letterSpacing: ".08em" }}>WORKFLOW</div>
-              {["1  Watch the video", "2  Adjust the layout and check every language", "3  Approve the finished thumbnails"].map((step) => (
-                <div key={step} style={{ padding: "9px 11px", borderRadius: 7, background: "rgba(255,255,255,.045)", color: TEXT_1, fontSize: 11 }}>{step}</div>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  color: TEXT_2,
+                  letterSpacing: ".08em",
+                }}
+              >
+                WORKFLOW
+              </div>
+              {[
+                "1  Watch the video",
+                "2  Adjust the layout and check every language",
+                "3  Approve the finished thumbnails",
+              ].map((step) => (
+                <div
+                  key={step}
+                  style={{
+                    padding: "9px 11px",
+                    borderRadius: 7,
+                    background: "rgba(255,255,255,.045)",
+                    color: TEXT_1,
+                    fontSize: 11,
+                  }}
+                >
+                  {step}
+                </div>
               ))}
-              <button type="button" disabled={savingApproval} onClick={() => void saveApproved(false)} style={{ ...panelBtn(true), padding: "11px 14px", marginTop: 4, background: "var(--v2-accent)", color: "#071000", fontSize: 12 }}>
-                {activeVariant?.approved ? `${activeLang} approved · Save changes` : `Approve ${activeLang} thumbnail`}
+              <button
+                type="button"
+                disabled={
+                  savingApproval || !activeVariant?.ready || !activeVariant.id
+                }
+                onClick={() => void saveApproved(false)}
+                style={{
+                  ...panelBtn(true),
+                  padding: "11px 14px",
+                  marginTop: 4,
+                  background: "var(--v2-accent)",
+                  color: "#071000",
+                  fontSize: 12,
+                }}
+              >
+                {activeVariant?.approved
+                  ? `${activeLang} approved · Save changes`
+                  : `Approve ${activeLang} thumbnail`}
               </button>
-              <button type="button" disabled={savingApproval} onClick={() => void saveApproved(true)} style={{ ...panelBtn(false), padding: "10px 14px", fontSize: 12 }}>
+              <button
+                type="button"
+                disabled={savingApproval || !bundle.ready}
+                onClick={() => void saveApproved(true)}
+                style={{
+                  ...panelBtn(false),
+                  padding: "10px 14px",
+                  fontSize: 12,
+                }}
+              >
                 Approve all {bundle.variants.length} language thumbnails
               </button>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10, overflowX: "auto", marginTop: 9 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              overflowX: "auto",
+              marginTop: 9,
+            }}
+          >
             {bundle.variants.map((variant) => {
-              const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
+              const language =
+                CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
               return (
-              <button type="button" onClick={() => switchLanguage(language)} key={variant.id} style={{ minWidth: 220, padding: 9, borderRadius: 8, border: language === activeLang ? "1px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.1)", background: language === activeLang ? "rgba(var(--v2-accent-rgb),.08)" : "transparent", textAlign: "left", cursor: "pointer" }}>
-                <div style={{ fontSize: 11, color: TEXT_1, fontWeight: 700 }}>{variant.language.toUpperCase()} · {variant.title}</div>
-                <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 10 }}>
-                  <a href={variant.videoUrl} target="_blank" rel="noreferrer" style={{ color: "var(--v2-accent)" }}>Watch video</a>
-                  <span style={{ color: variant.approved ? "#82e6aa" : TEXT_2 }}>{variant.approved ? "Approved" : "Needs approval"}</span>
-                </div>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => switchLanguage(language)}
+                  key={variant.language}
+                  style={{
+                    minWidth: 220,
+                    padding: 9,
+                    borderRadius: 8,
+                    border:
+                      language === activeLang
+                        ? "1px solid var(--v2-accent)"
+                        : "1px solid rgba(255,255,255,.1)",
+                    background:
+                      language === activeLang
+                        ? "rgba(var(--v2-accent-rgb),.08)"
+                        : "transparent",
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: TEXT_1, fontWeight: 700 }}>
+                    {variant.language.toUpperCase()} ·{" "}
+                    {variant.title ?? "Variant missing"}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      marginTop: 6,
+                      fontSize: 10,
+                    }}
+                  >
+                    {variant.videoUrl && (
+                      <a
+                        href={variant.videoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "var(--v2-accent)" }}
+                      >
+                        Watch video
+                      </a>
+                    )}
+                    <span
+                      style={{
+                        color: variant.ready
+                          ? variant.approved
+                            ? "#82e6aa"
+                            : TEXT_2
+                          : "#ffabab",
+                      }}
+                    >
+                      {variant.ready
+                        ? variant.approved
+                          ? "Approved"
+                          : "Needs approval"
+                        : variant.reasons.join(" · ")}
+                    </span>
+                  </div>
+                </button>
               );
             })}
           </div>
@@ -1165,7 +1671,14 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
           {/* Aspect toggle */}
           <div
             style={{
@@ -1205,12 +1718,20 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
               Manual Composer
             </div>
             <div style={{ fontSize: 10.5, color: TEXT_2 }}>
-              Adjust this video’s thumbnail, check its available languages, then approve delivery.
+              Adjust this video’s thumbnail, check its available languages, then
+              approve delivery.
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
           <button
             type="button"
             disabled={isExporting || isBatchExporting}
@@ -1226,18 +1747,24 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
               color: "var(--v2-accent)",
               fontSize: 11.5,
               fontWeight: 700,
-              cursor: isExporting || isBatchExporting ? "not-allowed" : "pointer",
+              cursor:
+                isExporting || isBatchExporting ? "not-allowed" : "pointer",
               opacity: isExporting || isBatchExporting ? 0.5 : 1,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 16 }}
+            >
               download
             </span>
             {isExporting ? "Exporting…" : "Download current PNG"}
           </button>
           <button
             type="button"
-            disabled={isBatchExporting || isExporting}
+            disabled={
+              isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+            }
             onClick={handleBatchExportZip}
             style={{
               display: "inline-flex",
@@ -1250,47 +1777,96 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
               color: "#0b0b0f",
               fontSize: 11.5,
               fontWeight: 800,
-              cursor: isBatchExporting || isExporting ? "not-allowed" : "pointer",
-              opacity: isBatchExporting || isExporting ? 0.6 : 1,
+              cursor:
+                isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+                  ? "not-allowed"
+                  : "pointer",
+              opacity:
+                isBatchExporting || isExporting || Boolean(bundle && !bundle.ready)
+                  ? 0.6
+                  : 1,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 16 }}
+            >
               folder_zip
             </span>
-            {isBatchExporting ? "Packaging ZIP…" : availableLanguages.length === 1 ? "Download ZIP" : `Download all ${availableLanguages.length} (ZIP)`}
+            {isBatchExporting
+              ? "Packaging ZIP…"
+              : availableLanguages.length === 1
+                ? "Download ZIP"
+                : `Download all ${availableLanguages.length} (ZIP)`}
           </button>
         </div>
       </GlassCard>
 
       <GlassCard style={{ padding: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: TEXT_1, marginBottom: 8 }}>
-          THUMBNAIL WORDS · MAXIMUM 3 WORDS PER LANGUAGE
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            color: TEXT_1,
+            marginBottom: 8,
+          }}
+        >
+          LOCALIZED TWO-LINE THUMBNAIL COPY
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(180px, 1fr))", gap: 8 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(180px, 1fr))",
+            gap: 8,
+          }}
+        >
           {availableLanguages.map((lang) => (
-            <label key={lang} style={{ display: "grid", gridTemplateColumns: "26px 1fr", gap: 6, alignItems: "center", padding: 5, borderRadius: 7, border: activeLang === lang ? "1px solid var(--v2-accent)" : "1px solid transparent" }}>
-              <button type="button" title={`Edit ${lang}`} onClick={() => switchLanguage(lang)} style={{ border: 0, background: "transparent", padding: 0, cursor: "pointer" }}>
+            <label
+              key={lang}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "26px 1fr",
+                gap: 6,
+                alignItems: "center",
+                padding: 5,
+                borderRadius: 7,
+                border:
+                  activeLang === lang
+                    ? "1px solid var(--v2-accent)"
+                    : "1px solid transparent",
+              }}
+            >
+              <button
+                type="button"
+                title={`Edit ${lang}`}
+                onClick={() => switchLanguage(lang)}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  padding: 0,
+                  cursor: "pointer",
+                }}
+              >
                 <FlagIcon code={LANG_NAME_TO_CODE[lang] ?? "en"} />
               </button>
-              <input
-                value={variantText[lang] ?? ""}
-                onFocus={() => switchLanguage(lang)}
-                onChange={(event) => {
-                  const value = event.target.value
-                    .split(/\s+/)
-                    .slice(0, 3)
-                    .join(" ");
-                  setVariantText((previous) => ({ ...previous, [lang]: value }));
-                  if (activeLang === lang) {
-                    setElements((previous) => previous.map((element) =>
-                      element.id === "text-top" ? { ...element, text: value.toUpperCase() } : element.id === "text-bottom" ? { ...element, text: "" } : element,
-                    ));
-                  }
-                }}
-                aria-label={`${lang} thumbnail words`}
-                title={lang}
-                style={inputStyle}
-              />
+              <div style={{ display: "grid", gap: 5 }}>
+                <input
+                  value={variantCopy[lang]?.top ?? ""}
+                  readOnly
+                  onFocus={() => switchLanguage(lang)}
+                  aria-label={`${lang} thumbnail top line`}
+                  title={`${lang} top line`}
+                  style={inputStyle}
+                />
+                <input
+                  value={variantCopy[lang]?.bottom ?? ""}
+                  readOnly
+                  onFocus={() => switchLanguage(lang)}
+                  aria-label={`${lang} thumbnail bottom line`}
+                  title={`${lang} bottom line`}
+                  style={inputStyle}
+                />
+              </div>
             </label>
           ))}
         </div>
@@ -1300,21 +1876,59 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           right and scroll as a single comparison row. This lets QA catch text
           overflow before localized narration/video rendering begins. */}
       <GlassCard style={{ padding: 12, marginTop: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: TEXT_1, marginBottom: 9 }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            color: TEXT_1,
+            marginBottom: 9,
+          }}
+        >
           ALL LANGUAGE THUMBNAILS · CLICK ONE TO EDIT
         </div>
-        <div style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: aspectRatio === "16:9" ? 300 : 190, gap: 10, overflowX: "auto", paddingBottom: 7 }}>
+        <div
+          style={{
+            display: "grid",
+            gridAutoFlow: "column",
+            gridAutoColumns: aspectRatio === "16:9" ? 300 : 190,
+            gap: 10,
+            overflowX: "auto",
+            paddingBottom: 7,
+          }}
+        >
           {previewLayouts.map(({ language, elements: previewElements }) => (
             <button
               key={language}
               type="button"
               onClick={() => switchLanguage(language)}
-              style={{ padding: 7, borderRadius: 9, border: activeLang === language ? "2px solid var(--v2-accent)" : "1px solid rgba(255,255,255,.12)", background: "rgba(0,0,0,.22)", cursor: "pointer", textAlign: "left" }}
+              style={{
+                padding: 7,
+                borderRadius: 9,
+                border:
+                  activeLang === language
+                    ? "2px solid var(--v2-accent)"
+                    : "1px solid rgba(255,255,255,.12)",
+                background: "rgba(0,0,0,.22)",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
             >
-              <div style={{ color: language === "English" ? "var(--v2-accent)" : TEXT_1, fontSize: 10, fontWeight: 850, marginBottom: 6 }}>
-                {language === "English" ? "ENGLISH · MASTER" : language.toUpperCase()}
+              <div
+                style={{
+                  color: language === "English" ? "var(--v2-accent)" : TEXT_1,
+                  fontSize: 10,
+                  fontWeight: 850,
+                  marginBottom: 6,
+                }}
+              >
+                {language === "English"
+                  ? "ENGLISH · MASTER"
+                  : language.toUpperCase()}
               </div>
-              <ThumbnailPreview elements={previewElements} portrait={aspectRatio === "9:16"} />
+              <ThumbnailPreview
+                elements={previewElements}
+                portrait={aspectRatio === "9:16"}
+              />
             </button>
           ))}
         </div>
@@ -1352,7 +1966,14 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
             }}
           >
             {(
-              ["CUSTOM", "PERSONAS", "LOGOS", "SYMBOLS", "BGS", "LAYERS"] as const
+              [
+                "CUSTOM",
+                "PERSONAS",
+                "LOGOS",
+                "SYMBOLS",
+                "BGS",
+                "LAYERS",
+              ] as const
             ).map((tab) => {
               const on = activeTab === tab;
               return (
@@ -1364,7 +1985,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     padding: "6px 2px",
                     borderRadius: 5,
                     border: "none",
-                    background: on ? "rgba(var(--v2-accent-rgb), 0.16)" : "transparent",
+                    background: on
+                      ? "rgba(var(--v2-accent-rgb), 0.16)"
+                      : "transparent",
                     color: on ? "var(--v2-accent)" : TEXT_2,
                     fontSize: 8.5,
                     fontWeight: 800,
@@ -1416,7 +2039,13 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   + Add Text
                 </button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 8,
+                }}
+              >
                 <label
                   style={{
                     ...panelBtn(false),
@@ -1426,7 +2055,10 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     gap: 4,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
                     upload
                   </span>
                   Face
@@ -1437,15 +2069,28 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     onChange={(e) => handleUploadCustomAsset(e, "PERSONAS")}
                   />
                 </label>
-                <label style={{ ...panelBtn(false), textAlign: "center", display: "inline-flex", justifyContent: "center", gap: 4 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>upload</span>
+                <label
+                  style={{
+                    ...panelBtn(false),
+                    textAlign: "center",
+                    display: "inline-flex",
+                    justifyContent: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
+                    upload
+                  </span>
                   Symbol
-                  <input type="file" accept="image/png,image/svg+xml,image/webp" style={{ display: "none" }} onChange={(e) => void handleUploadCustomAsset(e, "SYMBOLS")} />
-                </label>
-                <label style={{ ...panelBtn(false), textAlign: "center", display: "inline-flex", justifyContent: "center", gap: 4 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>upload</span>
-                  Background
-                  <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={(e) => void handleUploadCustomAsset(e, "BGS")} />
+                  <input
+                    type="file"
+                    accept="image/png,image/svg+xml,image/webp"
+                    style={{ display: "none" }}
+                    onChange={(e) => void handleUploadCustomAsset(e, "SYMBOLS")}
+                  />
                 </label>
                 <label
                   style={{
@@ -1456,7 +2101,33 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     gap: 4,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
+                    upload
+                  </span>
+                  Background
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    style={{ display: "none" }}
+                    onChange={(e) => void handleUploadCustomAsset(e, "BGS")}
+                  />
+                </label>
+                <label
+                  style={{
+                    ...panelBtn(false),
+                    textAlign: "center",
+                    display: "inline-flex",
+                    justifyContent: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: 14 }}
+                  >
                     upload
                   </span>
                   Logo
@@ -1510,7 +2181,13 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     fontSize: 11.5,
                   }}
                 >
-                  <p style={{ fontWeight: 700, color: TEXT_1, margin: "0 0 4px" }}>
+                  <p
+                    style={{
+                      fontWeight: 700,
+                      color: TEXT_1,
+                      margin: "0 0 4px",
+                    }}
+                  >
                     No custom references uploaded.
                   </p>
                   <p style={{ margin: 0 }}>
@@ -1535,7 +2212,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                               ? "BACKGROUND"
                               : asset.category === "PERSONAS"
                                 ? "PERSON"
-                                : asset.category === "SYMBOLS" ? "SYMBOL" : "LOGO",
+                                : asset.category === "SYMBOLS"
+                                  ? "SYMBOL"
+                                  : "LOGO",
                             asset.url,
                           )
                         }
@@ -1556,7 +2235,11 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                         <img
                           src={asset.url}
                           alt={asset.name}
-                          style={{ maxHeight: "100%", maxWidth: "100%", objectFit: "contain" }}
+                          style={{
+                            maxHeight: "100%",
+                            maxWidth: "100%",
+                            objectFit: "contain",
+                          }}
                         />
                       </button>
                       <button
@@ -1576,14 +2259,26 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                           display: "inline-flex",
                         }}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+                        <span
+                          className="material-symbols-outlined"
+                          style={{ fontSize: 13 }}
+                        >
                           delete
                         </span>
                       </button>
                     </div>
                   ))}
                   {assetHasMore && (
-                    <button type="button" disabled={loadingAssets} onClick={() => void loadMoreAssets()} style={{ ...panelBtn(false), gridColumn: "1 / -1", justifyContent: "center" }}>
+                    <button
+                      type="button"
+                      disabled={loadingAssets}
+                      onClick={() => void loadMoreAssets()}
+                      style={{
+                        ...panelBtn(false),
+                        gridColumn: "1 / -1",
+                        justifyContent: "center",
+                      }}
+                    >
                       {loadingAssets ? "Loading…" : "Load more shared assets"}
                     </button>
                   )}
@@ -1593,19 +2288,27 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
             {/* Personas — grouped by language with a flag header. Search
                 filters host names across every language group. */}
             {activeTab === "PERSONAS" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 14 }}
+              >
                 {PERSONA_LANG_ORDER.map((lang) => {
                   const hosts = (DEFAULT_PERSONAS[lang] ?? []).filter(
                     (p) =>
                       !searchQuery ||
-                      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      p.name
+                        .toLowerCase()
+                        .includes(searchQuery.toLowerCase()) ||
                       lang.toLowerCase().includes(searchQuery.toLowerCase()),
                   );
                   if (hosts.length === 0) return null;
                   return (
                     <div
                       key={lang}
-                      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
                     >
                       <div
                         style={{
@@ -1685,7 +2388,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   <button
                     key={i}
                     type="button"
-                    onClick={() => handleAddAsset("LOGO", `/app_logos_png/${name}`)}
+                    onClick={() =>
+                      handleAddAsset("LOGO", `/app_logos_png/${name}`)
+                    }
                     style={{
                       aspectRatio: "1 / 1",
                       borderRadius: 8,
@@ -1738,7 +2443,10 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                     key={i}
                     type="button"
                     onClick={() =>
-                      handleAddAsset("SYMBOL", `/bulk_symbols_110_colored/${sym}`)
+                      handleAddAsset(
+                        "SYMBOL",
+                        `/bulk_symbols_110_colored/${sym}`,
+                      )
                     }
                     style={{
                       aspectRatio: "1 / 1",
@@ -1807,7 +2515,11 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                       <img
                         src={bg.url}
                         alt={bg.name}
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
                       />
                     )}
                     <span
@@ -1898,13 +2610,35 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                           {el.text || el.url?.split("/").pop() || el.id}
                         </span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 2,
+                        }}
+                      >
                         {(
                           [
-                            { icon: "arrow_upward", fn: () => handleMoveLayer(el.id, "up"), title: "Up" },
-                            { icon: "arrow_downward", fn: () => handleMoveLayer(el.id, "down"), title: "Down" },
-                            { icon: "content_copy", fn: () => handleDuplicate(el), title: "Duplicate" },
-                            { icon: "delete", fn: () => handleDeleteLayer(el.id), title: "Delete" },
+                            {
+                              icon: "arrow_upward",
+                              fn: () => handleMoveLayer(el.id, "up"),
+                              title: "Up",
+                            },
+                            {
+                              icon: "arrow_downward",
+                              fn: () => handleMoveLayer(el.id, "down"),
+                              title: "Down",
+                            },
+                            {
+                              icon: "content_copy",
+                              fn: () => handleDuplicate(el),
+                              title: "Duplicate",
+                            },
+                            {
+                              icon: "delete",
+                              fn: () => handleDeleteLayer(el.id),
+                              title: "Delete",
+                            },
                           ] as const
                         ).map((a) => (
                           <button
@@ -1924,7 +2658,10 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                               display: "inline-flex",
                             }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+                            <span
+                              className="material-symbols-outlined"
+                              style={{ fontSize: 14 }}
+                            >
                               {a.icon}
                             </span>
                           </button>
@@ -2022,7 +2759,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                       key={el.id}
                       position={{ x: el.x, y: el.y }}
                       size={{ width: el.width, height: el.height }}
-                      onDragStop={(_e, d) => patchElement(el.id, { x: d.x, y: d.y })}
+                      onDragStop={(_e, d) =>
+                        patchElement(el.id, { x: d.x, y: d.y })
+                      }
                       onResizeStop={(_e, _dir, ref, _delta, position) =>
                         patchElement(el.id, {
                           width: parseInt(ref.style.width, 10),
@@ -2033,7 +2772,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                       }
                       style={{
                         zIndex: el.zIndex,
-                        outline: isSelected ? "2px solid var(--v2-accent)" : "none",
+                        outline: isSelected
+                          ? "2px solid var(--v2-accent)"
+                          : "none",
                       }}
                       onClick={() => setSelectedId(el.id)}
                     >
@@ -2061,7 +2802,12 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             padding: 0,
                           }}
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>rotate_right</span>
+                          <span
+                            className="material-symbols-outlined"
+                            style={{ fontSize: 16 }}
+                          >
+                            rotate_right
+                          </span>
                         </button>
                       )}
                       {el.type === "TEXT" ? (
@@ -2074,7 +2820,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             justifyContent: "flex-start",
                             textTransform: "uppercase",
                             letterSpacing: "0.03em",
-                            fontWeight: (el.fontWeight as React.CSSProperties["fontWeight"]) || "bold",
+                            fontWeight:
+                              (el.fontWeight as React.CSSProperties["fontWeight"]) ||
+                              "bold",
                             fontFamily: el.fontFamily || "Impact",
                             fontSize: `${el.fontSize || 64}px`,
                             color: el.color || "#ffffff",
@@ -2088,7 +2836,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             borderRadius: el.borderRadius || "0",
                             padding: el.padding || "0",
                             userSelect: "none",
-                            transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+                            transform: el.rotation
+                              ? `rotate(${el.rotation}deg)`
+                              : undefined,
                           }}
                         >
                           {el.text}
@@ -2104,7 +2854,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                             backgroundColor: el.bgColor || "transparent",
                             borderRadius: el.borderRadius || "0",
                             padding: el.padding || "0",
-                            transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+                            transform: el.rotation
+                              ? `rotate(${el.rotation}deg)`
+                              : undefined,
                           }}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2129,7 +2881,14 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
           {/* Property inspector */}
           {selectedElement && (
-            <GlassCard style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+            <GlassCard
+              style={{
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -2139,7 +2898,15 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   gap: 8,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 200 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flex: 1,
+                    minWidth: 200,
+                  }}
+                >
                   <span
                     style={{
                       fontSize: 9,
@@ -2157,7 +2924,9 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                       type="text"
                       value={selectedElement.text || ""}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { text: e.target.value })
+                        patchElement(selectedElement.id, {
+                          text: e.target.value,
+                        })
                       }
                       style={{ ...inputStyle, flex: 1, fontWeight: 700 }}
                     />
@@ -2192,14 +2961,25 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   }}
                 >
                   {/* Font family */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       FONT
                     </span>
                     <select
                       value={selectedElement.fontFamily || "Impact"}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { fontFamily: e.target.value })
+                        patchElement(selectedElement.id, {
+                          fontFamily: e.target.value,
+                        })
                       }
                       style={inputStyle}
                     >
@@ -2212,8 +2992,17 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   </label>
 
                   {/* Font size */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       SIZE: {selectedElement.fontSize || 64}px
                     </span>
                     <input
@@ -2231,15 +3020,26 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   </label>
 
                   {/* Fill color */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       TEXT COLOR
                     </span>
                     <input
                       type="color"
                       value={selectedElement.color || "#ffffff"}
                       onChange={(e) =>
-                        patchElement(selectedElement.id, { color: e.target.value })
+                        patchElement(selectedElement.id, {
+                          color: e.target.value,
+                        })
                       }
                       style={{
                         width: "100%",
@@ -2253,8 +3053,17 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   </label>
 
                   {/* Stroke width */}
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+                  <label
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: TEXT_2,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       STROKE: {selectedElement.strokeWidth ?? 8}px
                     </span>
                     <input
@@ -2272,8 +3081,17 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   </label>
                 </div>
               )}
-              <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontSize: 9, fontWeight: 800, color: TEXT_2, letterSpacing: "0.04em" }}>
+              <label
+                style={{ display: "flex", flexDirection: "column", gap: 3 }}
+              >
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: TEXT_2,
+                    letterSpacing: "0.04em",
+                  }}
+                >
                   ROTATION: {selectedElement.rotation ?? 0}°
                 </span>
                 <input
@@ -2281,7 +3099,11 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
                   min={-180}
                   max={180}
                   value={selectedElement.rotation ?? 0}
-                  onChange={(event) => patchElement(selectedElement.id, { rotation: Number(event.target.value) })}
+                  onChange={(event) =>
+                    patchElement(selectedElement.id, {
+                      rotation: Number(event.target.value),
+                    })
+                  }
                   style={{ width: "100%", accentColor: "var(--v2-accent)" }}
                 />
               </label>

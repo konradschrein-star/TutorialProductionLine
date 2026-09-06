@@ -13,6 +13,48 @@ export const AUTOMATIC_TUTORIAL_LANGUAGE_CODES = [
 export type AutomaticTutorialLanguage =
   (typeof AUTOMATIC_TUTORIAL_LANGUAGE_CODES)[number];
 
+/**
+ * The complete unattended publication network. English is the source variant;
+ * the remaining entries are the automatic translation fan-out above. Dutch
+ * and the wider manual translation catalog deliberately do not belong here.
+ */
+export const ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES = [
+  "en",
+  ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+] as const;
+export type ActiveTutorialUploadLanguage =
+  (typeof ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES)[number];
+
+const TUTORIAL_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
+  english: "en",
+  german: "de",
+  french: "fr",
+  italian: "it",
+  dutch: "nl",
+  swedish: "sv",
+};
+
+/** Normalize persisted display names and short codes without inventing a default. */
+export function normalizeTutorialLanguage(
+  language: string | null | undefined,
+): string | null {
+  const value = language?.trim().toLowerCase();
+  if (!value) return null;
+  return TUTORIAL_LANGUAGE_ALIASES[value] ?? value;
+}
+
+export function isActiveTutorialUploadLanguage(
+  language: string | null | undefined,
+): language is ActiveTutorialUploadLanguage {
+  const normalized = normalizeTutorialLanguage(language);
+  return (
+    normalized !== null &&
+    (ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES as readonly string[]).includes(
+      normalized,
+    )
+  );
+}
+
 export const TutorialGeneratePayloadSchema = z.object({
   jobId: z.string().uuid(),
   stage: z.enum(["script", "tts"]),

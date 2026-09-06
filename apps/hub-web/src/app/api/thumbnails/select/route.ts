@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db, storageArtifacts } from "@/lib/db";
+import { db, storageArtifacts, tutorialJobs } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { selectThumbnail, getThumbnailById } from "@repo/db";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 
 /**
  * POST /api/thumbnails/select   { thumbnailId }
@@ -57,15 +58,49 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (existing.subject_kind === "tutorial_job") {
+    const [job] = await db
+      .select({
+        language: tutorialJobs.language,
+        channelId: tutorialJobs.channel_id,
+      })
+      .from(tutorialJobs)
+      .where(eq(tutorialJobs.id, existing.subject_id))
+      .limit(1);
+    if (
+      !job ||
+      !job.channelId ||
+      normalizeTutorialLanguage(job.language) !==
+        normalizeTutorialLanguage(existing.language) ||
+      existing.channel_id !== job.channelId
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Thumbnail language/channel does not belong to this tutorial variant",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const thumbnail = await selectThumbnail(db, parsed.data.thumbnailId);
   if (existing.subject_kind === "tutorial_job") {
-    await db.update(storageArtifacts).set({
-      state: "pending",
-      vps_path: existing.output_path,
-      error_kind: "thumbnail_replaced",
-      error_message: "Selected thumbnail changed; replace Drive copy",
-      updated_at: new Date(),
-    }).where(and(eq(storageArtifacts.job_id, existing.subject_id), eq(storageArtifacts.kind, "thumbnail")));
+    await db
+      .update(storageArtifacts)
+      .set({
+        state: "pending",
+        vps_path: existing.output_path,
+        error_kind: "thumbnail_replaced",
+        error_message: "Selected thumbnail changed; replace Drive copy",
+        updated_at: new Date(),
+      })
+      .where(
+        and(
+          eq(storageArtifacts.job_id, existing.subject_id),
+          eq(storageArtifacts.kind, "thumbnail"),
+        ),
+      );
   }
   return NextResponse.json({ thumbnail });
 }

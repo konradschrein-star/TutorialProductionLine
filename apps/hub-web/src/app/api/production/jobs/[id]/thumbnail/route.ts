@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db } from "@/lib/db";
+import { channels, db } from "@/lib/db";
 import { getTutorialJobById } from "@repo/db";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 import { deriveLogoSubject } from "@repo/domain";
 import { createRedisConnection, createThumbnailQueue } from "@repo/queue";
 import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-repository";
 import type { Thumbnail } from "@repo/db";
 import { getV1Runtime } from "@/app/api/_lib/runtime";
+import { resolveTutorialThumbnailVariant } from "@/lib/tutorial/thumbnail-context";
 
 export const dynamic = "force-dynamic";
 
@@ -41,12 +44,21 @@ const Body = z.object({
   mode: z.enum(["same", "changes", "iterate"]).default("same"),
 });
 
-function pickCurrentThumbnail(rows: Thumbnail[]): Thumbnail | undefined {
-  const selectedCompleted = rows.find(
+function pickCurrentThumbnail(
+  rows: Thumbnail[],
+  language: string,
+  channelId: string,
+): Thumbnail | undefined {
+  const owned = rows.filter(
+    (row) =>
+      normalizeTutorialLanguage(row.language) === language &&
+      row.channel_id === channelId,
+  );
+  const selectedCompleted = owned.find(
     (row) => row.is_selected && row.status === "completed",
   );
   if (selectedCompleted) return selectedCompleted;
-  return rows.find((row) => row.status === "completed");
+  return owned.find((row) => row.status === "completed");
 }
 
 export async function GET(
@@ -114,6 +126,34 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const [channel] = job.channel_id
+    ? await db
+        .select({ language: channels.language })
+        .from(channels)
+        .where(eq(channels.id, job.channel_id))
+        .limit(1)
+    : [];
+  let thumbnailContext;
+  try {
+    thumbnailContext = resolveTutorialThumbnailVariant({
+      id: job.id,
+      sourceJobId: job.source_job_id,
+      language: job.language,
+      channelId: job.channel_id,
+      channelLanguage: channel?.language ?? null,
+      thumbnailTextTop: job.thumbnail_text_top,
+      thumbnailTextBottom: job.thumbnail_text_bottom,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "Thumbnail variant is not configured safely",
+        reasons: [error instanceof Error ? error.message : String(error)],
+      },
+      { status: 409 },
+    );
+  }
+
   // NOTE: a missing channel is NOT a rejection reason. The format + global
   // archetype rules can serve the request on their own (DECISIONS §3.2.8), and
   // 95% of completed tutorials have no channel — this hard-reject made the
@@ -130,7 +170,11 @@ export async function POST(
   const body = parsed.data;
 
   const existing = await listThumbnailsForSubject("tutorial_job", id);
-  const current = pickCurrentThumbnail(existing);
+  const current = pickCurrentThumbnail(
+    existing,
+    thumbnailContext.language,
+    thumbnailContext.channelId,
+  );
 
   if (body.mode !== "same" && !current) {
     return NextResponse.json(
@@ -178,7 +222,7 @@ export async function POST(
         subjectKind: "tutorial_job",
         subjectId: id,
         format: "TUTORIAL_STUDIO",
-        channelId: job.channel_id,
+        channelId: thumbnailContext.channelId,
         title: job.title,
         topic: job.title,
         // The product this tutorial is about. The auto-enqueue in the splice
@@ -187,7 +231,9 @@ export async function POST(
         // automatic one, which is the wrong way round for the button they
         // press when the automatic result was not good enough.
         ...(logoSubject !== null ? { logoSubject } : {}),
-        language: "en",
+        language: thumbnailContext.language,
+        thumbnailTextTop: thumbnailContext.thumbnailTextTop,
+        thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
         ...payload,
       },
       { jobId: `tutorial-thumb-regen-${id}-${randomUUID()}`, attempts: 2 },

@@ -628,6 +628,30 @@ export async function listThumbnailsForSubject(
     .orderBy(desc(thumbnails.created_at));
 }
 
+function normalizedThumbnailLanguageFilter(language: string) {
+  const value = language.trim().toLowerCase();
+  const normalized =
+    (
+      {
+        english: "en",
+        german: "de",
+        french: "fr",
+        italian: "it",
+        dutch: "nl",
+        swedish: "sv",
+      } as Record<string, string>
+    )[value] ?? value;
+  return sql`case lower(trim(${thumbnails.language}))
+      when 'english' then 'en'
+      when 'german' then 'de'
+      when 'french' then 'fr'
+      when 'italian' then 'it'
+      when 'dutch' then 'nl'
+      when 'swedish' then 'sv'
+      else lower(trim(${thumbnails.language}))
+    end = ${normalized}`;
+}
+
 /** Marks one thumbnail selected and clears the flag on its siblings. */
 export async function selectThumbnail(
   db: DrizzleClient,
@@ -646,7 +670,7 @@ export async function selectThumbnail(
       and(
         eq(thumbnails.subject_kind, target.subject_kind),
         eq(thumbnails.subject_id, target.subject_id),
-        eq(thumbnails.language, target.language),
+        normalizedThumbnailLanguageFilter(target.language),
       ),
     );
   return updateThumbnailRecord(db, thumbnailId, { is_selected: true });
@@ -956,7 +980,11 @@ export async function selectBestThumbnailForSubject(
   subjectKind: "content_job" | "tutorial_job" | "studio" | "test",
   subjectId: string,
   rule: "qa_best_score" | "first_completed" = "qa_best_score",
+  language?: string,
 ): Promise<Thumbnail | undefined> {
+  const languageFilter = language
+    ? normalizedThumbnailLanguageFilter(language)
+    : undefined;
   const rows = await db
     .select()
     .from(thumbnails)
@@ -966,6 +994,7 @@ export async function selectBestThumbnailForSubject(
         eq(thumbnails.subject_id, subjectId),
         eq(thumbnails.status, "completed"),
         isNotNull(thumbnails.output_path),
+        languageFilter,
       ),
     );
   if (rows.length === 0) return undefined;
@@ -989,6 +1018,7 @@ export async function selectBestThumbnailForSubject(
       and(
         eq(thumbnails.subject_kind, subjectKind),
         eq(thumbnails.subject_id, subjectId),
+        languageFilter,
       ),
     );
   return updateThumbnailRecord(db, winner.id, { is_selected: true });

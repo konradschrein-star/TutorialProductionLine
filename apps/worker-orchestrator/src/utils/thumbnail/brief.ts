@@ -94,6 +94,8 @@ export interface ChannelBrandLike {
 export interface CompileBriefInput {
   format: string;
   channelId: string | null;
+  /** Explicit language of all visible copy (BCP-47 short code is accepted). */
+  language?: string;
   title: string;
   headline: string | null; // already derived (deriveHeadline) — NULL is legal
   headlineSource: "operator" | "derived" | "title_fallback" | "none";
@@ -115,6 +117,7 @@ export interface ThumbnailBrief {
   rulesVersion: string;
   format: string;
   channelId: string | null;
+  language: string;
   headline: string | null;
   headlineSource: "operator" | "derived" | "title_fallback" | "none";
   subject: string;
@@ -364,6 +367,7 @@ export function compileThumbnailBrief(
     rulesVersion: rule?.rules_version ?? THUMBNAIL_RULES_VERSION,
     format: input.format,
     channelId: input.channelId,
+    language: input.language?.trim() || "en",
     headline: input.headline,
     headlineSource: input.headlineSource,
     subject,
@@ -487,8 +491,14 @@ export function renderProgrammatic(
       brief.textPolicy.placement === DEFAULT_TEXT_PLACEMENT
         ? `${brief.textPolicy.placement}, ${brief.textPolicy.treatment}`
         : brief.textPolicy.placement;
+    const headlineLines = brief.headline
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
     lines.push(
-      `Replace ONLY the main text with "${brief.headline}" (${typography}). Do not repeat the video title verbatim.`,
+      headlineLines.length === 2
+        ? `Replace ONLY the main text with exactly two lines: LINE 1 "${headlineLines[0]}"; LINE 2 "${headlineLines[1]}" (${typography}). Do not merge, translate, or repeat either line.`
+        : `Replace ONLY the main text with "${brief.headline}" (${typography}). Do not repeat the video title verbatim.`,
     );
   } else if (brief.compositeText) {
     lines.push(
@@ -499,6 +509,10 @@ export function renderProgrammatic(
       "No overlay text — the composition carries the message (zero text is correct for this format).",
     );
   }
+
+  lines.push(
+    `All visible words must be in language ${brief.language}; preserve product names exactly.`,
+  );
 
   if (brief.personaImageAttached) {
     lines.push(

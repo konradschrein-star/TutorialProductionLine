@@ -509,13 +509,17 @@ export { VoiceSettingsSchema } from "./schemas/voice-settings.js";
 export type { VoiceSettings } from "./schemas/voice-settings.js";
 
 export {
+  ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES,
   AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+  isActiveTutorialUploadLanguage,
+  normalizeTutorialLanguage,
   TutorialGeneratePayloadSchema,
   TutorialSplicePayloadSchema,
   TutorialStitchPayloadSchema,
   TutorialTranslatePayloadSchema,
 } from "./queue-payloads/tutorial-payloads.js";
 export type {
+  ActiveTutorialUploadLanguage,
   AutomaticTutorialLanguage,
   TutorialGeneratePayload,
   TutorialSplicePayload,

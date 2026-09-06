@@ -1,3 +1,8 @@
+import {
+  ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES,
+  AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+} from "@repo/contracts";
+
 /**
  * Target languages for tutorial localization.
  *
@@ -18,7 +23,14 @@ export interface TargetLanguage {
  * Auto-translation ("Translate everything missing" / "Translate all") strictly targets
  * these standard languages by default.
  */
-export const DEFAULT_STANDARD_LANGUAGES: readonly string[] = ["de", "fr", "it", "sv"];
+export const DEFAULT_STANDARD_LANGUAGES: readonly string[] = [
+  ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+];
+
+/** English plus the four unattended translation destinations. */
+export const ACTIVE_UPLOAD_LANGUAGES: readonly string[] = [
+  ...ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES,
+];
 
 export const ALL_TARGET_LANGUAGES: TargetLanguage[] = [
   { code: "de", name: "German", native: "Deutsch", flag: "🇩🇪" },
@@ -45,20 +57,26 @@ export const TARGET_LANGUAGES = ALL_TARGET_LANGUAGES;
 
 export const TARGET_LANGUAGE_CODES = ALL_TARGET_LANGUAGES.map((l) => l.code);
 
-export const STANDARD_LANGUAGES: TargetLanguage[] = ALL_TARGET_LANGUAGES.filter((l) =>
-  DEFAULT_STANDARD_LANGUAGES.includes(l.code),
+export const STANDARD_LANGUAGES: TargetLanguage[] = ALL_TARGET_LANGUAGES.filter(
+  (l) => DEFAULT_STANDARD_LANGUAGES.includes(l.code),
 );
 
 export const STANDARD_LANGUAGE_CODES = STANDARD_LANGUAGES.map((l) => l.code);
 
 export function languageName(code: string): string {
-  return ALL_TARGET_LANGUAGES.find((l) => l.code === code)?.name ?? code.toUpperCase();
+  return (
+    ALL_TARGET_LANGUAGES.find((l) => l.code === code)?.name ??
+    code.toUpperCase()
+  );
 }
 
 export function isSupportedTargetLanguage(code: string): boolean {
   return TARGET_LANGUAGE_CODES.includes(code);
 }
 
-export function isStandardTargetLanguage(code: string, standardList: readonly string[] = DEFAULT_STANDARD_LANGUAGES): boolean {
+export function isStandardTargetLanguage(
+  code: string,
+  standardList: readonly string[] = DEFAULT_STANDARD_LANGUAGES,
+): boolean {
   return standardList.includes(code);
 }

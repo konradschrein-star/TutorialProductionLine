@@ -14,7 +14,6 @@ import {
   getTutorialJobById,
   updateTutorialJob,
   listTutorialJobsByParent,
-  listThumbnailsForSubject,
   getTutorialSettings,
 } from "@repo/db";
 import {
@@ -27,6 +26,7 @@ import {
 import { deriveLogoSubject } from "@repo/domain";
 import { firstNSentences } from "../../utils/thumbnail/prompt-builder.js";
 import { ensureManualTutorialThumbnail } from "../../utils/tutorial/manual-thumbnail.js";
+import { resolveTutorialThumbnailContext } from "../../utils/tutorial/thumbnail-context.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
 import {
   buildNewVideoTreatmentArgs,
@@ -274,7 +274,8 @@ export function createTutorialSpliceProcessor(
           console.error(
             JSON.stringify({
               level: "warn",
-              message: "Like/subscribe outro failed (non-fatal) — shipping video without it",
+              message:
+                "Like/subscribe outro failed (non-fatal) — shipping video without it",
               job_id: jobId,
               error:
                 outroErr instanceof Error ? outroErr.message : String(outroErr),
@@ -321,58 +322,51 @@ export function createTutorialSpliceProcessor(
       // host and branding automatically.
       if (!tutorialJob.parent_job_id) {
         try {
+          const thumbnailContext = await resolveTutorialThumbnailContext(
+            db,
+            tutorialJob,
+          );
           const productionSettings = await getTutorialSettings(db);
           if (productionSettings.thumbnail_generation_mode === "manual") {
-            const languages = tutorialJob.source_job_id
-              ? [tutorialJob.language ?? "en"]
-              : ["en", "de", "fr", "it", "nl", "sv"];
-            const manualThumbnails = await Promise.all(
-              languages.map((targetLanguage) => ensureManualTutorialThumbnail(db, tutorialJob, { targetLanguage })),
+            const manualThumbnail = await ensureManualTutorialThumbnail(
+              db,
+              tutorialJob,
             );
-            console.log(JSON.stringify({
-              level: "info",
-              message: "Procedural language thumbnail set ready for VA review",
-              job_id: jobId,
-              thumbnail_ids: manualThumbnails.map((thumbnail) => thumbnail.id),
-              created: manualThumbnails.filter((thumbnail) => thumbnail.created).length,
-            }));
+            console.log(
+              JSON.stringify({
+                level: "info",
+                message: "Procedural localized thumbnail ready for VA review",
+                job_id: jobId,
+                thumbnail_id: manualThumbnail.id,
+                language: thumbnailContext.language,
+                created: manualThumbnail.created,
+              }),
+            );
           } else {
-          const excerpt = firstNSentences(tutorialJob.script_text ?? "", 5);
-          // The SOFTWARE this tutorial is about. Without it the brief compiler
-          // has no product to brand and the thumbnail never names the tool —
-          // zero of 112 tutorial briefs carried one before this. Null when the
-          // title does not identify a product; the field is then omitted and
-          // the existing title-derived fallback applies unchanged.
-          const logoSubject = deriveLogoSubject(tutorialJob.title);
-          // A localization is a language variant of the English creative, not
-          // a fresh composition. Reuse the VA-selected English archetype while
-          // the target channel still supplies its own host and branding.
-          const sourceThumbnails = tutorialJob.source_job_id
-            ? await listThumbnailsForSubject(
-                db,
-                "tutorial_job",
-                tutorialJob.source_job_id,
-              )
-            : [];
-          const sourceArchetypeId = sourceThumbnails.find(
-            (thumbnail) => thumbnail.is_selected,
-          )?.archetype_id;
-          await queues.thumbnail.add(
-            "thumbnail",
-            {
-              subjectKind: "tutorial_job",
-              subjectId: jobId,
-              format: "TUTORIAL_STUDIO",
-              channelId: tutorialJob.channel_id,
-              title: tutorialJob.title,
-              topic: tutorialJob.title,
-              scriptExcerpt: excerpt,
-              ...(logoSubject !== null ? { logoSubject } : {}),
-              ...(sourceArchetypeId ? { archetypeId: sourceArchetypeId } : {}),
-              language: tutorialJob.language ?? "en",
-            },
-            { jobId: `thumbnail-${jobId}`, attempts: 2 },
-          );
+            const excerpt = firstNSentences(tutorialJob.script_text ?? "", 5);
+            // The SOFTWARE this tutorial is about. Without it the brief compiler
+            // has no product to brand and the thumbnail never names the tool —
+            // zero of 112 tutorial briefs carried one before this. Null when the
+            // title does not identify a product; the field is then omitted and
+            // the existing title-derived fallback applies unchanged.
+            const logoSubject = deriveLogoSubject(tutorialJob.title);
+            await queues.thumbnail.add(
+              "thumbnail",
+              {
+                subjectKind: "tutorial_job",
+                subjectId: jobId,
+                format: "TUTORIAL_STUDIO",
+                channelId: thumbnailContext.channelId,
+                title: tutorialJob.title,
+                topic: tutorialJob.title,
+                scriptExcerpt: excerpt,
+                ...(logoSubject !== null ? { logoSubject } : {}),
+                language: thumbnailContext.language,
+                thumbnailTextTop: thumbnailContext.thumbnailTextTop,
+                thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
+              },
+              { jobId: `thumbnail-${jobId}`, attempts: 2 },
+            );
           }
         } catch (thumbErr) {
           console.error(

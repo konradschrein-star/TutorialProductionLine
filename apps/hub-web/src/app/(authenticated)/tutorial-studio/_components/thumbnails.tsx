@@ -28,6 +28,7 @@ interface JobHit {
   format: string;
   channelId: string | null;
   channelName: string | null;
+  language: string | null;
   createdAt: string;
   producerName: string | null;
   producerRole: string | null;
@@ -60,6 +61,8 @@ interface ThumbnailRow {
     base?: string;
   } | null;
   review_verdict: "strong" | "acceptable" | "reject" | "not_reviewed";
+  language: string;
+  channel_id: string | null;
 }
 
 interface ArchetypeRow {
@@ -123,14 +126,20 @@ function Badge({
   );
 }
 
-export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: string | null }) {
+export function ProductionThumbnails({
+  initialJobId = null,
+}: {
+  initialJobId?: string | null;
+}) {
   const [query, setQuery] = useState("");
   const [jobs, setJobs] = useState<JobHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [limit, setLimit] = useState(24);
   const [hasMore, setHasMore] = useState(false);
-  const [resultScope, setResultScope] = useState<"own_producer" | "all_producers">("all_producers");
+  const [resultScope, setResultScope] = useState<
+    "own_producer" | "all_producers"
+  >("all_producers");
 
   const [selectedJob, setSelectedJob] = useState<JobHit | null>(null);
   const [rows, setRows] = useState<ThumbnailRow[]>([]);
@@ -146,36 +155,39 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Search ───────────────────────────────────────────────────────────────
-  const runSearch = useCallback(async (q: string, lim: number, jobId?: string | null) => {
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const res = await fetch(
-        `/api/thumbnails/jobs?q=${encodeURIComponent(q)}&limit=${lim}${jobId ? `&jobId=${encodeURIComponent(jobId)}` : ""}`,
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
+  const runSearch = useCallback(
+    async (q: string, lim: number, jobId?: string | null) => {
+      setSearching(true);
+      setSearchError(null);
+      try {
+        const res = await fetch(
+          `/api/thumbnails/jobs?q=${encodeURIComponent(q)}&limit=${lim}${jobId ? `&jobId=${encodeURIComponent(jobId)}` : ""}`,
+        );
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(body.error ?? `Search failed (${res.status})`);
+        }
+        const data = (await res.json()) as {
+          jobs: JobHit[];
+          hasMore?: boolean;
+          scope?: "own_producer" | "all_producers";
         };
-        throw new Error(body.error ?? `Search failed (${res.status})`);
+        setJobs(data.jobs);
+        setHasMore(Boolean(data.hasMore));
+        setResultScope(data.scope ?? "all_producers");
+        if (jobId && data.jobs[0]) await openJob(data.jobs[0]);
+      } catch (err) {
+        setSearchError(err instanceof Error ? err.message : String(err));
+        setJobs([]);
+        setHasMore(false);
+      } finally {
+        setSearching(false);
       }
-      const data = (await res.json()) as {
-        jobs: JobHit[];
-        hasMore?: boolean;
-        scope?: "own_producer" | "all_producers";
-      };
-      setJobs(data.jobs);
-      setHasMore(Boolean(data.hasMore));
-      setResultScope(data.scope ?? "all_producers");
-      if (jobId && data.jobs[0]) await openJob(data.jobs[0]);
-    } catch (err) {
-      setSearchError(err instanceof Error ? err.message : String(err));
-      setJobs([]);
-      setHasMore(false);
-    } finally {
-      setSearching(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // Any new search term collapses back to the first page.
   useEffect(() => {
@@ -335,9 +347,16 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thumbnailIds }),
       });
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? `Failed (${response.status})`);
-      setNotice(thumbnailIds.length === 1 ? "Thumbnail approved." : `${thumbnailIds.length} thumbnails approved.`);
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(body.error ?? `Failed (${response.status})`);
+      setNotice(
+        thumbnailIds.length === 1
+          ? "Thumbnail approved."
+          : `${thumbnailIds.length} thumbnails approved.`,
+      );
       await loadRows(selectedJob);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -367,9 +386,16 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
               unscoped. Say so, rather than leaving it to be inferred. */}
           <span style={{ fontSize: 11, color: "var(--v2-text-3)" }}>
             {resultScope === "own_producer" ? (
-              <>Showing only <strong>videos you produced</strong>. Select one to open its composer.</>
+              <>
+                Showing only <strong>videos you produced</strong>. Select one to
+                open its composer.
+              </>
             ) : (
-              <>Admin view: showing <strong>all producers&rsquo; finished videos</strong>. Select one to open its composer.</>
+              <>
+                Admin view: showing{" "}
+                <strong>all producers&rsquo; finished videos</strong>. Select
+                one to open its composer.
+              </>
             )}
           </span>
           {searchError && (
@@ -511,8 +537,17 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
                       )}
                       {job.hasSelected && <Badge tone="good">selected</Badge>}
                     </span>
-                    <span style={{ marginTop: 2, color: "var(--v2-accent)", fontSize: 10, fontWeight: 800 }}>
-                      {job.completedCount === 0 ? "Create thumbnail →" : "Open in composer →"}
+                    <span
+                      style={{
+                        marginTop: 2,
+                        color: "var(--v2-accent)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {job.completedCount === 0
+                        ? "Create thumbnail →"
+                        : "Open in composer →"}
                     </span>
                   </span>
                 </a>
@@ -609,8 +644,17 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
               </V2Button>
               <V2Button
                 variant="accent"
-                disabled={busy || rows.filter((row) => row.status === "completed").length === 0}
-                onClick={() => void approve(rows.filter((row) => row.status === "completed").map((row) => row.id))}
+                disabled={
+                  busy ||
+                  rows.filter((row) => row.status === "completed").length === 0
+                }
+                onClick={() =>
+                  void approve(
+                    rows
+                      .filter((row) => row.status === "completed")
+                      .map((row) => row.id),
+                  )
+                }
               >
                 Approve all ready
               </V2Button>
@@ -723,7 +767,10 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
                   >
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                       {row.is_selected && <Badge tone="good">selected</Badge>}
-                      {(row.review_verdict === "acceptable" || row.review_verdict === "strong") && <Badge tone="good">approved</Badge>}
+                      {(row.review_verdict === "acceptable" ||
+                        row.review_verdict === "strong") && (
+                        <Badge tone="good">approved</Badge>
+                      )}
                       <Badge
                         tone={
                           row.status === "completed"
@@ -767,11 +814,24 @@ export function ProductionThumbnails({ initialJobId = null }: { initialJobId?: s
                     </V2Button>
                     <V2Button
                       size="sm"
-                      variant={row.review_verdict === "acceptable" || row.review_verdict === "strong" ? "ghost" : "outline"}
-                      disabled={busy || row.status !== "completed" || row.review_verdict === "acceptable" || row.review_verdict === "strong"}
+                      variant={
+                        row.review_verdict === "acceptable" ||
+                        row.review_verdict === "strong"
+                          ? "ghost"
+                          : "outline"
+                      }
+                      disabled={
+                        busy ||
+                        row.status !== "completed" ||
+                        row.review_verdict === "acceptable" ||
+                        row.review_verdict === "strong"
+                      }
                       onClick={() => void approve([row.id])}
                     >
-                      {row.review_verdict === "acceptable" || row.review_verdict === "strong" ? "Approved" : "Approve"}
+                      {row.review_verdict === "acceptable" ||
+                      row.review_verdict === "strong"
+                        ? "Approved"
+                        : "Approve"}
                     </V2Button>
                   </div>
                 </div>

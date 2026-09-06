@@ -22,9 +22,9 @@ function complete(language: string): ThumbnailPackJob {
 }
 
 describe("thumbnail publication pack", () => {
-  it("uses exactly the four automatic translation languages", () => {
-    expect(THUMBNAIL_PACK_LANGUAGES).toHaveLength(4);
-    expect(new Set(THUMBNAIL_PACK_LANGUAGES).size).toBe(4);
+  it("uses exactly English plus the four automatic translations", () => {
+    expect(THUMBNAIL_PACK_LANGUAGES).toEqual(["en", "de", "fr", "it", "sv"]);
+    expect(new Set(THUMBNAIL_PACK_LANGUAGES).size).toBe(5);
   });
 
   it("requires localized metadata, copy and a completed video", () => {
@@ -40,14 +40,16 @@ describe("thumbnail publication pack", () => {
     ]);
   });
 
-  it("does not accept fewer than four variants", () => {
+  it("does not accept fewer than five variants", () => {
     const result = assessThumbnailPack(
-      THUMBNAIL_PACK_LANGUAGES.slice(0, 3).map(complete),
+      THUMBNAIL_PACK_LANGUAGES.slice(0, 4).map(complete),
     );
     expect(result.ready).toBe(false);
-    expect(result.expected).toBe(4);
-    expect(result.readyCount).toBe(3);
-    expect(result.variants[3]?.reasons).toContain("translation job missing");
+    expect(result.expected).toBe(5);
+    expect(result.readyCount).toBe(4);
+    expect(result.variants[4]?.reasons).toContain(
+      "language variant job missing",
+    );
   });
 
   it("rejects duplicate jobs for one language instead of picking one", () => {
@@ -62,9 +64,9 @@ describe("thumbnail publication pack", () => {
     ]);
   });
 
-  it("accepts a complete four-language set", () => {
+  it("accepts a complete five-language set", () => {
     const result = assessThumbnailPack(THUMBNAIL_PACK_LANGUAGES.map(complete));
     expect(result.ready).toBe(true);
-    expect(result.readyCount).toBe(4);
+    expect(result.readyCount).toBe(5);
   });
 });

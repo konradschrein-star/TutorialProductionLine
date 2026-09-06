@@ -24,6 +24,7 @@ import {
   getTutorialJobById,
   updateTutorialJob,
   listTutorialJobsByParent,
+  getTutorialSettings,
 } from "@repo/db";
 import { probeMediaDimensions } from "@repo/media-core";
 import type { TutorialStitchPayload, ThumbnailPayload } from "@repo/contracts";
@@ -31,6 +32,8 @@ import { TutorialStitchPayloadSchema } from "@repo/contracts";
 import { deriveLogoSubject } from "@repo/domain";
 import { firstNSentences } from "../../utils/thumbnail/prompt-builder.js";
 import { buildLikeSubscribeOutroArgs } from "../../utils/tutorial/like-subscribe-outro.js";
+import { ensureManualTutorialThumbnail } from "../../utils/tutorial/manual-thumbnail.js";
+import { resolveTutorialThumbnailContext } from "../../utils/tutorial/thumbnail-context.js";
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
@@ -211,25 +214,36 @@ export function createTutorialStitchProcessor(
       // silently. Mirrors enqueue-thumbnail.ts (plan A2.6).
       {
         try {
-          const excerpt = firstNSentences(parentJob.script_text ?? "", 5);
-          // See splice.ts — the product name is what makes the thumbnail
-          // branded rather than generic. Omitted when it cannot be derived.
-          const logoSubject = deriveLogoSubject(parentJob.title);
-          await queues.thumbnail.add(
-            "thumbnail",
-            {
-              subjectKind: "tutorial_job",
-              subjectId: parentJobId,
-              format: "TUTORIAL_STUDIO",
-              channelId: parentJob.channel_id,
-              title: parentJob.title,
-              topic: parentJob.title,
-              scriptExcerpt: excerpt,
-              ...(logoSubject !== null ? { logoSubject } : {}),
-              language: "en",
-            },
-            { jobId: `thumbnail-${parentJobId}`, attempts: 2 },
+          const thumbnailContext = await resolveTutorialThumbnailContext(
+            db,
+            parentJob,
           );
+          const settings = await getTutorialSettings(db);
+          if (settings.thumbnail_generation_mode === "manual") {
+            await ensureManualTutorialThumbnail(db, parentJob);
+          } else {
+            const excerpt = firstNSentences(parentJob.script_text ?? "", 5);
+            // See splice.ts — the product name is what makes the thumbnail
+            // branded rather than generic. Omitted when it cannot be derived.
+            const logoSubject = deriveLogoSubject(parentJob.title);
+            await queues.thumbnail.add(
+              "thumbnail",
+              {
+                subjectKind: "tutorial_job",
+                subjectId: parentJobId,
+                format: "TUTORIAL_STUDIO",
+                channelId: thumbnailContext.channelId,
+                title: parentJob.title,
+                topic: parentJob.title,
+                scriptExcerpt: excerpt,
+                ...(logoSubject !== null ? { logoSubject } : {}),
+                language: thumbnailContext.language,
+                thumbnailTextTop: thumbnailContext.thumbnailTextTop,
+                thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
+              },
+              { jobId: `thumbnail-${parentJobId}`, attempts: 2 },
+            );
+          }
         } catch (thumbErr) {
           console.error(
             JSON.stringify({

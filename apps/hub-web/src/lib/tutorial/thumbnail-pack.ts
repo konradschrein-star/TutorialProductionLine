@@ -1,14 +1,10 @@
-import { DEFAULT_STANDARD_LANGUAGES } from "./languages";
+import { ACTIVE_UPLOAD_LANGUAGES } from "./languages";
 
 /**
- * The deterministic thumbnail compositor only fans out over the same five
- * languages as the automatic tutorial translation action. Keeping this list
- * derived from languages.ts prevents the old 10-language thumbnail ZIP from
- * drifting away from the actual production pipeline again.
+ * English plus the four automatic translations. This is the publication
+ * network, not the wider archive/manual translation catalog.
  */
-export const THUMBNAIL_PACK_LANGUAGES = [
-  ...DEFAULT_STANDARD_LANGUAGES,
-] as const;
+export const THUMBNAIL_PACK_LANGUAGES = [...ACTIVE_UPLOAD_LANGUAGES] as const;
 
 export interface ThumbnailPackJob {
   jobId: string | null;
@@ -37,7 +33,7 @@ export function assessThumbnailPackJob(
   job: ThumbnailPackJob,
 ): ThumbnailPackAssessment {
   const reasons: string[] = [];
-  if (!job.jobId) reasons.push("translation job missing");
+  if (!job.jobId) reasons.push("language variant job missing");
   if (job.status !== "COMPLETED") {
     reasons.push(
       job.status ? `video is ${job.status}` : "video status missing",

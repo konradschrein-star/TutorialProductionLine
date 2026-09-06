@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-repository";
+import { db, tutorialJobs } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 
 /**
  * GET /api/thumbnails/[subjectKind]/[subjectId]
@@ -43,5 +46,40 @@ export async function GET(
   }
 
   const rows = await listThumbnailsForSubject(subjectKind, subjectId);
-  return NextResponse.json(rows);
+  if (subjectKind !== "tutorial_job") return NextResponse.json(rows);
+
+  const [job] = await db
+    .select({
+      language: tutorialJobs.language,
+      channelId: tutorialJobs.channel_id,
+    })
+    .from(tutorialJobs)
+    .where(eq(tutorialJobs.id, subjectId))
+    .limit(1);
+  if (!job) {
+    return NextResponse.json(
+      { error: "Tutorial job not found" },
+      { status: 404 },
+    );
+  }
+  const language = normalizeTutorialLanguage(job.language);
+  if (!language || !job.channelId) {
+    return NextResponse.json(
+      {
+        error: "Tutorial thumbnail owner is incomplete",
+        reasons: [
+          ...(!language ? ["tutorial language is missing"] : []),
+          ...(!job.channelId ? ["tutorial channel is missing"] : []),
+        ],
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    rows.filter(
+      (row) =>
+        normalizeTutorialLanguage(row.language) === language &&
+        row.channel_id === job.channelId,
+    ),
+  );
 }

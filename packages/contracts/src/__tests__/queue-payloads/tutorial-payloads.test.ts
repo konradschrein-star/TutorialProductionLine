@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES,
   AUTOMATIC_TUTORIAL_LANGUAGE_CODES,
+  isActiveTutorialUploadLanguage,
+  normalizeTutorialLanguage,
   TutorialGeneratePayloadSchema,
   TutorialSplicePayloadSchema,
   TutorialTranslatePayloadSchema,
@@ -39,12 +42,7 @@ describe("tutorial payloads", () => {
   });
 
   it("locks unattended translation to the four production languages", () => {
-    expect(AUTOMATIC_TUTORIAL_LANGUAGE_CODES).toEqual([
-      "de",
-      "fr",
-      "it",
-      "sv",
-    ]);
+    expect(AUTOMATIC_TUTORIAL_LANGUAGE_CODES).toEqual(["de", "fr", "it", "sv"]);
     // The queue contract remains wider for one-off manual translations; the
     // automatic API and batch scripts consume the narrower constant above.
     expect(
@@ -53,5 +51,18 @@ describe("tutorial payloads", () => {
         targetLanguage: "nl",
       }).success,
     ).toBe(true);
+  });
+
+  it("defines the exact five-language upload network without Dutch", () => {
+    expect(ACTIVE_TUTORIAL_UPLOAD_LANGUAGE_CODES).toEqual([
+      "en",
+      "de",
+      "fr",
+      "it",
+      "sv",
+    ]);
+    expect(isActiveTutorialUploadLanguage("English")).toBe(true);
+    expect(isActiveTutorialUploadLanguage("nl")).toBe(false);
+    expect(normalizeTutorialLanguage(null)).toBeNull();
   });
 });

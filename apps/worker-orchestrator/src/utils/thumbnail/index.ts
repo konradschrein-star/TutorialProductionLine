@@ -75,11 +75,7 @@ function configuredBackend(): RequestThumbnailArgs["backend"] {
 
 /** Iterate vs Regenerate vs Variant — kept STRICTLY apart (DECISIONS §3.2.5). */
 export type ThumbnailGenerationKind =
-  | "original"
-  | "variant"
-  | "iterate"
-  | "regenerate"
-  | "localize";
+  "original" | "variant" | "iterate" | "regenerate" | "localize";
 
 export interface RequestThumbnailArgs {
   subjectKind: "content_job" | "tutorial_job" | "studio" | "test";
@@ -90,6 +86,9 @@ export interface RequestThumbnailArgs {
   title: string;
   topic?: string;
   headlineText?: string;
+  /** Exact localized two-line Tutorial Studio copy; both are required together. */
+  thumbnailTextTop?: string;
+  thumbnailTextBottom?: string;
   scriptExcerpt?: string;
   archetypeId?: string;
   promptMode?: "programmatic" | "deepseek" | "authored" | "manual";
@@ -433,19 +432,26 @@ export async function requestThumbnail(
         (await getThumbnailFormatRule(db, "OTHER").catch(() => undefined));
       // Network contract: action + subject, three words maximum.
       const maxWords = Math.min(rule?.text_max_words ?? 3, 3);
-      const derived = await deriveHeadline({
-        title: args.title,
-        operatorHeadline: args.headlineText ?? null,
-        maxWords,
-        textPolicy: rule?.text_policy ?? null,
-        format: args.format,
-        // The logo shares the frame with the headline, so the headline must not
-        // spell the name the logo already carries.
-        logoSubject: args.logoSubject ?? null,
-        llm: llmHeadline,
-      });
-      headlineText = derived.headline;
-      headlineSource = derived.source;
+      if (args.thumbnailTextTop && args.thumbnailTextBottom) {
+        // These lines belong to the localized tutorial job. Do not condense,
+        // translate, or replace them with a title-derived English headline.
+        headlineText = `${args.thumbnailTextTop.trim()}\n${args.thumbnailTextBottom.trim()}`;
+        headlineSource = "operator";
+      } else {
+        const derived = await deriveHeadline({
+          title: args.title,
+          operatorHeadline: args.headlineText ?? null,
+          maxWords,
+          textPolicy: rule?.text_policy ?? null,
+          format: args.format,
+          // The logo shares the frame with the headline, so the headline must not
+          // spell the name the logo already carries.
+          logoSubject: args.logoSubject ?? null,
+          llm: llmHeadline,
+        });
+        headlineText = derived.headline;
+        headlineSource = derived.source;
+      }
 
       /**
        * The host reference image (input 3 of the three inputs: prompt,
@@ -477,6 +483,7 @@ export async function requestThumbnail(
       brief = compileThumbnailBrief({
         format: args.format,
         channelId,
+        language: args.language ?? "en",
         title: args.title,
         headline: headlineText,
         headlineSource,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db, thumbnails, tutorialJobs } from "@/lib/db";
@@ -8,14 +9,11 @@ import {
   assessThumbnailPack,
   type ThumbnailPackJob,
 } from "@/lib/tutorial/thumbnail-pack";
+import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
 
 export const dynamic = "force-dynamic";
 
-/**
- * The job-bound input for the offline layout compositor. It deliberately
- * returns only translated children from the configured four-language fan-out;
- * it never substitutes English metadata for a missing localized field.
- */
+/** Publication readiness for the five real active-language tutorial variants. */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -26,35 +24,27 @@ export async function GET(
   }
 
   const { id } = await params;
-  const [source] = await db
+  const [requested] = await db
     .select({
       id: tutorialJobs.id,
-      createdBy: tutorialJobs.created_by,
       sourceJobId: tutorialJobs.source_job_id,
-      title: tutorialJobs.title,
     })
     .from(tutorialJobs)
     .where(eq(tutorialJobs.id, id))
     .limit(1);
-
-  if (!source || source.sourceJobId !== null) {
+  if (!requested) {
     return NextResponse.json(
-      { error: "Original tutorial job not found" },
+      { error: "Tutorial job not found" },
       { status: 404 },
     );
   }
-
-  const privileged =
-    session.role === "ADMIN" ||
-    session.role === "MANAGER" ||
-    hasPermission(session, "manage:tutorial-settings");
-  if (source.createdBy !== session.userId && !privileged) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const children = await db
+  const rootId = requested.sourceJobId ?? requested.id;
+  const rows = await db
     .select({
       jobId: tutorialJobs.id,
+      createdBy: tutorialJobs.created_by,
+      sourceJobId: tutorialJobs.source_job_id,
+      channelId: tutorialJobs.channel_id,
       language: tutorialJobs.language,
       title: tutorialJobs.title,
       description: tutorialJobs.description,
@@ -66,48 +56,88 @@ export async function GET(
     })
     .from(tutorialJobs)
     .where(
-      and(
-        eq(tutorialJobs.source_job_id, source.id),
-        inArray(tutorialJobs.language, [...THUMBNAIL_PACK_LANGUAGES]),
-      ),
+      or(eq(tutorialJobs.id, rootId), eq(tutorialJobs.source_job_id, rootId)),
     );
+  const source = rows.find((row) => row.jobId === rootId);
+  if (
+    !source ||
+    source.sourceJobId !== null ||
+    normalizeTutorialLanguage(source.language) !== "en"
+  ) {
+    return NextResponse.json(
+      { error: "Explicit English original tutorial not found" },
+      { status: 409 },
+    );
+  }
 
-  const childIds = children.map((child) => child.jobId);
-  const selected = childIds.length
+  const privileged =
+    session.role === "ADMIN" ||
+    session.role === "MANAGER" ||
+    hasPermission(session, "manage:tutorial-settings");
+  if (source.createdBy !== session.userId && !privileged) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const activeRows = rows.flatMap((row) => {
+    const language = normalizeTutorialLanguage(row.language);
+    return language &&
+      THUMBNAIL_PACK_LANGUAGES.some((candidate) => candidate === language)
+      ? [{ ...row, language }]
+      : [];
+  });
+  const jobIds = activeRows.map((row) => row.jobId);
+  const thumbnailRows = jobIds.length
     ? await db
         .select({
-          jobId: thumbnails.subject_id,
-          thumbnailId: thumbnails.id,
+          id: thumbnails.id,
+          subjectId: thumbnails.subject_id,
+          language: thumbnails.language,
+          channelId: thumbnails.channel_id,
+          status: thumbnails.status,
+          isSelected: thumbnails.is_selected,
+          outputPath: thumbnails.output_path,
         })
         .from(thumbnails)
         .where(
           and(
             eq(thumbnails.subject_kind, "tutorial_job"),
-            inArray(thumbnails.subject_id, childIds),
-            eq(thumbnails.is_selected, true),
-            eq(thumbnails.status, "completed"),
+            inArray(thumbnails.subject_id, jobIds),
           ),
         )
-        .orderBy(desc(thumbnails.created_at))
     : [];
-  const selectedByJob = new Map(
-    selected.map((row) => [row.jobId, row.thumbnailId]),
-  );
 
-  const jobs: ThumbnailPackJob[] = children.flatMap((child) =>
-    child.language
-      ? [
-          {
-            ...child,
-            language: child.language,
-            thumbnailId: selectedByJob.get(child.jobId) ?? null,
-          },
-        ]
-      : [],
+  const selections = new Map(
+    activeRows.map((row) => [
+      row.jobId,
+      assessTutorialThumbnailSelection(
+        row,
+        thumbnailRows.filter((thumbnail) => thumbnail.subjectId === row.jobId),
+      ),
+    ]),
   );
-
+  const jobs: ThumbnailPackJob[] = activeRows.map((row) => ({
+    ...row,
+    thumbnailId: selections.get(row.jobId)?.thumbnail?.id ?? null,
+  }));
+  const pack = assessThumbnailPack(jobs);
+  const variants = pack.variants.map((variant) => {
+    const selection = variant.jobId ? selections.get(variant.jobId) : undefined;
+    const thumbnailReasons = selection?.reasons ?? [
+      "language variant job missing",
+    ];
+    return {
+      ...variant,
+      thumbnailReady: selection?.ready ?? false,
+      thumbnailReasons,
+      ready: variant.ready && Boolean(selection?.ready),
+      reasons: [...variant.reasons, ...thumbnailReasons],
+    };
+  });
   return NextResponse.json({
-    source: { id: source.id, title: source.title },
-    ...assessThumbnailPack(jobs),
+    source: { id: source.jobId, title: source.title },
+    expected: pack.expected,
+    readyCount: variants.filter((variant) => variant.ready).length,
+    ready: variants.every((variant) => variant.ready),
+    variants,
   });
 }

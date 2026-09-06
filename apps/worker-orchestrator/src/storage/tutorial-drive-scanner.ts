@@ -9,7 +9,9 @@ import {
   ne,
   notInArray,
   or,
+  sql,
 } from "drizzle-orm";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 import type { DrizzleClient } from "@repo/db";
 import {
   getTutorialJobById,
@@ -189,19 +191,24 @@ async function findTutorialCandidates(
  * That is precisely why tutorial thumbnails were generated and then never
  * delivered: nothing in the Drive path knew where to look.
  *
- * Preference order: the operator's explicit pick (`is_selected`), then the most
- * recent completed one. Returns null when none exists — the upload sheet then
- * says "NOT GENERATED" rather than the folder silently lacking an image.
+ * Only the operator/rule-selected completed thumbnail for this exact language
+ * and channel is eligible. Returns null when ownership is missing or ambiguous;
+ * no latest-completed or cross-language fallback is allowed.
  */
 async function findTutorialThumbnail(
   db: DrizzleClient,
   tutorialJobId: string,
+  jobLanguage: string | null,
+  channelId: string | null,
 ): Promise<string | null> {
+  const language = normalizeTutorialLanguage(jobLanguage);
+  if (!language || !channelId) return null;
   const rows = await db
     .select({
+      id: thumbnails.id,
       output_path: thumbnails.output_path,
-      is_selected: thumbnails.is_selected,
-      created_at: thumbnails.created_at,
+      language: thumbnails.language,
+      channel_id: thumbnails.channel_id,
     })
     .from(thumbnails)
     .where(
@@ -209,13 +216,29 @@ async function findTutorialThumbnail(
         eq(thumbnails.subject_kind, "tutorial_job"),
         eq(thumbnails.subject_id, tutorialJobId),
         eq(thumbnails.status, "completed"),
+        eq(thumbnails.is_selected, true),
         isNotNull(thumbnails.output_path),
       ),
-    )
-    .orderBy(desc(thumbnails.is_selected), desc(thumbnails.created_at))
-    .limit(1);
+    );
 
-  return rows[0]?.output_path ?? null;
+  const owned = rows.filter(
+    (row) =>
+      normalizeTutorialLanguage(row.language) === language &&
+      row.channel_id === channelId,
+  );
+  if (owned.length !== 1) {
+    logger.warn(
+      {
+        jobId: tutorialJobId,
+        language,
+        channelId,
+        selectedCount: owned.length,
+      },
+      "tutorial thumbnail ownership is missing or ambiguous; Drive delivery skipped",
+    );
+    return null;
+  }
+  return owned[0]!.output_path;
 }
 
 /** Recorded on the settled row, and the handle for undoing this in one SQL. */
@@ -531,6 +554,7 @@ async function backfillLateThumbnails(
       created_at: tutorialJobs.created_at,
       script_done_at: tutorialJobs.script_done_at,
       thumbnail_path: thumbnails.output_path,
+      thumbnail_id: thumbnails.id,
       source_job_id: tutorialJobs.source_job_id,
       language: tutorialJobs.language,
     })
@@ -542,6 +566,24 @@ async function backfillLateThumbnails(
         eq(thumbnails.subject_kind, "tutorial_job"),
         eq(thumbnails.status, "completed"),
         eq(thumbnails.is_selected, true),
+        eq(thumbnails.channel_id, tutorialJobs.channel_id),
+        sql`CASE lower(trim(${thumbnails.language}))
+          WHEN 'english' THEN 'en'
+          WHEN 'german' THEN 'de'
+          WHEN 'french' THEN 'fr'
+          WHEN 'italian' THEN 'it'
+          WHEN 'dutch' THEN 'nl'
+          WHEN 'swedish' THEN 'sv'
+          ELSE lower(trim(${thumbnails.language}))
+        END = CASE lower(trim(${tutorialJobs.language}))
+          WHEN 'english' THEN 'en'
+          WHEN 'german' THEN 'de'
+          WHEN 'french' THEN 'fr'
+          WHEN 'italian' THEN 'it'
+          WHEN 'dutch' THEN 'nl'
+          WHEN 'swedish' THEN 'sv'
+          ELSE lower(trim(${tutorialJobs.language}))
+        END`,
         inArray(thumbnails.review_verdict, ["acceptable", "strong"]),
         isNotNull(thumbnails.output_path),
       ),
@@ -557,8 +599,23 @@ async function backfillLateThumbnails(
     .orderBy(desc(tutorialJobs.created_at))
     .limit(batchSize);
 
-  let uploaded = 0;
+  const rowsByJob = new Map<string, typeof rows>();
   for (const row of rows) {
+    const matches = rowsByJob.get(row.id) ?? [];
+    matches.push(row);
+    rowsByJob.set(row.id, matches);
+  }
+  const unambiguousRows = [...rowsByJob.values()].flatMap((matches) => {
+    if (matches.length === 1) return matches;
+    logger.warn(
+      { jobId: matches[0]?.id, selectedCount: matches.length },
+      "late thumbnail delivery blocked by multiple selected completed assets",
+    );
+    return [];
+  });
+
+  let uploaded = 0;
+  for (const row of unambiguousRows) {
     const localPath = row.thumbnail_path;
     if (localPath === null || localPath === "") continue;
     try {
@@ -572,12 +629,17 @@ async function backfillLateThumbnails(
     const source = row.source_job_id
       ? await getTutorialJobById(db, row.source_job_id)
       : null;
-    const bundleCompletedAt = source?.completed_at ?? source?.created_at ?? completedAt;
+    const bundleCompletedAt =
+      source?.completed_at ?? source?.created_at ?? completedAt;
     try {
       const existing = await getArtifact(db, row.id, "thumbnail");
-      if (existing?.error_kind === "thumbnail_replaced" && existing.drive_file_id) {
+      if (
+        existing?.error_kind === "thumbnail_replaced" &&
+        existing.drive_file_id
+      ) {
         const deleted = await store.deleteArtifactFromDrive(existing.id);
-        if (!deleted) throw new Error("Could not delete the previous Drive thumbnail");
+        if (!deleted)
+          throw new Error("Could not delete the previous Drive thumbnail");
         await resetForRetry(db, existing.id);
       }
       const result = await store.putFinalArtifact({
@@ -649,7 +711,8 @@ async function pushTutorial(
   const source = job.source_job_id
     ? await getTutorialJobById(db, job.source_job_id)
     : null;
-  const bundleCompletedAt = source?.completed_at ?? source?.created_at ?? completedAt;
+  const bundleCompletedAt =
+    source?.completed_at ?? source?.created_at ?? completedAt;
 
   const plan = planTutorialFolder({
     jobId: job.id,
@@ -664,7 +727,12 @@ async function pushTutorial(
 
   // Resolve the thumbnail before collecting artefacts, so it ships alongside
   // the video instead of living only in the app.
-  const thumbnailPath = await findTutorialThumbnail(db, job.id);
+  const thumbnailPath = await findTutorialThumbnail(
+    db,
+    job.id,
+    job.language,
+    job.channel_id,
+  );
   const fileArtifacts = collectFinishedTutorialArtifacts(
     { ...job, thumbnail_path: thumbnailPath },
     mediaRoot,
