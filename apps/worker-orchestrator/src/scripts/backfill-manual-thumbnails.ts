@@ -8,6 +8,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  storageArtifacts,
   tutorialJobs,
 } from "@repo/db";
 import { ensureManualTutorialThumbnail } from "../utils/tutorial/manual-thumbnail.js";
@@ -51,6 +52,30 @@ for (let offset = 0; offset < jobs.length; offset += 4) {
         const result = await ensureManualTutorialThumbnail(db, job, {
           forceRender,
         });
+        if (forceRender) {
+          // `ensureManualTutorialThumbnail` updates the selected local asset,
+          // but the Drive scanner normally sees a settled thumbnail artifact
+          // and correctly skips it. Re-open only that thumbnail artifact so
+          // the scanner replaces the old Drive file with the newly rendered
+          // bytes. Jobs that have never shipped a thumbnail have no row yet;
+          // their normal first delivery remains unchanged.
+          await db
+            .update(storageArtifacts)
+            .set({
+              state: "pending",
+              error_kind: "thumbnail_replaced",
+              error_message:
+                "Thumbnail bulk refresh completed; replace Drive copy",
+              updated_at: new Date(),
+            })
+            .where(
+              and(
+                eq(storageArtifacts.job_id, job.id),
+                eq(storageArtifacts.owner_kind, "tutorial_job"),
+                eq(storageArtifacts.kind, "thumbnail"),
+              ),
+            );
+        }
         if (result.created) created += 1;
         else existing += 1;
       } catch (error) {
