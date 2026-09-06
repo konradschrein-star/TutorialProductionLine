@@ -29,6 +29,9 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+export { defringePersonaRgba } from "./persona-defringe.js";
+export type { PersonaDefringeOptions } from "./persona-defringe.js";
+
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
 const FFPROBE_BIN = process.env["FFPROBE_PATH"] ?? "ffprobe";
 

@@ -27,6 +27,7 @@ try {
     "0085_tutorial_uploader_exchange.sql",
     "0086_channel_uploader_mapping.sql",
     "0087_tutorial_uploader_verified_projection.sql",
+    "0088_office_thumbnail_backgrounds.sql",
   ]) {
     const sql = await readFile(resolve(here, "migrations", name), "utf8");
     await client.unsafe(sql);
