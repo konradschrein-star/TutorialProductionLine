@@ -11,9 +11,8 @@ const CHANNEL_LANGUAGE_NAMES: Record<string, string> = {
   en: "English",
   de: "German",
   fr: "French",
-  es: "Spanish",
-  ja: "Japanese",
-  ko: "Korean",
+  it: "Italian",
+  sv: "Swedish",
 };
 const CHANNEL_LANGUAGES = ["en", ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES].map(
   (code) => ({

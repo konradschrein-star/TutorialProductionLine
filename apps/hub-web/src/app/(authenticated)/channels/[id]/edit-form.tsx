@@ -11,9 +11,8 @@ const CHANNEL_LANGUAGE_NAMES: Record<string, string> = {
   en: "English",
   de: "German",
   fr: "French",
-  es: "Spanish",
-  ja: "Japanese",
-  ko: "Korean",
+  it: "Italian",
+  sv: "Swedish",
 };
 const CHANNEL_LANGUAGES = ["en", ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES].map(
   (code) => ({
@@ -164,7 +163,7 @@ export function V2ChannelEditForm({ channel }: Props) {
         </select>
         <span style={{ fontSize: 10, color: "rgba(205,195,215,0.55)" }}>
           English is the source language; automatic translations use German,
-          French, Spanish, Japanese, and Korean.
+          French, Italian, and Swedish.
         </span>
       </div>
 

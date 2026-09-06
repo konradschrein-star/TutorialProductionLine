@@ -8,9 +8,10 @@ use the YouTube Data API.
 ## Automatic language scope
 
 English is the source tutorial. Unattended translation is compiled to exactly
-five targets: German (`de`), French (`fr`), Spanish (`es`), Japanese (`ja`),
-and Korean (`ko`). The automatic API and batch tooling cannot widen that set
-through browser storage or environment variables. Other languages remain
+four targets: German (`de`), French (`fr`), Italian (`it`), and Swedish (`sv`).
+Together with English, these are the five production channels. The automatic
+API and batch tooling cannot widen that set through browser storage or
+environment variables. Other languages remain
 available only as explicit, single-language manual translations.
 
 Each Studio channel also needs an explicit `uploader_channel_key` matching the

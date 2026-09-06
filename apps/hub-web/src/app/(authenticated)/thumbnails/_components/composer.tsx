@@ -18,7 +18,7 @@ import { THUMBNAIL_PACK_LANGUAGES } from "@/lib/tutorial/thumbnail-pack";
  * drag/resize layers on a fixed canvas, a static offline asset catalog served
  * from /public, custom PNG uploads persisted to localStorage as base64, and
  * deterministic PNG export (html-to-image). When opened from Tutorial Studio,
- * it renders and attaches the five real localized publication variants.
+ * it renders and attaches the four real localized publication variants.
  *
  * The AI-generation flow (Generate/Archetypes tabs) depends on media-gateway
  * infra the target box does not have; this composer is the real tool + fallback.
@@ -1140,7 +1140,7 @@ export function Composer() {
               Manual Composer
             </div>
             <div style={{ fontSize: 10.5, color: TEXT_2 }}>
-              Compose once, then render the five translated publication
+              Compose once, then render the four translated publication
               variants.
             </div>
           </div>
@@ -1250,7 +1250,7 @@ export function Composer() {
           <div style={{ fontSize: 10.5, color: TEXT_2, marginTop: 4 }}>
             {publicationPack
               ? `${publicationPack.readyCount}/${publicationPack.expected} translated videos have complete metadata and thumbnail copy.`
-              : "The job link supplies the five translated titles, descriptions, tags and headline lines."}
+              : "The job link supplies the four translated titles, descriptions, tags and headline lines."}
           </div>
           {publicationPack && (
             <div

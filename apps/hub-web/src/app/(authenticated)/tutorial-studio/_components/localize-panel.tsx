@@ -16,9 +16,9 @@ import { toast } from "sonner";
  *
  * Bulk actions ("Translate everything missing" & row "Translate standard") strictly
  * fan out translations only for the 5 active Standard Languages (German, French,
- * Spanish, Japanese, Korean) to prevent unintended token and compute explosion.
+ * Italian, Swedish) to prevent unintended token and compute explosion.
  *
- * Automatic fan-out is deliberately locked to those five languages. Additional
+ * Automatic fan-out is deliberately locked to those four languages. Additional
  * languages remain available as explicit, per-video actions.
  */
 
@@ -158,7 +158,7 @@ export function LocalizePanel() {
     [load],
   );
 
-  // One click → strictly fan out only missing STANDARD languages (5 core languages by default).
+  // One click → strictly fan out only missing STANDARD languages (4 translated languages by default).
   const translateAllMissingStandard = useCallback(async () => {
     if (!sources || sources.length === 0) return;
     setBulkRunning(true);
@@ -186,7 +186,7 @@ export function LocalizePanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header with the fixed five-language automatic set. */}
+      {/* Header with the fixed four-language automatic set. */}
       <div
         style={{
           display: "flex",

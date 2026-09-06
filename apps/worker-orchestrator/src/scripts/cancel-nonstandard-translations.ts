@@ -1,7 +1,7 @@
 /**
  * Cancel in-progress and queued translation jobs for non-standard languages.
  *
- * Enforces the 5-language constraint (German, French, Spanish, Japanese, Korean)
+ * Enforces the 4-language constraint (German, French, Italian, Swedish)
  * by cancelling all non-standard translation children currently queued or in-flight
  * and removing them from Redis BullMQ queues.
  *

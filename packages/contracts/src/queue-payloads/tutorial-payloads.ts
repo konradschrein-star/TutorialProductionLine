@@ -7,9 +7,8 @@ import { z } from "zod";
 export const AUTOMATIC_TUTORIAL_LANGUAGE_CODES = [
   "de",
   "fr",
-  "es",
-  "ja",
-  "ko",
+  "it",
+  "sv",
 ] as const;
 export type AutomaticTutorialLanguage =
   (typeof AUTOMATIC_TUTORIAL_LANGUAGE_CODES)[number];

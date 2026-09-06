@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * The job-bound input for the offline layout compositor. It deliberately
- * returns only translated children from the configured five-language fan-out;
+ * returns only translated children from the configured four-language fan-out;
  * it never substitutes English metadata for a missing localized field.
  */
 export async function GET(

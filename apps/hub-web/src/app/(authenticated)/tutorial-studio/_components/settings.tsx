@@ -924,7 +924,7 @@ function StandardTranslationLanguagesSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.5 }}>
-        Automatic translation is currently locked to exactly five languages.
+        Automatic translation is currently locked to exactly four languages.
         Other languages can still be requested explicitly for an individual
         tutorial, but they are never included in automatic fan-out.
       </div>

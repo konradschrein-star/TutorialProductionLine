@@ -38,20 +38,19 @@ describe("tutorial payloads", () => {
     ).toBe(true);
   });
 
-  it("locks unattended translation to the five launch languages", () => {
+  it("locks unattended translation to the four production languages", () => {
     expect(AUTOMATIC_TUTORIAL_LANGUAGE_CODES).toEqual([
       "de",
       "fr",
-      "es",
-      "ja",
-      "ko",
+      "it",
+      "sv",
     ]);
     // The queue contract remains wider for one-off manual translations; the
     // automatic API and batch scripts consume the narrower constant above.
     expect(
       TutorialTranslatePayloadSchema.safeParse({
         sourceJobId: "11111111-1111-1111-1111-111111111111",
-        targetLanguage: "it",
+        targetLanguage: "nl",
       }).success,
     ).toBe(true);
   });

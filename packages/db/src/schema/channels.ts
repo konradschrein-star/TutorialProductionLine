@@ -52,7 +52,7 @@ export const channels = pgTable(
     accepts_rankings: boolean("accepts_rankings").notNull().default(false),
     // Is this a PRIMARY channel a VA may create original tutorials against?
     // Migration 0064. The friend's line has ONE primary channel (USA/English);
-    // its German/French/Spanish/Japanese/Korean counterparts are SECONDARY —
+    // its German/French/Italian/Swedish counterparts are SECONDARY —
     // they only ever receive *translations* produced from the primary via the
     // Localize lane, so a VA must never be able to start an original job (or,
     // worse, an original job in a mismatched language) against them. The Create

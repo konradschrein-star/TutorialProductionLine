@@ -66,14 +66,14 @@ export async function POST(
   }
   if (!job.sourceJobId || !job.language) {
     return NextResponse.json(
-      { error: "The five-language pack only accepts localized child jobs" },
+      { error: "The four-language pack only accepts localized child jobs" },
       { status: 409 },
     );
   }
   const jobLanguage = job.language;
   if (!THUMBNAIL_PACK_LANGUAGES.includes(jobLanguage)) {
     return NextResponse.json(
-      { error: "Localized job is outside the automatic five-language pack" },
+      { error: "Localized job is outside the automatic four-language pack" },
       { status: 409 },
     );
   }
