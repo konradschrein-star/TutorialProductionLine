@@ -726,6 +726,8 @@ export function createTutorialGenerateProcessor(
             script_done_at: new Date(),
             description: uploadMeta.description,
             tags: uploadMeta.tags,
+            thumbnail_text_top: uploadMeta.thumbnailTextTop,
+            thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
             status: "AWAITING_RECORDINGS",
             progress: 50,
           });
@@ -887,6 +889,8 @@ export function createTutorialGenerateProcessor(
             script_done_at: new Date(),
             description: uploadMeta.description,
             tags: uploadMeta.tags,
+            thumbnail_text_top: uploadMeta.thumbnailTextTop,
+            thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
             status: "AWAITING_UPLOAD",
           });
 
@@ -957,6 +961,8 @@ export function createTutorialGenerateProcessor(
           script_done_at: new Date(),
           description: uploadMeta.description,
           tags: uploadMeta.tags,
+          thumbnail_text_top: uploadMeta.thumbnailTextTop,
+          thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
           status: "GENERATING_AUDIO",
           progress: 50,
         });

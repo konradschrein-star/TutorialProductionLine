@@ -67,6 +67,7 @@ export * from "./llm-pool.js";
 export * from "./tutorial-prompt-presets.js";
 export * from "./encrypted-secrets.js";
 export * from "./tutorial-settings.js";
+export * from "./tutorial-upload-exchange.js";
 // Clip Forge (schema recovered 2026-06-17 from the live DB)
 export * from "./clip-forge.js";
 // Provider / capability registry (migration 0038)

@@ -1,4 +1,4 @@
-/** Create English + five launch-language manual thumbnails for every finished source video. */
+/** Create English + four launch-language manual thumbnails for every finished source video. */
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import { and, createDrizzleClient, eq, inArray, isNotNull, isNull, tutorialJobs } from "@repo/db";

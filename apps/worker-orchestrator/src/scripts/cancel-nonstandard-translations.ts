@@ -1,7 +1,7 @@
 /**
  * Cancel in-progress and queued translation jobs for non-standard languages.
  *
- * Enforces the 5-language constraint (German, French, Spanish, Japanese, Korean)
+ * Enforces the 4-language constraint (German, French, Italian, Swedish)
  * by cancelling all non-standard translation children currently queued or in-flight
  * and removing them from Redis BullMQ queues.
  *
@@ -21,6 +21,7 @@ import {
   createTutorialTranslateQueue,
   createTutorialSpliceQueue,
 } from "@repo/queue";
+import { AUTOMATIC_TUTORIAL_LANGUAGE_CODES } from "@repo/contracts";
 
 const DATABASE_URL = process.env["DATABASE_URL"];
 const REDIS_URL = process.env["REDIS_URL"];
@@ -29,10 +30,7 @@ if (!DATABASE_URL || !REDIS_URL) {
   process.exit(1);
 }
 
-const ALLOWED_LANGS = (process.env["ALLOWED_LANGS"] ?? "de,fr,es,ja,ko")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+const ALLOWED_LANGS = [...AUTOMATIC_TUTORIAL_LANGUAGE_CODES];
 
 async function main() {
   const db = createDrizzleClient(DATABASE_URL!);

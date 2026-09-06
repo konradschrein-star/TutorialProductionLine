@@ -1,7 +1,7 @@
 /**
  * Target languages for tutorial localization.
  *
- * Launch set: German, French, Italian, Dutch, Swedish. This list is the single
+ * Launch set: German, French, Italian, Swedish. This list is the single
  * source of truth for the Localize UI + the translate API — extend it with any
  * language that has a decent RPM / large viewership (the owner's plan is "every
  * conceivable language" over time).
@@ -14,17 +14,11 @@ export interface TargetLanguage {
 }
 
 /**
- * Standard launch set: 5 localized channels (German, French, Italian, Dutch, Swedish).
+ * Standard launch set: 4 translated languages (German, French, Italian, Swedish).
  * Auto-translation ("Translate everything missing" / "Translate all") strictly targets
  * these standard languages by default.
  */
-export const DEFAULT_STANDARD_LANGUAGES: readonly string[] = [
-  "de",
-  "fr",
-  "it",
-  "nl",
-  "sv",
-] as const;
+export const DEFAULT_STANDARD_LANGUAGES: readonly string[] = ["de", "fr", "it", "sv"];
 
 export const ALL_TARGET_LANGUAGES: TargetLanguage[] = [
   { code: "de", name: "German", native: "Deutsch", flag: "🇩🇪" },

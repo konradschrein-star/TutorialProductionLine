@@ -1,10 +1,25 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Save } from 'lucide-react';
-import { createChannel, updateChannel } from '@/app/actions/channels';
-import type { Channel } from '@/lib/repositories/channel-repository';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Save } from "lucide-react";
+import { AUTOMATIC_TUTORIAL_LANGUAGE_CODES } from "@repo/contracts";
+import { createChannel, updateChannel } from "@/app/actions/channels";
+import type { Channel } from "@/lib/repositories/channel-repository";
+
+const CHANNEL_LANGUAGE_NAMES: Record<string, string> = {
+  en: "English",
+  de: "German",
+  fr: "French",
+  it: "Italian",
+  sv: "Swedish",
+};
+const CHANNEL_LANGUAGES = ["en", ...AUTOMATIC_TUTORIAL_LANGUAGE_CODES].map(
+  (code) => ({
+    code,
+    name: CHANNEL_LANGUAGE_NAMES[code] ?? code.toUpperCase(),
+  }),
+);
 
 /**
  * Channel Form Component
@@ -21,11 +36,14 @@ export function ChannelForm({ channel }: ChannelFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
-  const [name, setName] = useState(channel?.name || '');
+  const [name, setName] = useState(channel?.name || "");
   const [youtubeChannelId, setYoutubeChannelId] = useState(
-    channel?.youtube_channel_id || ''
+    channel?.youtube_channel_id || "",
   );
-  const [language, setLanguage] = useState(channel?.language || 'en');
+  const [language, setLanguage] = useState(channel?.language || "en");
+  const [uploaderChannelKey, setUploaderChannelKey] = useState(
+    channel?.uploader_channel_key || "",
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const isEdit = !!channel;
@@ -34,14 +52,14 @@ export function ChannelForm({ channel }: ChannelFormProps) {
     const newErrors: Record<string, string> = {};
 
     if (!name.trim()) {
-      newErrors.name = 'Name is required';
+      newErrors.name = "Name is required";
     }
 
     if (!youtubeChannelId.trim()) {
-      newErrors.youtube_channel_id = 'YouTube Channel ID is required';
+      newErrors.youtube_channel_id = "YouTube Channel ID is required";
     } else if (!/^UC[a-zA-Z0-9_-]{22}$/.test(youtubeChannelId)) {
       newErrors.youtube_channel_id =
-        'Invalid YouTube Channel ID format (must start with UC and be 24 characters)';
+        "Invalid YouTube Channel ID format (must start with UC and be 24 characters)";
     }
 
     setErrors(newErrors);
@@ -62,18 +80,22 @@ export function ChannelForm({ channel }: ChannelFormProps) {
           name,
           youtube_channel_id: youtubeChannelId,
           language,
+          uploader_channel_key: uploaderChannelKey,
         })
       : await createChannel({
           name,
           youtube_channel_id: youtubeChannelId,
           language,
+          uploader_channel_key: uploaderChannelKey,
         });
 
     if (result.success) {
-      router.push('/channels');
+      router.push("/channels");
       router.refresh();
     } else {
-      alert(result.error || `Failed to ${isEdit ? 'update' : 'create'} channel`);
+      alert(
+        result.error || `Failed to ${isEdit ? "update" : "create"} channel`,
+      );
       setLoading(false);
     }
   };
@@ -120,6 +142,23 @@ export function ChannelForm({ channel }: ChannelFormProps) {
 
         <div>
           <label className="block text-sm font-medium text-text mb-1">
+            Uploader Channel Key
+          </label>
+          <input
+            type="text"
+            value={uploaderChannelKey}
+            onChange={(e) => setUploaderChannelKey(e.target.value)}
+            className="w-full px-3 py-2 bg-surface-container border border-surface-bright rounded-lg text-text font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+            placeholder="tutorial_usa"
+          />
+          <p className="mt-1 text-xs text-text-muted">
+            Exact profile key configured in the uploader. Leave blank to block
+            automated dispatch for this channel.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-text mb-1">
             Channel Language
           </label>
           <select
@@ -127,8 +166,11 @@ export function ChannelForm({ channel }: ChannelFormProps) {
             onChange={(e) => setLanguage(e.target.value)}
             className="w-full px-3 py-2 bg-surface-container border border-surface-bright rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="en">English</option>
-            <option value="de">German</option>
+            {CHANNEL_LANGUAGES.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name}
+              </option>
+            ))}
           </select>
           <p className="mt-1 text-xs text-text-muted">
             Default language for jobs created on this channel
@@ -142,11 +184,11 @@ export function ChannelForm({ channel }: ChannelFormProps) {
             className="flex items-center space-x-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-all disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
-            <span>{isEdit ? 'Save Changes' : 'Create Channel'}</span>
+            <span>{isEdit ? "Save Changes" : "Create Channel"}</span>
           </button>
           <button
             type="button"
-            onClick={() => router.push('/channels')}
+            onClick={() => router.push("/channels")}
             disabled={loading}
             className="px-4 py-2 bg-surface-container hover:bg-surface-bright text-text rounded-lg transition-all disabled:opacity-50"
           >

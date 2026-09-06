@@ -57,5 +57,14 @@ module.exports = {
       script: 'dist/storage/standalone.js',
       max_memory_restart: '1000M',
     },
+    {
+      // Low-latency Studio -> desktop-uploader job and receipt exchange. Keep
+      // this out of the archive process so historical copies cannot delay it.
+      ...common,
+      name: 'tutorial-uploader-exchange',
+      cwd: path.join(root, 'apps', 'worker-orchestrator'),
+      script: 'dist/storage/tutorial-uploader-exchange-standalone.js',
+      max_memory_restart: '750M',
+    },
   ],
 };

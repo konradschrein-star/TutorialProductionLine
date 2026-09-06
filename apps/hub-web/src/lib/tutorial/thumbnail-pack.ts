@@ -1,0 +1,103 @@
+import { DEFAULT_STANDARD_LANGUAGES } from "./languages";
+
+/**
+ * The deterministic thumbnail compositor only fans out over the same five
+ * languages as the automatic tutorial translation action. Keeping this list
+ * derived from languages.ts prevents the old 10-language thumbnail ZIP from
+ * drifting away from the actual production pipeline again.
+ */
+export const THUMBNAIL_PACK_LANGUAGES = [
+  ...DEFAULT_STANDARD_LANGUAGES,
+] as const;
+
+export interface ThumbnailPackJob {
+  jobId: string | null;
+  language: string;
+  title: string | null;
+  description: string | null;
+  tags: string[] | null;
+  thumbnailTextTop: string | null;
+  thumbnailTextBottom: string | null;
+  status: string | null;
+  finalPath: string | null;
+  thumbnailId: string | null;
+}
+
+export interface ThumbnailPackAssessment {
+  ready: boolean;
+  reasons: string[];
+}
+
+/**
+ * Fail-closed readiness for one localized publishing variant. These are the
+ * fields the uploader needs; a plausible English fallback is intentionally not
+ * accepted for a missing translation.
+ */
+export function assessThumbnailPackJob(
+  job: ThumbnailPackJob,
+): ThumbnailPackAssessment {
+  const reasons: string[] = [];
+  if (!job.jobId) reasons.push("translation job missing");
+  if (job.status !== "COMPLETED") {
+    reasons.push(
+      job.status ? `video is ${job.status}` : "video status missing",
+    );
+  }
+  if (!job.finalPath?.trim()) reasons.push("final video missing");
+  if (!job.title?.trim()) reasons.push("localized title missing");
+  if (!job.description?.trim()) reasons.push("localized description missing");
+  if (!job.tags?.some((tag) => tag.trim().length > 0)) {
+    reasons.push("localized tags missing");
+  }
+  if (!job.thumbnailTextTop?.trim()) reasons.push("thumbnail top line missing");
+  if (!job.thumbnailTextBottom?.trim()) {
+    reasons.push("thumbnail bottom line missing");
+  }
+  return { ready: reasons.length === 0, reasons };
+}
+
+export function assessThumbnailPack(jobs: readonly ThumbnailPackJob[]): {
+  ready: boolean;
+  expected: number;
+  readyCount: number;
+  variants: Array<ThumbnailPackJob & ThumbnailPackAssessment>;
+} {
+  const byLanguage = new Map<string, ThumbnailPackJob[]>();
+  for (const job of jobs) {
+    const matches = byLanguage.get(job.language) ?? [];
+    matches.push(job);
+    byLanguage.set(job.language, matches);
+  }
+  const variants = THUMBNAIL_PACK_LANGUAGES.map((language) => {
+    const matches = byLanguage.get(language) ?? [];
+    const job =
+      matches[0] ??
+      ({
+        jobId: null,
+        language,
+        title: null,
+        description: null,
+        tags: null,
+        thumbnailTextTop: null,
+        thumbnailTextBottom: null,
+        status: null,
+        finalPath: null,
+        thumbnailId: null,
+      } satisfies ThumbnailPackJob);
+    if (matches.length > 1) {
+      return {
+        ...job,
+        ready: false,
+        reasons: [`multiple translation jobs found (${matches.length})`],
+      };
+    }
+    return { ...job, ...assessThumbnailPackJob(job) };
+  });
+  const readyCount = variants.filter((variant) => variant.ready).length;
+  return {
+    ready: readyCount === THUMBNAIL_PACK_LANGUAGES.length,
+    expected: THUMBNAIL_PACK_LANGUAGES.length,
+    readyCount,
+    variants,
+  };
+}

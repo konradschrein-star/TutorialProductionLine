@@ -9,9 +9,21 @@ import {
   users,
   storageArtifacts,
   thumbnails,
+  tutorialUploadDispatches,
 } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
+
+export interface UploaderDispatchView {
+  id: string;
+  state: string;
+  latestMessage: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  youtubeVideoUrl: string | null;
+  requestedAt: string;
+  updatedAt: string;
+}
 
 export interface TranslationDeliveryItem {
   id: string;
@@ -42,6 +54,7 @@ export interface TranslationDeliveryItem {
   thumbnailId: string | null;
   thumbnailKind: "none" | "automatic" | "ai";
   thumbnailApproved: boolean;
+  uploader: UploaderDispatchView | null;
 }
 
 export interface VideoDeliveryRow {
@@ -68,6 +81,7 @@ export interface VideoDeliveryRow {
   driveUrl: string | null;
   completedAt: string | null;
   createdAt: string;
+  uploader: UploaderDispatchView | null;
   translations: TranslationDeliveryItem[];
   description: string | null;
   tags: string[] | null;
@@ -86,13 +100,15 @@ export interface VideoDeliveryRow {
  *
  * Master Delivery & Uploads overview table:
  * Fetches all completed parent tutorial videos with adjacent keyword, creator,
- * Google Drive delivery links, manual upload status, and nested translations.
+ * Google Drive links, manual status, uploader receipt projection, and nested
+ * translations.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await getSession();
   if (!session || !hasPermission(session, "view:production")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const canDispatch = hasPermission(session, "upload:youtube-video");
 
   try {
     // 1. Fetch completed primary tutorial jobs (originals)
@@ -273,8 +289,40 @@ export async function GET(request: Request): Promise<NextResponse> {
       return "pending" as const;
     };
 
+    // 4. Read the Studio projection of uploader receipts. The uploader remains
+    // a separate service; these rows are its durable request/receipt boundary.
+    const dispatchRows =
+      allJobIds.length > 0
+        ? await db
+            .select({
+              id: tutorialUploadDispatches.id,
+              jobId: tutorialUploadDispatches.tutorial_job_id,
+              state: tutorialUploadDispatches.state,
+              latestMessage: tutorialUploadDispatches.latest_message,
+              errorCode: tutorialUploadDispatches.error_code,
+              errorMessage: tutorialUploadDispatches.error_message,
+              youtubeVideoUrl: tutorialUploadDispatches.youtube_video_url,
+              requestedAt: tutorialUploadDispatches.requested_at,
+              updatedAt: tutorialUploadDispatches.updated_at,
+            })
+            .from(tutorialUploadDispatches)
+            .where(inArray(tutorialUploadDispatches.tutorial_job_id, allJobIds))
+        : [];
+    const dispatchMap = new Map<string, UploaderDispatchView>();
+    for (const dispatch of dispatchRows) {
+      dispatchMap.set(dispatch.jobId, {
+        id: dispatch.id,
+        state: dispatch.state,
+        latestMessage: dispatch.latestMessage,
+        errorCode: dispatch.errorCode,
+        errorMessage: dispatch.errorMessage,
+        youtubeVideoUrl: dispatch.youtubeVideoUrl,
+        requestedAt: dispatch.requestedAt.toISOString(),
+        updatedAt: dispatch.updatedAt.toISOString(),
+      });
+    }
 
-    // 4. Group translations by parent ID
+    // 5. Group translations by parent ID
     const translationsMap = new Map<string, TranslationDeliveryItem[]>();
     for (const c of childRows) {
       if (!c.sourceJobId) continue;
@@ -312,10 +360,11 @@ export async function GET(request: Request): Promise<NextResponse> {
         thumbnailId: thumbnail?.id ?? null,
         thumbnailKind: thumbnailKind(thumbnail),
         thumbnailApproved: thumbnail?.reviewVerdict === "acceptable" || thumbnail?.reviewVerdict === "strong",
+        uploader: dispatchMap.get(c.id) ?? null,
       });
     }
 
-    // 5. Build final response rows
+    // 6. Build final response rows
     const videos: VideoDeliveryRow[] = parents.map((p) => {
       const d = driveMap.get(p.id);
       const thumbnail = thumbnailMap.get(p.id);
@@ -343,6 +392,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         driveUrl: d?.driveUrl ?? null,
         completedAt: p.completedAt ? p.completedAt.toISOString() : null,
         createdAt: p.createdAt.toISOString(),
+        uploader: dispatchMap.get(p.id) ?? null,
         translations: translationsMap.get(p.id) ?? [],
         description: p.description,
         tags: p.tags,
@@ -365,6 +415,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       totalCount: videos.length,
       totalUploaded,
       totalPending,
+      canDispatch,
     });
   } catch (error) {
     console.error("Failed to load uploads delivery overview:", error);
@@ -401,6 +452,21 @@ export async function PATCH(request: Request): Promise<NextResponse> {
 
     const isUploaded = Boolean(body.isUploaded);
     const uploader = session.email ?? session.userId ?? "manual_uploader";
+
+    const [blockingDispatch] = await db
+      .select({ id: tutorialUploadDispatches.id })
+      .from(tutorialUploadDispatches)
+      .where(eq(tutorialUploadDispatches.tutorial_job_id, jobId))
+      .limit(1);
+    if (blockingDispatch) {
+      return NextResponse.json(
+        {
+          error:
+            "Manual upload status is locked while an uploader dispatch exists",
+        },
+        { status: 409 },
+      );
+    }
 
     await db
       .update(tutorialJobs)

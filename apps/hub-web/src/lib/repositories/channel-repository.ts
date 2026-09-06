@@ -1,5 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { db, channels } from "../db";
+import { normalizeUploaderChannelKey } from "../tutorial/uploader-channel-key";
 
 /**
  * Channel Repository
@@ -23,6 +24,8 @@ export interface SubtitleConfig {
 export interface Channel {
   id: string;
   youtube_channel_id: string;
+  /** Provider-neutral key of the uploader's isolated channel profile. */
+  uploader_channel_key: string | null;
   name: string;
   language: string;
   subtitle_config?: SubtitleConfig | null;
@@ -133,6 +136,7 @@ export async function createChannel(data: {
   youtube_channel_id?: string;
   name: string;
   language?: string;
+  uploader_channel_key?: string | null;
 }): Promise<Channel> {
   // The YouTube channel ID is optional here — a friend can produce and archive
   // tutorials to Drive long before a channel is linked. The column is
@@ -149,6 +153,9 @@ export async function createChannel(data: {
       youtube_channel_id: youtubeId,
       name: data.name,
       language: data.language ?? "en",
+      uploader_channel_key: normalizeUploaderChannelKey(
+        data.uploader_channel_key,
+      ),
       // This is a tutorial tool — every channel should be selectable for
       // tutorials the moment it is created. Defaulting the column to false made
       // new channels invisible to the job picker until fixed by hand in SQL.
@@ -173,12 +180,22 @@ export async function updateChannel(
     name: string;
     language: string;
     is_primary: boolean;
+    uploader_channel_key: string | null;
   }>,
 ): Promise<Channel | null> {
+  const normalized =
+    data.uploader_channel_key === undefined
+      ? data
+      : {
+          ...data,
+          uploader_channel_key: normalizeUploaderChannelKey(
+            data.uploader_channel_key,
+          ),
+        };
   const result = await db
     .update(channels)
     .set({
-      ...data,
+      ...normalized,
       updated_at: new Date(),
     })
     .where(eq(channels.id, id))

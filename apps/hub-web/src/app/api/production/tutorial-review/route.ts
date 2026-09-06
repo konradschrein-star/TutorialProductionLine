@@ -100,7 +100,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         // Only the ENGLISH originals the VA actually recorded. Localized
         // children (source_job_id set) reuse the same recorded background and
         // are auto-delivered, so they never need a separate approval — showing
-        // them would make the VA re-approve the same video in five languages.
+        // them would make the VA re-approve the same video in four languages.
         isNull(tutorialJobs.source_job_id),
         ...(scopeAll ? [] : [eq(tutorialJobs.created_by, session.userId)]),
       ),

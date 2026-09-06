@@ -29,13 +29,12 @@ const TEXT_2 = "#cdc3d7";
 
 const CUSTOM_ASSETS_KEY = "ts_custom_assets";
 
-// English source + the five localized launch channels, in export order.
+// English source + the four localized launch channels, in export order.
 const LANGUAGES = [
   "English",
   "German",
   "French",
   "Italian",
-  "Dutch",
   "Swedish",
 ] as const;
 
@@ -44,7 +43,6 @@ const INITIAL_VARIANT_TEXT: Record<(typeof LANGUAGES)[number], string> = {
   German: "VIDEO HOCHLADEN",
   French: "IMPORTER VIDÉO",
   Italian: "CARICA VIDEO",
-  Dutch: "VIDEO UPLOADEN",
   Swedish: "LADDA UPP VIDEO",
 };
 
@@ -114,7 +112,6 @@ const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
   de: "German", german: "German",
   fr: "French", french: "French",
   it: "Italian", italian: "Italian",
-  nl: "Dutch", dutch: "Dutch",
   sv: "Swedish", swedish: "Swedish",
 };
 

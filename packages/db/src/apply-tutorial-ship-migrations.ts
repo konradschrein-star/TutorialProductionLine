@@ -23,6 +23,9 @@ try {
     "0081_thumbnail_library_assets.sql",
     "0082_thumbnail_rotation_settings.sql",
     "0083_uploader_settings.sql",
+    "0084_tutorial_thumbnail_copy.sql",
+    "0085_tutorial_uploader_exchange.sql",
+    "0086_channel_uploader_mapping.sql",
   ]) {
     const sql = await readFile(resolve(here, "migrations", name), "utf8");
     await client.unsafe(sql);
