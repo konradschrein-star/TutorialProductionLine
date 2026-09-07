@@ -164,7 +164,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         channelName: channels.name,
         language: calendarLanguage,
         count: sql<number>`cast(count(*) as integer)`,
-        latestUploadAt: sql<Date>`max(${calendarTimestamp})`,
+        // Aggregates over timestamptz are returned as strings by this driver.
+        latestUploadAt: sql<string>`max(${calendarTimestamp})`,
       })
       .from(tutorialJobs)
       .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
@@ -191,7 +192,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       channelName: row.channelName ?? "Unassigned channel",
       language: row.language,
       count: Number(row.count),
-      latestUploadAt: row.latestUploadAt.toISOString(),
+      latestUploadAt: new Date(row.latestUploadAt).toISOString(),
     }));
 
     // 1. Fetch completed primary tutorial jobs (originals)
