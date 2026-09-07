@@ -155,19 +155,23 @@ export async function GET() {
       reconciled.add(job.sourceJobId);
       const scheduledAt = safeDate(job.scheduledFor);
       const isActuallyPublic = job.visibility === "public";
+      const isScheduled =
+        job.visibility === "scheduled" || Boolean(scheduledAt);
+      const completedAt = safeDate(job.finishedAt) ?? new Date();
       await db
         .update(tutorialJobs)
         .set({
-          uploader_status: isActuallyPublic ? "uploaded" : "scheduled",
-          youtube_visibility: isActuallyPublic ? "public" : "scheduled",
+          // A proven save is an upload even when the video remains private.
+          // Reserve "scheduled" for a receipt with an actual publish time.
+          uploader_status: isScheduled ? "scheduled" : "uploaded",
+          youtube_visibility:
+            job.visibility ?? (isActuallyPublic ? "public" : "private"),
           scheduled_for: scheduledAt,
           is_uploaded: isActuallyPublic,
-          uploaded_at: isActuallyPublic
-            ? (safeDate(job.finishedAt) ?? new Date())
-            : null,
-          youtube_published_at: isActuallyPublic
-            ? (safeDate(job.finishedAt) ?? new Date())
-            : null,
+          uploaded_at: isActuallyPublic ? completedAt : null,
+          youtube_published_at: isActuallyPublic ? completedAt : null,
+          uploader_last_callback_at: completedAt,
+          upload_verified_at: completedAt,
           uploaded_by: "tutorial-uploader",
           youtube_upload_url: `https://www.youtube.com/watch?v=${job.videoId}`,
         })
