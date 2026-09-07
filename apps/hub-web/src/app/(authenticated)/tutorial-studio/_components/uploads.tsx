@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { GlassCard, V2Button, V2Input } from "../../_components";
 
@@ -115,6 +115,15 @@ interface UploaderStatus {
   }>;
 }
 
+interface UploadCalendarDay {
+  date: string;
+  channelId: string | null;
+  channelName: string;
+  language: string;
+  count: number;
+  latestUploadAt: string;
+}
+
 const LANGUAGE_FLAGS: Record<string, string> = {
   German: "🇩🇪",
   French: "🇫🇷",
@@ -155,15 +164,385 @@ function videoIdFromUrl(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (
+      host !== "youtu.be" &&
+      host !== "youtube.com" &&
+      host !== "m.youtube.com" &&
+      host !== "studio.youtube.com"
+    ) {
+      return null;
+    }
     const id =
-      url.hostname === "youtu.be"
+      host === "youtu.be"
         ? url.pathname.split("/").filter(Boolean)[0]
         : (url.searchParams.get("v") ??
-          url.pathname.match(/\/shorts\/([^/?]+)/)?.[1]);
+          url.pathname.match(/\/(?:shorts|video)\/([^/?]+)/)?.[1]);
     return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
   } catch {
     return null;
   }
+}
+
+function VideoPlatformLinks({
+  url,
+  compact = false,
+}: {
+  url: string | null;
+  compact?: boolean;
+}) {
+  const videoId = videoIdFromUrl(url);
+  if (!videoId) return null;
+
+  const linkStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: compact ? "4px 7px" : "5px 9px",
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.15)",
+    background: "rgba(255,255,255,0.055)",
+    color: "#fff",
+    fontSize: compact ? 10 : 11,
+    fontWeight: 700,
+    textDecoration: "none",
+    whiteSpace: "nowrap" as const,
+  };
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        flexWrap: "wrap",
+        justifyContent: "flex-end",
+        gap: 6,
+      }}
+    >
+      <a
+        href={`https://www.youtube.com/watch?v=${videoId}`}
+        target="_blank"
+        rel="noreferrer"
+        style={{ ...linkStyle, borderColor: "rgba(248,113,113,0.35)" }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+          smart_display
+        </span>
+        View on YouTube
+      </a>
+      <a
+        href={`https://studio.youtube.com/video/${videoId}/edit`}
+        target="_blank"
+        rel="noreferrer"
+        style={{ ...linkStyle, borderColor: "rgba(196,181,253,0.35)" }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+          edit_square
+        </span>
+        View in YouTube Studio
+      </a>
+    </div>
+  );
+}
+
+const CHANNEL_COLORS: Record<string, string> = {
+  en: "#ef4444",
+  english: "#ef4444",
+  de: "#f59e0b",
+  german: "#f59e0b",
+  fr: "#3b82f6",
+  french: "#3b82f6",
+  it: "#22c55e",
+  italian: "#22c55e",
+  sv: "#06b6d4",
+  swedish: "#06b6d4",
+};
+
+function channelColor(language: string): string {
+  return CHANNEL_COLORS[language.toLowerCase()] ?? "#a78bfa";
+}
+
+function calendarDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function UploadCalendar({
+  entries,
+  channels,
+}: {
+  entries: UploadCalendarDay[];
+  channels: UploaderStatus["channels"];
+}) {
+  const now = new Date();
+  const [month, setMonth] = useState(
+    () => new Date(now.getFullYear(), now.getMonth(), 1),
+  );
+  const earliestMonth = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+  const latestMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthPrefix = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+  const monthEntries = useMemo(
+    () => entries.filter((entry) => entry.date.startsWith(monthPrefix)),
+    [entries, monthPrefix],
+  );
+  const entriesByDate = useMemo(() => {
+    const grouped = new Map<string, UploadCalendarDay[]>();
+    for (const entry of monthEntries) {
+      const day = grouped.get(entry.date) ?? [];
+      day.push(entry);
+      day.sort((a, b) => a.channelName.localeCompare(b.channelName));
+      grouped.set(entry.date, day);
+    }
+    return grouped;
+  }, [monthEntries]);
+  const firstDayOffset = (month.getDay() + 6) % 7;
+  const daysInMonth = new Date(
+    month.getFullYear(),
+    month.getMonth() + 1,
+    0,
+  ).getDate();
+  const cells: Array<number | null> = [
+    ...Array.from({ length: firstDayOffset }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+  const totalUploads = monthEntries.reduce(
+    (sum, entry) => sum + entry.count,
+    0,
+  );
+  const legendChannels = channels.filter(
+    (channel, index, all) =>
+      all.findIndex((candidate) => candidate.language === channel.language) ===
+      index,
+  );
+  const previousDisabled = month.getTime() <= earliestMonth.getTime();
+  const nextDisabled = month.getTime() >= latestMonth.getTime();
+
+  const moveMonth = (offset: number) => {
+    setMonth(
+      (current) =>
+        new Date(current.getFullYear(), current.getMonth() + offset, 1),
+    );
+  };
+
+  return (
+    <GlassCard style={{ padding: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>
+            Upload calendar
+          </div>
+          <div
+            style={{ color: "var(--v2-text-2)", fontSize: 10, marginTop: 3 }}
+          >
+            {totalUploads} uploads across {entriesByDate.size} active days. A
+            dot shows which channel uploaded; the number is that channel&apos;s
+            daily total.
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            aria-label="Previous month"
+            disabled={previousDisabled}
+            onClick={() => moveMonth(-1)}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(255,255,255,0.05)",
+              color: previousDisabled ? "rgba(255,255,255,0.25)" : "#fff",
+              cursor: previousDisabled ? "not-allowed" : "pointer",
+            }}
+          >
+            &lsaquo;
+          </button>
+          <div
+            style={{
+              minWidth: 122,
+              textAlign: "center",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 800,
+            }}
+          >
+            {month.toLocaleDateString("en-US", {
+              month: "long",
+              year: "numeric",
+            })}
+          </div>
+          <button
+            type="button"
+            aria-label="Next month"
+            disabled={nextDisabled}
+            onClick={() => moveMonth(1)}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(255,255,255,0.05)",
+              color: nextDisabled ? "rgba(255,255,255,0.25)" : "#fff",
+              cursor: nextDisabled ? "not-allowed" : "pointer",
+            }}
+          >
+            &rsaquo;
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+          marginTop: 10,
+          marginBottom: 9,
+        }}
+      >
+        {legendChannels.map((channel) => (
+          <span
+            key={channel.id}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              color: "var(--v2-text-2)",
+              fontSize: 10,
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: channelColor(channel.language),
+                boxShadow: `0 0 7px ${channelColor(channel.language)}`,
+              }}
+            />
+            {channel.name}
+          </span>
+        ))}
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, minmax(82px, 1fr))",
+            minWidth: 650,
+            gap: 4,
+          }}
+        >
+          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
+            <div
+              key={label}
+              style={{
+                padding: "4px 6px",
+                color: "var(--v2-text-3)",
+                fontSize: 9,
+                fontWeight: 800,
+                textTransform: "uppercase",
+              }}
+            >
+              {label}
+            </div>
+          ))}
+          {cells.map((day, index) => {
+            if (day === null) {
+              return <div key={`empty-${index}`} style={{ minHeight: 78 }} />;
+            }
+            const date = new Date(month.getFullYear(), month.getMonth(), day);
+            const dateKey = calendarDateKey(date);
+            const dayEntries = entriesByDate.get(dateKey) ?? [];
+            const isToday = dateKey === calendarDateKey(now);
+            return (
+              <div
+                key={dateKey}
+                style={{
+                  minHeight: 78,
+                  padding: 6,
+                  borderRadius: 7,
+                  border: isToday
+                    ? "1px solid rgba(170,255,0,0.65)"
+                    : "1px solid rgba(255,255,255,0.08)",
+                  background: dayEntries.length
+                    ? "rgba(255,255,255,0.045)"
+                    : "rgba(255,255,255,0.018)",
+                }}
+              >
+                <div
+                  style={{
+                    color: isToday ? "var(--v2-accent)" : "var(--v2-text-2)",
+                    fontSize: 10,
+                    fontWeight: 800,
+                  }}
+                >
+                  {day}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                    marginTop: 5,
+                  }}
+                >
+                  {dayEntries.map((entry) => (
+                    <div
+                      key={`${dateKey}-${entry.channelId ?? entry.channelName}-${entry.language}`}
+                      title={`${entry.channelName}: ${entry.count} upload${entry.count === 1 ? "" : "s"}; latest ${new Date(entry.latestUploadAt).toLocaleString()}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        minWidth: 0,
+                        color: "var(--v2-text-2)",
+                        fontSize: 9,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 7,
+                          height: 7,
+                          flexShrink: 0,
+                          borderRadius: "50%",
+                          background: channelColor(entry.language),
+                        }}
+                      />
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {entry.language.toUpperCase()}
+                      </span>
+                      <strong style={{ marginLeft: "auto", color: "#fff" }}>
+                        {entry.count}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </GlassCard>
+  );
 }
 
 function ThumbnailPreview({
@@ -356,23 +735,13 @@ function UploaderDispatchControl({
         {failed ? "error" : succeeded ? "check_circle" : "hourglass_top"}
       </span>
       Uploader: {statusLabel}
-      {dispatch.youtubeVideoUrl && (
-        <a
-          href={dispatch.youtubeVideoUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => event.stopPropagation()}
-          style={{ color: "inherit", textDecoration: "underline" }}
-        >
-          YouTube
-        </a>
-      )}
     </div>
   );
 }
 
 export function UploadsTable() {
   const [videos, setVideos] = useState<VideoDeliveryRow[]>([]);
+  const [uploadCalendar, setUploadCalendar] = useState<UploadCalendarDay[]>([]);
   const [canDispatch, setCanDispatch] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -395,6 +764,7 @@ export function UploadsTable() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setVideos(data.videos ?? []);
+      setUploadCalendar(data.uploadCalendar ?? []);
       setCanDispatch(Boolean(data.canDispatch));
     } catch (e) {
       if (!silent) {
@@ -773,8 +1143,9 @@ export function UploadsTable() {
                 <div
                   style={{
                     display: "flex",
-                    gap: 8,
-                    marginTop: 7,
+                    flexWrap: "wrap",
+                    gap: 6,
+                    marginTop: 8,
                     fontSize: 10,
                   }}
                 >
@@ -783,18 +1154,52 @@ export function UploadsTable() {
                       href={channel.channelUrl}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ color: "#93c5fd" }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "4px 7px",
+                        borderRadius: 5,
+                        border: "1px solid rgba(147,197,253,0.3)",
+                        background: "rgba(59,130,246,0.1)",
+                        color: "#93c5fd",
+                        fontWeight: 700,
+                        textDecoration: "none",
+                      }}
                     >
-                      Channel ↗
+                      <span
+                        className="material-symbols-outlined"
+                        style={{ fontSize: 13 }}
+                      >
+                        smart_display
+                      </span>
+                      View channel
                     </a>
                   )}
                   <a
                     href={channel.studioUrl ?? "https://studio.youtube.com/"}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ color: "#c4b5fd" }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "4px 7px",
+                      borderRadius: 5,
+                      border: "1px solid rgba(196,181,253,0.3)",
+                      background: "rgba(139,92,246,0.1)",
+                      color: "#c4b5fd",
+                      fontWeight: 700,
+                      textDecoration: "none",
+                    }}
                   >
-                    Studio ↗
+                    <span
+                      className="material-symbols-outlined"
+                      style={{ fontSize: 13 }}
+                    >
+                      dashboard
+                    </span>
+                    YouTube Studio
                   </a>
                   <span
                     style={{
@@ -817,6 +1222,11 @@ export function UploadsTable() {
           })}
         </div>
       </GlassCard>
+
+      <UploadCalendar
+        entries={uploadCalendar}
+        channels={uploader?.channels ?? []}
+      />
 
       {canDispatch && (
         <GlassCard style={{ padding: 14 }}>
@@ -1094,6 +1504,8 @@ export function UploadsTable() {
                   const isExpanded = expandedIds.has(v.id);
                   const isToggling = togglingId === v.id;
                   const hasTranslations = v.translations.length > 0;
+                  const youtubeVideoUrl =
+                    v.youtubeUploadUrl ?? v.uploader?.youtubeVideoUrl ?? null;
 
                   return (
                     <tr
@@ -1252,9 +1664,10 @@ export function UploadsTable() {
                             {v.translations.map((t) => {
                               const isChildToggling = togglingId === t.id;
                               const flag = LANGUAGE_FLAGS[t.language] ?? "🌐";
-                              const videoId = videoIdFromUrl(
-                                t.youtubeUploadUrl,
-                              );
+                              const youtubeVideoUrl =
+                                t.youtubeUploadUrl ??
+                                t.uploader?.youtubeVideoUrl ??
+                                null;
 
                               return (
                                 <div
@@ -1322,32 +1735,10 @@ export function UploadsTable() {
                                       gap: 6,
                                     }}
                                   >
-                                    {t.youtubeUploadUrl && (
-                                      <a
-                                        href={t.youtubeUploadUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        style={{
-                                          color: "#93c5fd",
-                                          fontSize: 11,
-                                        }}
-                                      >
-                                        YouTube ↗
-                                      </a>
-                                    )}
-                                    {videoId && (
-                                      <a
-                                        href={`https://studio.youtube.com/video/${videoId}/edit`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        style={{
-                                          color: "#c4b5fd",
-                                          fontSize: 11,
-                                        }}
-                                      >
-                                        Studio ↗
-                                      </a>
-                                    )}
+                                    <VideoPlatformLinks
+                                      url={youtubeVideoUrl}
+                                      compact
+                                    />
                                     <UploaderDispatchControl
                                       dispatch={t.uploader}
                                       authorized={canDispatch}
@@ -1601,34 +1992,15 @@ export function UploadsTable() {
                         >
                           {uploadStateLabel(v)}
                         </div>
-                        {v.youtubeUploadUrl && (
+                        {youtubeVideoUrl && (
                           <div
                             style={{
                               display: "flex",
                               justifyContent: "flex-end",
-                              gap: 8,
                               marginBottom: 7,
-                              fontSize: 10,
                             }}
                           >
-                            <a
-                              href={v.youtubeUploadUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ color: "#93c5fd" }}
-                            >
-                              YouTube ↗
-                            </a>
-                            {videoIdFromUrl(v.youtubeUploadUrl) && (
-                              <a
-                                href={`https://studio.youtube.com/video/${videoIdFromUrl(v.youtubeUploadUrl)}/edit`}
-                                target="_blank"
-                                rel="noreferrer"
-                                style={{ color: "#c4b5fd" }}
-                              >
-                                Studio ↗
-                              </a>
-                            )}
+                            <VideoPlatformLinks url={youtubeVideoUrl} compact />
                           </div>
                         )}
                         <div

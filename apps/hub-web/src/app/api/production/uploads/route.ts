@@ -1,5 +1,15 @@
 import { NextResponse } from "next/server";
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -102,6 +112,15 @@ export interface VideoDeliveryRow {
   dispatchBlockers: string[];
 }
 
+export interface UploadCalendarDay {
+  date: string;
+  channelId: string | null;
+  channelName: string;
+  language: string;
+  count: number;
+  latestUploadAt: string;
+}
+
 /**
  * GET /api/production/uploads
  *
@@ -118,6 +137,64 @@ export async function GET(request: Request): Promise<NextResponse> {
   const canDispatch = hasPermission(session, "upload:youtube-video");
 
   try {
+    // Keep the calendar independent from the 60-row operational table below.
+    // At five channels per hour that table only covers a few days, while the
+    // calendar needs enough history to make missed channel-days visible.
+    const calendarSince = new Date();
+    calendarSince.setUTCHours(0, 0, 0, 0);
+    calendarSince.setUTCDate(1);
+    calendarSince.setUTCMonth(calendarSince.getUTCMonth() - 5);
+    const calendarTimestamp = sql<Date>`coalesce(
+      ${tutorialJobs.youtube_published_at},
+      ${tutorialJobs.uploaded_at},
+      ${tutorialJobs.uploader_last_callback_at}
+    )`;
+    const calendarDate = sql<string>`to_char(
+      ${calendarTimestamp} at time zone 'Europe/Berlin',
+      'YYYY-MM-DD'
+    )`;
+    const calendarLanguage = sql<string>`coalesce(
+      ${channels.language},
+      ${tutorialJobs.language},
+      'unknown'
+    )`;
+    const calendarRows = await db
+      .select({
+        date: calendarDate,
+        channelId: tutorialJobs.channel_id,
+        channelName: channels.name,
+        language: calendarLanguage,
+        count: sql<number>`cast(count(*) as integer)`,
+        latestUploadAt: sql<Date>`max(${calendarTimestamp})`,
+      })
+      .from(tutorialJobs)
+      .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
+      .where(
+        and(
+          gte(calendarTimestamp, calendarSince),
+          or(
+            eq(tutorialJobs.is_uploaded, true),
+            inArray(tutorialJobs.uploader_status, ["scheduled", "uploaded"]),
+          ),
+        ),
+      )
+      .groupBy(
+        calendarDate,
+        tutorialJobs.channel_id,
+        channels.name,
+        calendarLanguage,
+      )
+      .orderBy(calendarDate);
+
+    const uploadCalendar: UploadCalendarDay[] = calendarRows.map((row) => ({
+      date: row.date,
+      channelId: row.channelId,
+      channelName: row.channelName ?? "Unassigned channel",
+      language: row.language,
+      count: Number(row.count),
+      latestUploadAt: row.latestUploadAt.toISOString(),
+    }));
+
     // 1. Fetch completed primary tutorial jobs (originals)
     const parents = await db
       .select({
@@ -538,6 +615,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       totalUploaded,
       totalPending,
       canDispatch,
+      uploadCalendar,
     });
   } catch (error) {
     console.error("Failed to load uploads delivery overview:", error);

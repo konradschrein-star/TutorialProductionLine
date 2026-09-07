@@ -90,6 +90,15 @@ export async function GET() {
 
   const uploaderSettings = await getUploaderSettings();
   const endpoint = uploaderSettings.dashboardApiUrl;
+  const channelViews = channelRows.map((channel) => ({
+    ...channel,
+    channelUrl: channel.youtubeChannelId?.startsWith("UC")
+      ? `https://www.youtube.com/channel/${channel.youtubeChannelId}`
+      : null,
+    studioUrl: channel.youtubeChannelId?.startsWith("UC")
+      ? `https://studio.youtube.com/channel/${channel.youtubeChannelId}`
+      : "https://studio.youtube.com/",
+  }));
 
   try {
     const response = await fetch(endpoint, {
@@ -178,15 +187,7 @@ export async function GET() {
         executionMode: uploaderSettings.executionMode,
         transport: uploaderSettings.transport,
       },
-      channels: channelRows.map((channel) => ({
-        ...channel,
-        channelUrl: channel.youtubeChannelId?.startsWith("UC")
-          ? `https://www.youtube.com/channel/${channel.youtubeChannelId}`
-          : null,
-        studioUrl: channel.youtubeChannelId?.startsWith("UC")
-          ? `https://studio.youtube.com/channel/${channel.youtubeChannelId}`
-          : "https://studio.youtube.com/",
-      })),
+      channels: channelViews,
       jobs,
     });
   } catch (error) {
@@ -199,7 +200,7 @@ export async function GET() {
         executionMode: uploaderSettings.executionMode,
         transport: uploaderSettings.transport,
       },
-      channels: channelRows,
+      channels: channelViews,
       jobs: [],
     });
   }
