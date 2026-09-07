@@ -3,7 +3,6 @@ import {
   and,
   desc,
   eq,
-  gte,
   inArray,
   isNotNull,
   isNull,
@@ -171,7 +170,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
       .where(
         and(
-          gte(calendarTimestamp, calendarSince),
+          sql`${calendarTimestamp} >= ${calendarSince.toISOString()}::timestamptz`,
           or(
             eq(tutorialJobs.is_uploaded, true),
             inArray(tutorialJobs.uploader_status, ["scheduled", "uploaded"]),
