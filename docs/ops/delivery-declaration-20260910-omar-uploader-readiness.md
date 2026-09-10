@@ -41,10 +41,12 @@ the uploader request is allowed into Drive.
 ## External blocker discovered
 
 All five configured uploader proxies failed a credential-redacted egress probe
-on 2026-09-10. Direct internet access from the VPS passed, so this is isolated to
-the proxy endpoints/configuration. The browser worker is fail-closed and reports
-the proxy preflight failure before a provider mutation. Existing login profiles
-and uploader history were preserved.
+on 2026-09-10. Each endpoint accepted a TCP connection but rejected the HTTPS
+tunnel with HTTP `402`, which indicates the proxy service/account needs renewal
+or replacement rather than a VPS networking failure. Direct internet access
+from the VPS passed. The browser worker is fail-closed and reports the proxy
+preflight failure before a provider mutation. Existing login profiles and
+uploader history were preserved.
 
 The timer continues to perform read-only reconciliation of one historical
 `applied_reported` upload. It does not blindly re-upload it. Existing dispatch
