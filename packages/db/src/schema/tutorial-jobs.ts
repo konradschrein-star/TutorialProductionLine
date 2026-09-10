@@ -7,10 +7,12 @@ import {
   boolean,
   timestamp,
   index,
+  uniqueIndex,
   jsonb,
   varchar,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { users } from "./users.js";
 import { channels } from "./channels.js";
 import { tutorialJobStatusEnum, tutorialModeEnum } from "./tutorial-enums.js";
@@ -35,6 +37,19 @@ export const tutorialJobs = pgTable(
     // kt_url = a deep link back to that keyword on the board.
     keyword_ref: text("keyword_ref"),
     kt_url: text("kt_url"),
+
+    // Versioned, namespaced identity for external production systems. The
+    // legacy keyword_ref remains a diagnostic/UI reference; it is not globally
+    // unique and must not be used as the idempotency boundary.
+    external_source: text("external_source"),
+    external_production_run_id: uuid("external_production_run_id"),
+    external_opportunity_id: uuid("external_opportunity_id"),
+    external_family_id: uuid("external_family_id"),
+    external_route_decision_id: uuid("external_route_decision_id"),
+    external_evidence_id: uuid("external_evidence_id"),
+    intake_request_id: uuid("intake_request_id"),
+    intake_request_hash: varchar("intake_request_hash", { length: 64 }),
+    external_route_snapshot: jsonb("external_route_snapshot").$type<Record<string, unknown>>(),
 
     // SIX_MIN_STITCH chaining: parent has mode=SIX_MIN_STITCH, children have parent_job_id set
     parent_job_id: uuid("parent_job_id").references(
@@ -203,8 +218,45 @@ export const tutorialJobs = pgTable(
     batchIdx: index("tutorial_jobs_batch_id_idx").on(t.batch_id),
     parentJobIdx: index("tutorial_jobs_parent_job_id_idx").on(t.parent_job_id),
     keywordRefIdx: index("tutorial_jobs_keyword_ref_idx").on(t.keyword_ref),
+    externalRunUnique: uniqueIndex("tutorial_jobs_external_run_unique")
+      .on(t.external_source, t.external_production_run_id)
+      .where(sql`${t.source_job_id} IS NULL AND ${t.external_source} IS NOT NULL AND ${t.external_production_run_id} IS NOT NULL`),
+    intakeRequestUnique: uniqueIndex("tutorial_jobs_intake_request_unique")
+      .on(t.external_source, t.intake_request_id)
+      .where(sql`${t.source_job_id} IS NULL AND ${t.external_source} IS NOT NULL AND ${t.intake_request_id} IS NOT NULL`),
     uploaderStatusIdx: index("tutorial_jobs_uploader_status_idx").on(
       t.uploader_status,
     ),
+  }),
+);
+
+/**
+ * Transactional intent to publish a newly accepted identity-v2 tutorial to
+ * BullMQ. PostgreSQL and Redis cannot share a transaction, so this row is the
+ * durable hand-off boundary and makes a lost HTTP/Redis acknowledgement safe.
+ */
+export const tutorialGenerationOutbox = pgTable(
+  "tutorial_generation_outbox",
+  {
+    tutorial_job_id: uuid("tutorial_job_id")
+      .primaryKey()
+      .references(() => tutorialJobs.id, { onDelete: "cascade" }),
+    stage: text("stage").notNull().default("script"),
+    bull_job_id: text("bull_job_id").notNull().unique(),
+    attempts: integer("attempts").notNull().default(0),
+    available_at: timestamp("available_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lease_until: timestamp("lease_until", { withTimezone: true }),
+    dispatched_at: timestamp("dispatched_at", { withTimezone: true }),
+    last_error: text("last_error"),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pendingIdx: index("tutorial_generation_outbox_pending")
+      .on(t.available_at, t.tutorial_job_id)
+      .where(sql`${t.dispatched_at} IS NULL`),
   }),
 );

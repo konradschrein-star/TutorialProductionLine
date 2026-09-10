@@ -18,6 +18,7 @@ import { startEnglishThumbnailFanout } from "./services/english-thumbnail-fanout
 import { startAutomaticEnglishThumbnails } from "./services/automatic-english-thumbnails.js";
 import { startLateLocalePublicationRecovery } from "./services/late-locale-publication.js";
 import { startKeywordOutbox } from "./services/keyword-outbox.js";
+import { startTutorialGenerationOutbox } from "./services/tutorial-generation-outbox.js";
 import { startAutomaticScheduledDeliveryRecovery } from "./services/automatic-scheduled-delivery.js";
 import {
   createRedisConnection,
@@ -276,6 +277,9 @@ async function bootstrap() {
     tutorialTranslateQueueConn,
   );
   const thumbnailQueue = createThumbnailQueue(thumbnailQueueConn);
+  const stopGenerationOutbox = startTutorialGenerationOutbox(db, tutorialGenerateQueue);
+  process.once("SIGINT", stopGenerationOutbox);
+  process.once("SIGTERM", stopGenerationOutbox);
   const stopKeywordOutbox = startKeywordOutbox(db);
   process.once("SIGINT", stopKeywordOutbox);
   process.once("SIGTERM", stopKeywordOutbox);

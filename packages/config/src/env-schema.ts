@@ -400,6 +400,16 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .describe("Friendly label for the CF_API_TOKEN, recorded on audit lines."),
+  KT_INGEST_TOKEN: z
+    .string()
+    .min(16)
+    .optional()
+    .describe("Dedicated source-bound bearer accepted only by Tutorial Studio keyword intake."),
+  KT_EXTERNAL_SOURCE: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9._-]{2,99}$/)
+    .optional()
+    .describe("Stable namespace bound to KT_INGEST_TOKEN; never accepted from request data alone."),
   // CF_AIOS_TOKEN is the token CF's worker-orchestrator uses when
   // pushing events to HCP /cf/ingest/event. When missing, CF→HCP push
   // is silently disabled (HCP isn't reachable / not deployed).

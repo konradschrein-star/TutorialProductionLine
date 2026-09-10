@@ -3,8 +3,8 @@ const mock = vi.hoisted(() => ({ session: vi.fn(), permission: vi.fn(), login: v
 vi.mock("@/lib/auth/session", () => ({ getSession: mock.session }));
 vi.mock("@/lib/auth/rbac", () => ({ hasPermission: mock.permission }));
 vi.mock("@/lib/keyword-tool/client", () => ({ ktLogin: mock.login, ktGet: mock.get, ktKeywordUrl: (id: number) => `https://kt.test/board?kid=${id}`, KeywordToolError: class extends Error {} }));
-vi.mock("@/lib/db", () => ({ db: { select: mock.select }, tutorialJobs: { id: "id", keyword_ref: "ref", status: "status", title: "title", created_by: "owner", source_job_id: "source", channel_id: "channel" } }));
-vi.mock("drizzle-orm", () => ({ and: (...args: unknown[]) => ({ and: args }), eq: (...args: unknown[]) => ({ eq: args }), inArray: (...args: unknown[]) => ({ inArray: args }), isNull: (arg: unknown) => ({ isNull: arg }) }));
+vi.mock("@/lib/db", () => ({ db: { select: mock.select }, tutorialJobs: { id: "id", keyword_ref: "ref", external_source: "externalSource", external_opportunity_id: "opportunity", status: "status", title: "title", created_by: "owner", source_job_id: "source", channel_id: "channel" } }));
+vi.mock("drizzle-orm", () => ({ and: (...args: unknown[]) => ({ and: args }), or: (...args: unknown[]) => ({ or: args }), eq: (...args: unknown[]) => ({ eq: args }), inArray: (...args: unknown[]) => ({ inArray: args }), isNull: (arg: unknown) => ({ isNull: arg }) }));
 const { GET } = await import("../route");
 beforeEach(() => {
   vi.clearAllMocks();
@@ -13,7 +13,7 @@ beforeEach(() => {
   mock.login.mockResolvedValue({ user: { id: 7, name: "Test VA" } });
   mock.get.mockResolvedValue([{ id: 1, keyword: "Test", status: "RECORDING" }]);
   mock.select.mockReturnValue({ from: () => ({ where: mock.where }) });
-  mock.where.mockResolvedValue([{ id: "job1", keywordRef: "1", status: "QUEUED", title: "Test", channelId: "channel1" }]);
+  mock.where.mockResolvedValue([{ id: "job1", keywordRef: "1", externalSource: null, opportunityId: null, status: "QUEUED", title: "Test", channelId: "channel1" }]);
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("claimed keyword view", () => {
@@ -30,13 +30,23 @@ describe("claimed keyword view", () => {
   });
   it("scopes the join to owned originals and keeps queued work unfinished", async () => {
     const body = await (await GET(new Request("https://studio.test/api/production/keywords/mine"))).json();
-    expect(mock.where).toHaveBeenCalledWith({ and: [{ inArray: ["ref", ["1"]] }, { eq: ["owner", "va1"] }, { isNull: "source" }] });
+    expect(mock.where).toHaveBeenCalledWith({ and: [{ or: [{ and: [{ isNull: "externalSource" }, { inArray: ["ref", ["1"]] }] }] }, { eq: ["owner", "va1"] }, { isNull: "source" }] });
     expect(body).toMatchObject({ remaining: 1, produced: 0, unstarted: 0 });
     expect(body.keywords[0]).toMatchObject({ assignedChannelId: "channel1", job: { id: "job1", status: "QUEUED" } });
   });
   it("counts actual render completion separately", async () => {
-    mock.where.mockResolvedValue([{ id: "job1", keywordRef: "1", status: "COMPLETED" }]);
+    mock.where.mockResolvedValue([{ id: "job1", keywordRef: "1", externalSource: null, status: "COMPLETED" }]);
     const body = await (await GET(new Request("https://studio.test/api/production/keywords/mine"))).json();
     expect(body).toMatchObject({ remaining: 0, produced: 1 });
+  });
+  it("uses source and opportunity identity instead of a colliding numeric keyword", async () => {
+    vi.stubEnv("KT_EXTERNAL_SOURCE", "keyword-tool.omar");
+    mock.get.mockResolvedValue([{ id: 1, keyword: "Test", status: "RECORDING", opportunity_id: "30000000-0000-4000-8000-000000000003" }]);
+    mock.where.mockResolvedValue([
+      { id: "wrong", keywordRef: "1", externalSource: "keyword-tool.other", opportunityId: "30000000-0000-4000-8000-000000000003", status: "COMPLETED" },
+      { id: "right", keywordRef: "1", externalSource: "keyword-tool.omar", opportunityId: "30000000-0000-4000-8000-000000000003", status: "QUEUED" },
+    ]);
+    const body = await (await GET(new Request("https://studio.test/api/production/keywords/mine"))).json();
+    expect(body.keywords[0].job.id).toBe("right");
   });
 });

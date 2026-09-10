@@ -7,6 +7,40 @@ class KeywordDeliveryError extends Error {
   }
 }
 
+type KeywordEnvelope = {
+  schema_version?: number;
+  forge_job_id: string;
+  keyword_ref: string;
+  event_sequence: number;
+  dedup_key: string;
+  external_source?: string;
+  request_id?: string;
+  production_run_id?: string;
+  opportunity_id?: string;
+  family_id?: string;
+  evidence_id?: string;
+  route_decision_id?: string;
+};
+
+export function keywordReceiptMatches(
+  sent: KeywordEnvelope,
+  receipt: Record<string, unknown>,
+): boolean {
+  const common = receipt.forge_job_id === sent.forge_job_id
+    && receipt.keyword_ref === sent.keyword_ref
+    && receipt.event_sequence === sent.event_sequence
+    && receipt.dedup_key === sent.dedup_key;
+  if (!common || sent.schema_version !== 2) return common;
+  return receipt.schema_version === 2
+    && receipt.external_source === sent.external_source
+    && receipt.request_id === sent.request_id
+    && receipt.production_run_id === sent.production_run_id
+    && receipt.opportunity_id === sent.opportunity_id
+    && receipt.family_id === sent.family_id
+    && receipt.evidence_id === sent.evidence_id
+    && receipt.route_decision_id === sent.route_decision_id;
+}
+
 export function keywordDeliveryFailurePolicy(status?: number, attempts = 1) {
   if (status === 409) return {
     delaySeconds: 3600,
@@ -43,10 +77,10 @@ export async function deliverKeywordMilestone(db: DrizzleClient, options: { url:
   try {
     const response = await (options.fetch ?? fetch)(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.secret}` }, body: JSON.stringify(row.payload), signal: AbortSignal.timeout(10_000), redirect: "error" });
     if (!response.ok) throw new KeywordDeliveryError(response.status);
-    const receipt = await response.json().catch(() => null) as { verified?: boolean; reconciliationRequired?: boolean; reconciliation_required?: boolean; forge_job_id?: unknown; keyword_ref?: unknown; event_sequence?: unknown; dedup_key?: unknown } | null;
+    const receipt = await response.json().catch(() => null) as ({ verified?: boolean; reconciliationRequired?: boolean; reconciliation_required?: boolean } & Record<string, unknown>) | null;
     if (receipt?.verified !== true || receipt.reconciliationRequired || receipt.reconciliation_required) throw new KeywordDeliveryError(undefined);
-    const sent = row.payload as { forge_job_id: string; keyword_ref: string; event_sequence: number; dedup_key: string };
-    if (receipt.forge_job_id !== sent.forge_job_id || receipt.keyword_ref !== sent.keyword_ref || receipt.event_sequence !== sent.event_sequence || receipt.dedup_key !== sent.dedup_key) throw new KeywordDeliveryError(409);
+    const sent = row.payload as KeywordEnvelope;
+    if (!keywordReceiptMatches(sent, receipt)) throw new KeywordDeliveryError(409);
     await db.execute(sql`UPDATE tutorial_keyword_outbox SET delivered_at=now(),lease_until=NULL,last_error=NULL WHERE id=${row.id} AND attempts=${row.attempts}`);
     return { delivered: true, pending: true };
   } catch (error) {

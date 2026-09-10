@@ -14,7 +14,11 @@ ALTER TABLE "tutorial_jobs"
 ALTER TABLE "tutorial_jobs"
   ADD CONSTRAINT "tutorial_jobs_uploader_status_check"
   CHECK ("uploader_status" IS NULL OR "uploader_status" IN
-    ('waiting_to_be_uploaded', 'uploading', 'scheduled', 'uploaded', 'failed'));
+    -- Keep this replay-safe with the later manual-report and scheduled-delivery
+    -- paths. The migration runner intentionally reapplies this file, so an old
+    -- constraint must accept every state the current application persists.
+    ('waiting_to_be_uploaded', 'uploading', 'scheduled', 'uploaded', 'failed',
+     'reported_uploaded', 'uncertain'));
 
 ALTER TABLE "tutorial_jobs"
   DROP CONSTRAINT IF EXISTS "tutorial_jobs_youtube_visibility_check";

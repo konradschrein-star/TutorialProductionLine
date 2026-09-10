@@ -22,7 +22,7 @@ export async function GET() {
   );
   if (!privileged) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const [jobsResult, outboxResult] = await Promise.all([
+  const [jobsResult, outboxResult, dispatchResult] = await Promise.all([
     db.execute(sql`
       SELECT
         COUNT(*)::int AS total_jobs,
@@ -32,6 +32,8 @@ export async function GET() {
           AND keyword_ref IS NOT NULL AND keyword_ref <> '')::int AS root_keyword_bound,
         COUNT(*) FILTER (WHERE parent_job_id IS NULL AND source_job_id IS NULL
           AND keyword_ref ~ '^[0-9]+$')::int AS numeric_keyword_refs,
+        COUNT(*) FILTER (WHERE parent_job_id IS NULL AND source_job_id IS NULL
+          AND external_production_run_id IS NOT NULL)::int AS identity_v2_jobs,
         COUNT(*) FILTER (WHERE parent_job_id IS NULL AND source_job_id IS NULL
           AND (keyword_ref IS NULL OR keyword_ref = ''))::int AS unbound_legacy,
         COUNT(*) FILTER (WHERE channel_id IS NULL)::int AS missing_channel
@@ -48,23 +50,49 @@ export async function GET() {
         MAX(delivered_at) AS latest_delivered_at
       FROM tutorial_keyword_outbox
     `),
+    db.execute(sql`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE dispatched_at IS NOT NULL)::int AS dispatched,
+        COUNT(*) FILTER (WHERE dispatched_at IS NULL)::int AS pending,
+        COUNT(*) FILTER (WHERE dispatched_at IS NULL AND attempts >= 8)::int AS needs_attention,
+        MIN(created_at) FILTER (WHERE dispatched_at IS NULL) AS oldest_pending_at
+      FROM tutorial_generation_outbox
+    `),
   ]);
   const jobs = (jobsResult[0] ?? {}) as CountRow;
   const outbox = (outboxResult[0] ?? {}) as CountRow;
-  const configured = Boolean(process.env.KT_STATUS_WEBHOOK_URL && process.env.KT_WEBHOOK_SECRET);
+  const dispatch = (dispatchResult[0] ?? {}) as CountRow;
+  const callbackConfigured = Boolean(process.env.KT_STATUS_WEBHOOK_URL && process.env.KT_WEBHOOK_SECRET);
+  const intakeConfigured = Boolean(process.env.KT_INGEST_TOKEN && process.env.KT_EXTERNAL_SOURCE);
+  const configured = callbackConfigured && intakeConfigured;
   const needsAttention = Number(outbox.needs_attention ?? 0);
+  const dispatchNeedsAttention = Number(dispatch.needs_attention ?? 0);
 
   return NextResponse.json({
     integration: configured ? "configured" : "not_configured",
-    lifecycleHealth: !configured ? "disabled" : needsAttention > 0 ? "needs_attention" : "operational",
+    lifecycleHealth: !configured ? "disabled" : needsAttention + dispatchNeedsAttention > 0 ? "needs_attention" : "operational",
+    configuration: {
+      sourceBoundIntake: intakeConfigured,
+      callbackDelivery: callbackConfigured,
+      externalSource: intakeConfigured ? process.env.KT_EXTERNAL_SOURCE : null,
+    },
     studio: {
       totalJobs: Number(jobs.total_jobs ?? 0),
       rootJobs: Number(jobs.root_jobs ?? 0),
       keywordBound: Number(jobs.keyword_bound ?? 0),
       rootKeywordBound: Number(jobs.root_keyword_bound ?? 0),
       numericKeywordRefs: Number(jobs.numeric_keyword_refs ?? 0),
+      identityV2Jobs: Number(jobs.identity_v2_jobs ?? 0),
       unboundLegacy: Number(jobs.unbound_legacy ?? 0),
       missingChannel: Number(jobs.missing_channel ?? 0),
+    },
+    generationDispatch: {
+      total: Number(dispatch.total ?? 0),
+      dispatched: Number(dispatch.dispatched ?? 0),
+      pending: Number(dispatch.pending ?? 0),
+      needsAttention: dispatchNeedsAttention,
+      oldestPendingAt: dispatch.oldest_pending_at ?? null,
     },
     outbox: {
       totalEvents: Number(outbox.total_events ?? 0),

@@ -60,7 +60,8 @@ KT_API_URL=<Keyword Tool API origin>
 KT_EMBED_SECRET=<shared SSO secret>
 KT_STATUS_WEBHOOK_URL=<Keyword Tool /api/integration/forge/job-status>
 KT_WEBHOOK_SECRET=<dedicated callback bearer secret>
-CF_API_TOKEN=<dedicated Keyword Tool -> Studio machine token>
+KT_INGEST_TOKEN=<dedicated Keyword Tool -> Studio identity-v2 bearer token>
+KT_EXTERNAL_SOURCE=<stable lowercase source namespace, e.g. keyword-tool.omar>
 ```
 
 Keyword Tool:
@@ -70,13 +71,33 @@ CONTENT_FORGE_ENABLED=true
 CONTENT_FORGE_API_URL=<Studio server origin>
 CONTENT_FORGE_PUBLIC_URL=<Studio browser origin>
 CONTENT_FORGE_KT_PUBLIC_URL=<Keyword Tool browser origin>
-CONTENT_FORGE_SHARED_SECRET=<same value as Studio CF_API_TOKEN>
+CONTENT_FORGE_SHARED_SECRET=<same value as Studio KT_INGEST_TOKEN>
 CONTENT_FORGE_INTENT_RECOVERY_ENABLED=true
 KT_EMBED_SECRET=<same SSO secret>
 KT_WEBHOOK_SECRET=<same value as Studio KT_WEBHOOK_SECRET>
 ```
 
 Never reuse a user password or browser cookie for either machine direction.
+
+## Identity v2 admission and callback
+
+An identity-v2 create carries `external_source`, `request_id`,
+`production_run_id`, `opportunity_id`, `family_id`, `evidence_id`, and
+`route_decision_id` inside `identity`. UUIDs are canonical lowercase values and
+`Idempotency-Key` equals `request_id`. Studio binds the asserted source to
+`KT_INGEST_TOKEN`/`KT_EXTERNAL_SOURCE`, freezes channel, language, and format,
+and atomically creates a PostgreSQL generation-dispatch intent with the job.
+
+The create receipt includes `jobId`, `requestId`, `productionRunId`, and
+`dispatchDurable: true`. An exact retry returns the existing job even if the VA
+or channel configuration changed after admission. Reuse of either request or
+run identity for different work returns HTTP 409 and requires reconciliation.
+
+V2 callbacks include the complete identity plus the frozen route. A verified
+receipt must echo every identity field as well as the job, keyword, sequence,
+and deduplication key. `DRIVE_VERIFIED` means the durable Drive artifact exists;
+it never asserts that YouTube publication occurred. Legacy jobs retain the v1
+callback envelope and `UPLOADED` milestone unchanged.
 
 ## Safe rollout and historical divergence
 

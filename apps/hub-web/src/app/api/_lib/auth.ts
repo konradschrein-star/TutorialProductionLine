@@ -21,6 +21,8 @@ export type ApiPrincipal =
   | {
       kind: "machine";
       tokenLabel: string;
+      /** Present only for the route-scoped Keyword Tool ingestion token. */
+      externalSource?: string;
     };
 
 export class ApiAuthError extends Error {
@@ -69,6 +71,38 @@ export async function resolvePrincipal(
     "Provide a session cookie or Authorization: Bearer header",
     401,
   );
+}
+
+/**
+ * Resolve the Tutorial Studio intake credential without widening the generic
+ * machine token's authority. Identity-v2 callers must use this dedicated
+ * credential; the source namespace is server configuration, not caller input.
+ * Legacy v1 requests may continue to use CF_API_TOKEN during migration.
+ */
+export async function resolveTutorialIntakePrincipal(
+  req: NextRequest,
+): Promise<ApiPrincipal> {
+  const auth = req.headers.get("authorization");
+  if (auth?.toLowerCase().startsWith("bearer ")) {
+    const token = auth.slice(7).trim();
+    const expected = process.env["KT_INGEST_TOKEN"] ?? "";
+    const generalToken = process.env["CF_API_TOKEN"] ?? "";
+    const externalSource = process.env["KT_EXTERNAL_SOURCE"]?.trim() ?? "";
+    if (expected && constantTimeEqual(token, expected)) {
+      if (generalToken && constantTimeEqual(expected, generalToken)) {
+        throw new ApiAuthError("KT_INGEST_TOKEN must not reuse CF_API_TOKEN", 503);
+      }
+      if (!/^[a-z0-9][a-z0-9._-]{2,99}$/.test(externalSource)) {
+        throw new ApiAuthError("KT_EXTERNAL_SOURCE is not configured correctly", 503);
+      }
+      return {
+        kind: "machine",
+        tokenLabel: `keyword-intake:${externalSource}`,
+        externalSource,
+      };
+    }
+  }
+  return resolvePrincipal(req);
 }
 
 /**

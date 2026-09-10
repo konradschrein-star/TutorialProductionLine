@@ -44,6 +44,7 @@ try {
     "0102_tutorial_thumbnail_ai_batches.sql",
     "0103_tutorial_thumbnail_retry_audit.sql",
     "0104_user_tutorial_preferences.sql",
+    "0105_tutorial_keyword_identity_v2.sql",
   ];
   // Existing installations can apply only their audited pending suffix. Replaying
   // old data backfills is not equivalent to applying a new schema migration.

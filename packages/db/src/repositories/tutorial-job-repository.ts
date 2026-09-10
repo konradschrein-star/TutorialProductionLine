@@ -9,7 +9,41 @@ export type TutorialJobUpdate = Partial<Omit<TutorialJob, "id" | "created_at">>;
 /** Stable intake identity across HTTP timeouts and concurrent browser/KT requests. */
 export async function createOrReuseTutorialJob(db: DrizzleClient, data: NewTutorialJob): Promise<{ job: TutorialJob | null; created: boolean }> {
   return db.transaction(async (tx) => {
-    if (data.keyword_ref) {
+    if (data.external_source && data.external_production_run_id) {
+      if (!data.intake_request_id || !data.intake_request_hash) return { job: null, created: false };
+      const productionRunId = data.external_production_run_id.toLowerCase();
+      const requestId = data.intake_request_id.toLowerCase();
+      const runLockKey = `${data.external_source}:run:${productionRunId}`;
+      const requestLockKey = `${data.external_source}:request:${requestId}`;
+      // Every participant takes run then request. Requests sharing either
+      // identity serialize, while different external sources remain isolated.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-external-intake-v2'),hashtext(${runLockKey}))`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-external-intake-v2'),hashtext(${requestLockKey}))`);
+      const [runExisting] = await tx.select().from(tutorialJobs).where(and(
+        eq(tutorialJobs.external_source, data.external_source),
+        eq(tutorialJobs.external_production_run_id, productionRunId),
+        isNull(tutorialJobs.source_job_id),
+      )).orderBy(asc(tutorialJobs.created_at)).limit(1);
+      const [requestExisting] = await tx.select().from(tutorialJobs).where(and(
+        eq(tutorialJobs.external_source, data.external_source),
+        eq(tutorialJobs.intake_request_id, requestId),
+        isNull(tutorialJobs.source_job_id),
+      )).orderBy(asc(tutorialJobs.created_at)).limit(1);
+      if (runExisting || requestExisting) {
+        if (runExisting && requestExisting && runExisting.id !== requestExisting.id) {
+          return { job: null, created: false };
+        }
+        const existing = runExisting ?? requestExisting!;
+        const exactIdentity = existing.external_production_run_id === productionRunId
+          && existing.intake_request_id === requestId
+          && existing.intake_request_hash === data.intake_request_hash;
+        return {
+          job: exactIdentity && existing.created_by === data.created_by
+            && existing.channel_id === data.channel_id ? existing : null,
+          created: false,
+        };
+      }
+    } else if (data.keyword_ref) {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-keyword-intake'),hashtext(${data.keyword_ref}))`);
       const [existing] = await tx.select().from(tutorialJobs).where(and(eq(tutorialJobs.keyword_ref, data.keyword_ref), isNull(tutorialJobs.source_job_id))).orderBy(asc(tutorialJobs.created_at)).limit(1);
       if (existing) return { job: existing.created_by === data.created_by && existing.channel_id === data.channel_id ? existing : null, created: false };

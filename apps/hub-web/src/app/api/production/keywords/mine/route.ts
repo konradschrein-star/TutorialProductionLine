@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { keywordIntegrationState, keywordIsProduced } from "@/lib/keyword-tool/workflow";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -51,6 +51,9 @@ interface KtKeyword {
   video_id: string | null;
   destination: string | null;
   note: string | null;
+  forge_job_id?: string | null;
+  external_source?: string | null;
+  opportunity_id?: string | null;
 }
 
 /**
@@ -107,24 +110,51 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   // What has Content Forge already made for these keywords? Its own table is
   // the authority — KT's forge_job_id is a mirror, and a mirror can lag.
-  const refs = wanted.map((k) => String(k.id));
+  const configuredSource = process.env["KT_EXTERNAL_SOURCE"]?.trim() || null;
+  const directJobIds = wanted.flatMap((keyword) => keyword.forge_job_id ? [keyword.forge_job_id] : []);
+  const opportunityIds = wanted.flatMap((keyword) => keyword.opportunity_id ? [keyword.opportunity_id] : []);
+  const legacyRefs = wanted.filter((keyword) => !keyword.forge_job_id && !keyword.opportunity_id).map((keyword) => String(keyword.id));
+  const identityPredicates = [
+    directJobIds.length ? inArray(tutorialJobs.id, directJobIds) : undefined,
+    configuredSource && opportunityIds.length ? and(
+      eq(tutorialJobs.external_source, configuredSource),
+      inArray(tutorialJobs.external_opportunity_id, opportunityIds),
+    ) : undefined,
+    legacyRefs.length ? and(
+      isNull(tutorialJobs.external_source),
+      inArray(tutorialJobs.keyword_ref, legacyRefs),
+    ) : undefined,
+  ].filter((predicate): predicate is Exclude<typeof predicate, undefined> => Boolean(predicate));
   const produced =
-    refs.length > 0
+    identityPredicates.length > 0
       ? await db
           .select({
             id: tutorialJobs.id,
             keywordRef: tutorialJobs.keyword_ref,
+            externalSource: tutorialJobs.external_source,
+            opportunityId: tutorialJobs.external_opportunity_id,
             status: tutorialJobs.status,
             title: tutorialJobs.title,
             channelId: tutorialJobs.channel_id,
           })
           .from(tutorialJobs)
-          .where(and(inArray(tutorialJobs.keyword_ref, refs), eq(tutorialJobs.created_by, session.userId), isNull(tutorialJobs.source_job_id)))
+          .where(and(or(...identityPredicates), eq(tutorialJobs.created_by, session.userId), isNull(tutorialJobs.source_job_id)))
       : [];
-  const byRef = new Map(produced.map((p) => [p.keywordRef ?? "", p]));
+  const byJobId = new Map(produced.map((job) => [job.id, job]));
+  const byOpportunity = new Map(produced.filter((job) => job.externalSource && job.opportunityId)
+    .map((job) => [`${job.externalSource}:${job.opportunityId}`, job]));
+  const byLegacyRef = new Map(produced.filter((job) => !job.externalSource)
+    .map((job) => [job.keywordRef ?? "", job]));
 
   const keywords = wanted.map((k) => {
-    const job = byRef.get(String(k.id));
+    const source = k.external_source ?? configuredSource;
+    const directCandidate = k.forge_job_id ? byJobId.get(k.forge_job_id) : undefined;
+    const directJob = directCandidate && (k.opportunity_id || k.external_source
+      ? directCandidate.externalSource === source
+      : !directCandidate.externalSource) ? directCandidate : undefined;
+    const job = directJob
+      ?? (source && k.opportunity_id ? byOpportunity.get(`${source}:${k.opportunity_id}`) : undefined)
+      ?? (!k.forge_job_id && !k.opportunity_id ? byLegacyRef.get(String(k.id)) : undefined);
     return {
       id: k.id,
       keyword: k.keyword,
