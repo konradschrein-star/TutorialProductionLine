@@ -25,10 +25,10 @@ Date: 2026-09-10
 No new YouTube upload was started during this correction because the required
 publication gate is empty:
 
-- 1,922 completed tutorial rows.
-- 1,786 rows currently have a final video path.
+- 1,926 completed tutorial rows at the final verification snapshot.
+- 1,789 rows currently have a final video path.
 - 1,914 rows currently have nonempty title/description/tags metadata.
-- 926 selected completed thumbnails, all with `review_verdict=not_reviewed`.
+- 927 selected completed thumbnails, all with `review_verdict=not_reviewed`.
 - 0 current publication approvals.
 - 0 jobs satisfy the durable uploader admission gate.
 
