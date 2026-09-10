@@ -55,12 +55,13 @@ docker compose -f deploy/standalone/docker-compose.infra.yml up -d   # Postgres 
 ```bash
 pnpm install
 pnpm --filter @repo/db build
-# Fresh DB: use db:push (schema-authoritative). The migration JOURNAL drifts from the
-# hand-written .sql files in the inherited ContentForge history, so db:migrate alone
-# leaves some columns missing (e.g. users.default_tutorial_channel_id). db:push makes
-# the DB exactly match the Drizzle schema:
 export DATABASE_URL=postgresql://tutorial:...@127.0.0.1:5432/tutorial_studio   # note: postgresql:// scheme
-pnpm --filter @repo/db db:push
+# A fresh install needs both the Drizzle baseline and the audited Tutorial
+# Studio ship migrations. The ship runner begins with an idempotent predecessor
+# reconciliation; that prerequisite also runs when an existing installation
+# uses the audited `--from <migration.sql>` suffix form.
+pnpm --filter @repo/db db:migrate
+pnpm --filter @repo/db migrate:tutorial-ship
 pnpm --filter @repo/db seed            # baseline users (see note)
 ```
 > **Seed note:** the inherited seed creates ContentForge-branded test users
