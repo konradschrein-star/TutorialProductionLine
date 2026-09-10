@@ -35,7 +35,7 @@ The GitHub-based Keyword Tool candidate is being reconciled separately. The comp
 - Production tutorials approved or scheduled to bypass human review: **no**.
 - Local isolated recovery database changed: **yes** — migration `0104_user_tutorial_preferences.sql` only, after the browser test identified the missing column.
 - Candidate implementation committed: **yes — `e71ec20`**.
-- Candidate branch pushed: **pending at declaration commit time**.
+- Candidate branch pushed: **yes — `origin/codex/tutorial-recovery` was verified at `9797745` before this declaration-state update**.
 
 ## Gates before production enablement
 
