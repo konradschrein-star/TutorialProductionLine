@@ -450,7 +450,7 @@
 .studio-queue-summary a { display: flex; flex-direction: column; gap: 8px; padding: 20px 16px; color: var(--v2-text-2); font-size: 13px; text-decoration: none; }
 .studio-queue-summary a:hover { background: var(--v2-surface-2); }
 .studio-queue-count { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--v2-text-1); letter-spacing: -1px; }
-.settings-channel-grid { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-channel-grid { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 24px; align-items: start; }
 .studio-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 3px; }
 .studio-shell .v2-btn:hover, .studio-shell .v2-btn-outline:hover, .studio-shell .v2-glow:hover,
 .studio-shell .v2-btn-accent:hover, .studio-shell .v2-glow-primary:hover { box-shadow: none; transform: none; }

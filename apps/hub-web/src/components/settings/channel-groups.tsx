@@ -29,6 +29,7 @@ const BACKGROUNDS:Array<{id:TutorialProceduralBackground;label:string;manual?:bo
 ];
 export function ChannelGroups(){
  const [data,setData]=useState<Inventory|null>(null),[error,setError]=useState(''),[selected,setSelected]=useState(''),[draft,setDraft]=useState<Channel|null>(null),[busy,setBusy]=useState(false),[dirty,setDirty]=useState(false);
+ const [channelSearch,setChannelSearch]=useState('');
  const [newChannel,setNewChannel]=useState({name:'',language:'en',youtubeChannelId:'',primaryChannelId:''});
  async function load(){try{const r=await fetch('/api/production/channel-groups');if(!r.ok)throw Error('Channel settings could not be loaded');const d=await r.json();setData(d);setError('');if(selected)setDraft(d.channels.find((c:Channel)=>c.id===selected)??null);}catch(e){setError(e instanceof Error?e.message:'Load failed')}}
  useEffect(()=>{void load()},[]);
@@ -39,12 +40,21 @@ export function ChannelGroups(){
  if(error)return <div role="alert">{error} <button className="v2-btn" onClick={()=>void load()}>Retry</button></div>;
  if(!data)return <p role="status">Loading channels and configured voices…</p>;
  const primary=data.channels.filter(c=>c.isPrimary),unmapped=data.channels.filter(c=>!c.isPrimary&&!c.profile?.primaryChannelId),p=draft?.profile;
+ const normalizedSearch=channelSearch.trim().toLocaleLowerCase();
+ const matchesSearch=(channel:Channel)=>!normalizedSearch||[channel.name,channel.language,channel.youtubeChannelId,channel.profile?.accountLabel,channel.uploaderChannelKey].some(value=>value?.toLocaleLowerCase().includes(normalizedSearch));
+ const translationsFor=(channelId:string)=>data.channels.filter(channel=>channel.profile?.primaryChannelId===channelId);
+ const visiblePrimary=primary.filter(channel=>matchesSearch(channel)||translationsFor(channel.id).some(matchesSearch));
+ const visibleUnmapped=unmapped.filter(matchesSearch);
  function row(c:Channel){return <button type="button" key={c.id} className="v2-btn" aria-pressed={selected===c.id} disabled={busy} onClick={()=>choose(c)} style={{justifyContent:'space-between',width:'100%',marginTop:4,textAlign:'left'}}><span>{c.name} · {c.language}</span><small>{c.enabled?(c.isPrimary?'Primary':c.profile?.translationEnabled?'Translation on':'Translation off'):'Disabled'}</small></button>}
  return <section aria-labelledby="channel-group-title" style={{color:'var(--v2-text-1)'}}>
   <h2 id="channel-group-title">Channels & translations</h2><p style={{color:'var(--v2-text-2)'}}>Each primary channel owns its translated destinations. New channels start disabled, with no automatic translations.</p>
-  <button type="button" className="v2-btn" disabled={busy} onClick={()=>{if(!dirty||window.confirm('Reload and discard unsaved changes?')){setDirty(false);void load()}}}>Reload channel configuration</button>
+  <div style={{display:'flex',gap:8,alignItems:'end',flexWrap:'wrap'}}>
+   <label style={{flex:'1 1 260px'}}>Find a channel<input type="search" style={input} placeholder="Name, language, YouTube ID or uploader mapping" value={channelSearch} onChange={event=>setChannelSearch(event.target.value)}/></label>
+   <button type="button" className="v2-btn" disabled={busy} onClick={()=>{if(!dirty||window.confirm('Reload and discard unsaved changes?')){setDirty(false);void load()}}}>Reload</button>
+  </div>
+  <p style={{margin:'8px 0 12px',color:'var(--v2-text-2)'}}>{primary.length} primary {primary.length===1?'channel':'channels'} · {data.channels.length-primary.length} translated or unassigned destinations</p>
   <div className="settings-channel-grid">
-   <div>{primary.map(c=><details key={c.id} open style={{marginBottom:12}}><summary>{c.name} · primary</summary>{row(c)}<div style={{paddingLeft:14}}>{data.channels.filter(t=>t.profile?.primaryChannelId===c.id).map(row)}</div></details>)}{!!unmapped.length&&<details><summary>Unassigned translated channels ({unmapped.length})</summary><p>Assign explicitly; existing videos are not moved.</p>{unmapped.map(row)}</details>}
+   <div style={{display:'grid',gap:6,maxHeight:640,overflowY:'auto',paddingRight:4}}>{visiblePrimary.map(c=>{const translations=translationsFor(c.id),visibleTranslations=translations.filter(matchesSearch);return <section key={c.id} style={{padding:'5px 7px 7px',border:'1px solid var(--v2-border-2)',borderRadius:9,background:'var(--v2-surface-1)'}}>{row(c)}{normalizedSearch?(visibleTranslations.length?<div style={{paddingLeft:12,marginTop:6}}>{visibleTranslations.map(row)}</div>:null):translations.length?<details style={{marginTop:7}}><summary>{translations.length} translated {translations.length===1?'destination':'destinations'} · {translations.filter(channel=>channel.enabled&&channel.profile?.translationEnabled).length} active</summary><div style={{paddingLeft:12,marginTop:6}}>{translations.map(row)}</div></details>:null}</section>})}{!!visibleUnmapped.length&&<details open={Boolean(normalizedSearch)} style={{padding:10,border:'1px solid var(--v2-border-2)',borderRadius:9}}><summary>Unassigned translated channels ({visibleUnmapped.length})</summary><p>Assign explicitly; existing videos are not moved.</p>{visibleUnmapped.map(row)}</details>}{!visiblePrimary.length&&!visibleUnmapped.length&&<p role="status" style={{padding:12,border:'1px dashed var(--v2-border-2)',borderRadius:9,color:'var(--v2-text-2)'}}>No channel matches “{channelSearch.trim()}”.</p>}
    <details style={{marginTop:16}}><summary>Add a channel</summary><form onSubmit={e=>{e.preventDefault();void submit({action:'create',...newChannel,primaryChannelId:newChannel.primaryChannelId||null})}} style={{display:'grid',gap:10,marginTop:10}}>
     <label>Name<input required style={input} value={newChannel.name} onChange={e=>setNewChannel(s=>({...s,name:e.target.value}))}/></label>
     <label>Channel group<select style={input} value={newChannel.primaryChannelId} onChange={e=>setNewChannel(s=>({...s,primaryChannelId:e.target.value}))}><option value="">New primary channel</option>{primary.map(c=><option value={c.id} key={c.id}>{c.name} — translated destination</option>)}</select></label>
