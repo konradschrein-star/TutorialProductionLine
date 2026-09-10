@@ -11,18 +11,47 @@ import { assertLocalizationCurrent } from "../apps/worker-orchestrator/src/utils
 const require = createRequire(new URL("../apps/hub-web/package.json", import.meta.url));
 const sharp = require("sharp");
 const { Queue } = require("bullmq");
+const fixtureLayout = (top: string, bottom: string, aspectRatio: "16:9" | "9:16" = "16:9") => ({
+  aspectRatio,
+  elements: [
+    { id: "headline-1", type: "TEXT", text: top, x: 30, y: 30, width: 520, height: 110, zIndex: 2, fontSize: 64, fontWeight: "900" },
+    { id: "headline-2", type: "TEXT", text: bottom, x: 30, y: 150, width: 520, height: 110, zIndex: 2, fontSize: 64, fontWeight: "900" },
+  ],
+});
 
 const url = process.env.DATABASE_URL ?? "";
 if (url !== "postgresql://recovery:local-test-only@127.0.0.1:55438/tutorial_recovery_test") throw new Error("Isolated recovery database only.");
 if (process.env.JWT_SECRET !== "local-recovery-test-secret-not-for-production-2026") throw new Error("Local test signing key required.");
+if (process.env.LOCAL_MEDIA_ROOT !== "C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media") throw new Error("Isolated recovery media root required.");
 const sql = postgres(url, { max: 1 });
 const root = randomUUID();
+let sourceChannelId: string | undefined;
+let previousSourceMetadata: unknown = null;
+const previousDestinationMetadata = new Map<string, unknown>();
 try {
   const [owner] = await sql`SELECT id FROM users WHERE email='va@recovery.test'`;
   const [other] = await sql`SELECT id FROM users WHERE email='other@recovery.test'`;
   assert(owner && other, "Seed local test users first");
-  const [channel] = await sql`SELECT id FROM channels WHERE youtube_channel_id='recovery-test-en'`;
+  const [channel] = await sql`SELECT id,metadata FROM channels WHERE youtube_channel_id='recovery-test-en'`;
   assert(channel);
+  sourceChannelId = channel.id;
+  previousSourceMetadata = channel.metadata;
+  const localeChannels = await sql`SELECT id,language,metadata FROM channels WHERE youtube_channel_id IN ('recovery-test-de','recovery-test-fr','recovery-test-it','recovery-test-sv')`;
+  const tutorialLocaleChannels = Object.fromEntries(localeChannels.map((row) => [row.language, row.id]));
+  assert.deepEqual(Object.keys(tutorialLocaleChannels).sort(), ["de", "fr", "it", "sv"]);
+  // Locale fan-out is deliberately explicit. The probe supplies an isolated
+  // source-channel mapping instead of relying on a global language default.
+  await sql`UPDATE channels SET metadata=COALESCE(metadata,'{}'::jsonb) || ${sql.json({ tutorialLocaleChannels })} WHERE id=${channel.id}`;
+  for (const destination of localeChannels) {
+    previousDestinationMetadata.set(destination.id, destination.metadata);
+    const tutorialChannelProfile = {
+      version: 1,
+      primaryChannelId: channel.id,
+      translationEnabled: true,
+      translationMethod: "voiceover",
+    };
+    await sql`UPDATE channels SET metadata=COALESCE(metadata,'{}'::jsonb) || ${sql.json({ tutorialChannelProfile })} WHERE id=${destination.id}`;
+  }
   await sql`INSERT INTO tutorial_jobs(id,created_by,channel_id,title,mode,status,script_provider,tts_provider,tts_voice,language,final_path,recording_path,script_text,description,tags)
     VALUES(${root},${owner.id},${channel.id},'Thumbnail-first API test','THREE_MIN','COMPLETED','test','test','test','en','/test-only/video.mp4','/test-only/recording.mp4','Test script','Test metadata',${sql.json(["test"])})`;
   const token = await signToken({ userId: owner.id, email: "va@recovery.test", role: "TUTORIAL_VA" });
@@ -50,7 +79,7 @@ try {
   const testImage = await sharp({ create: { width: 1280, height: 720, channels: 3, background: "#274563" } }).png().toBuffer();
   const portrait = new FormData();
   portrait.append("file", new Blob([testImage], { type: "image/png" }), "portrait-layout-test.png");
-  portrait.append("layout", JSON.stringify({ aspectRatio: "9:16" }));
+  portrait.append("layout", JSON.stringify(fixtureLayout("TEST", "PORTRAIT", "9:16")));
   portrait.append("top", "TEST"); portrait.append("bottom", "PORTRAIT");
   const portraitResponse = await fetch(`http://127.0.0.1:3108/api/production/jobs/${root}/thumbnail/manual`, { method: "POST", headers: { Cookie: `hub_session=${token}` }, body: portrait });
   assert.equal(portraitResponse.status, 400);
@@ -58,7 +87,7 @@ try {
   for (const row of [{ id: root, language: "en" }, ...drafts]) {
     const form = new FormData();
     form.append("file", new Blob([testImage], { type: "image/png" }), "local-test-pattern.png");
-    form.append("layout", JSON.stringify({ fixture: true }));
+    form.append("layout", JSON.stringify(fixtureLayout(`TEST ${row.language}`, "LOCAL FIXTURE")));
     form.append("top", `TEST ${row.language}`);
     form.append("bottom", "LOCAL FIXTURE");
     const response = await fetch(`http://127.0.0.1:3108/api/production/jobs/${row.id}/thumbnail/manual`, { method: "POST", headers: { Cookie: `hub_session=${token}` }, body: form, redirect: "error" });
@@ -153,7 +182,18 @@ try {
         if (queued) await queued.remove();
       }
     }
-  } finally { await queue.close(); await sql.end(); }
+  } finally {
+    await queue.close();
+    if (sourceChannelId) {
+      if (previousSourceMetadata === null) await sql`UPDATE channels SET metadata=NULL WHERE id=${sourceChannelId}`;
+      else await sql`UPDATE channels SET metadata=${sql.json(previousSourceMetadata as never)} WHERE id=${sourceChannelId}`;
+    }
+    for (const [channelId, metadata] of previousDestinationMetadata) {
+      if (metadata === null) await sql`UPDATE channels SET metadata=NULL WHERE id=${channelId}`;
+      else await sql`UPDATE channels SET metadata=${sql.json(metadata as never)} WHERE id=${channelId}`;
+    }
+    await sql.end();
+  }
 }
 // All scoped queues and SQL fixture connections are closed. The separate
 // shared Drizzle factory has no public close API; this standalone probe is done.

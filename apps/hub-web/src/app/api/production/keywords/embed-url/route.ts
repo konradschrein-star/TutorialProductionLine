@@ -25,7 +25,8 @@ export async function GET() {
   const base = process.env.KT_EMBED_URL;
   const secret = process.env.KT_EMBED_SECRET;
   const integration = keywordIntegrationState(process.env);
-  if (integration !== "configured") return NextResponse.json({ integration, url: null });
+  if (integration !== "configured")
+    return NextResponse.json({ integration, url: null });
   if (!base || !secret) {
     return NextResponse.json(
       {
@@ -44,10 +45,15 @@ export async function GET() {
 
   const normalizedBase = base.replace(/\/$/, "");
   const url = `${normalizedBase}/embed/board?t=${encodeURIComponent(token)}`;
+  const canAdmin = hasPermission(session, "manage:tutorial-settings");
   return NextResponse.json({
     url,
     boardUrl: `${normalizedBase}/embed/board`,
-    adminUrl: `${normalizedBase}/admin`,
-    canAdmin: session.role === "ADMIN" || session.role === "MANAGER",
+    // Do not disclose or render the privileged destination to producer VAs.
+    // The Keyword Tool must still enforce its own authorization as the final
+    // boundary; this keeps the Studio shell honest and prevents accidental
+    // navigation into an admin-only surface.
+    adminUrl: canAdmin ? `${normalizedBase}/admin` : null,
+    canAdmin,
   });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { V2Button, GlassCard } from "../../_components";
 import { keywordIsProduced } from "@/lib/keyword-tool/workflow";
 
@@ -66,6 +67,25 @@ interface Props {
   sending?: number | null;
 }
 
+function formatDuration(seconds: number | null) {
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0)
+    return null;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+
+const metadataChip: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 24,
+  padding: "2px 7px",
+  border: "1px solid var(--v2-border-1)",
+  borderRadius: 6,
+  color: "var(--v2-text-2)",
+  fontSize: 10,
+};
+
 export function MyKeywords({
   selectedId,
   onPick,
@@ -113,7 +133,7 @@ export function MyKeywords({
     return (
       <GlassCard style={{ padding: 16 }}>
         <div style={{ fontSize: 12, color: "#f87171" }}>
-          Could not load your claimed keywords — {error}
+          Could not load your claimed keywords: {error}
         </div>
         <div style={{ marginTop: 10 }}>
           <V2Button variant="outline" onClick={() => void load()}>
@@ -126,9 +146,16 @@ export function MyKeywords({
 
   if (!data) return null;
   if (data.integration === "disabled" || data.integration === "unconfigured") {
-    return <GlassCard style={{ padding: 16, color: "var(--v2-text-2)", fontSize: 13 }}>
-      {data.integration === "disabled" ? "Keyword Tool is switched off for this workspace." : "Keyword Tool has not been connected yet."} You can still prepare a tutorial below.
-    </GlassCard>;
+    return (
+      <GlassCard
+        style={{ padding: 16, color: "var(--v2-text-2)", fontSize: 13 }}
+      >
+        {data.integration === "disabled"
+          ? "Keyword Tool is switched off for this workspace."
+          : "Keyword Tool has not been connected yet."}{" "}
+        You can still prepare a tutorial below.
+      </GlassCard>
+    );
   }
 
   const visible = showDone
@@ -177,16 +204,27 @@ export function MyKeywords({
 
       {data.total === 0 && (
         <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.6 }}>
-          You have not claimed any keywords yet. Open the{" "}
-          <strong>Keywords</strong> tab and claim some — they will appear here,
-          and picking one fills this form in for you.
+          You have not claimed any keywords yet. Open the research board in the{" "}
+          <a
+            href="/tutorial-studio?tab=keywords"
+            style={{ color: "var(--v2-accent)", fontWeight: 700 }}
+          >
+            Keywords tab
+          </a>{" "}
+          to claim work, or use Direct intake to create from an approved list.
         </div>
       )}
 
       {data.total > 0 && visible.length === 0 && (
         <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Every keyword you claimed has been made. Claim more in the{" "}
-          <strong>Keywords</strong> tab.
+          Every claimed keyword is complete. Claim more on the{" "}
+          <a
+            href="/tutorial-studio?tab=keywords"
+            style={{ color: "var(--v2-accent)", fontWeight: 700 }}
+          >
+            research board
+          </a>
+          .
         </div>
       )}
 
@@ -195,6 +233,7 @@ export function MyKeywords({
           const done = keywordIsProduced(k);
           const bound = k.job !== null;
           const selected = selectedId === k.id;
+          const duration = formatDuration(k.durationSec);
           return (
             <div
               key={k.id}
@@ -217,18 +256,68 @@ export function MyKeywords({
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{k.keyword}</div>
                 <div
                   style={{
-                    fontSize: 10,
-                    color: "var(--v2-text-2)",
-                    marginTop: 2,
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 5,
+                    marginTop: 6,
                   }}
                 >
-                  {k.topic ?? "no software"}
-                  {k.lengthClass ? ` · ${k.lengthClass}` : ""}
-                  {k.destination && k.destination !== "TUTORIAL"
-                    ? ` · routed to ${k.destination}`
-                    : ""}
-                  {bound ? ` · ${done ? "Produced" : "In Studio"} (${k.job!.status.replaceAll("_", " ").toLowerCase()})` : done ? " · Produced" : ""}
+                  <span style={metadataChip}>
+                    {k.topic ?? "Topic not classified"}
+                  </span>
+                  {k.lengthClass && (
+                    <span style={metadataChip}>{k.lengthClass}</span>
+                  )}
+                  {duration && <span style={metadataChip}>{duration}</span>}
+                  <span
+                    style={metadataChip}
+                    title={
+                      k.priorityScore === null
+                        ? "The research source did not provide a score."
+                        : "Priority supplied by the Keyword Tool. This is not estimated search volume."
+                    }
+                  >
+                    {k.priorityScore === null
+                      ? "No research score"
+                      : `Research priority ${k.priorityScore}`}
+                  </span>
+                  {k.destination && k.destination !== "TUTORIAL" && (
+                    <span style={metadataChip}>Route: {k.destination}</span>
+                  )}
+                  {(bound || done) && (
+                    <span style={metadataChip}>
+                      {bound
+                        ? `${done ? "Produced" : "In Studio"}: ${k.job!.status.replaceAll("_", " ").toLowerCase()}`
+                        : "Produced"}
+                    </span>
+                  )}
                 </div>
+                {(k.referenceUrl || k.note) && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 10,
+                      marginTop: 6,
+                      fontSize: 11,
+                      color: "var(--v2-text-2)",
+                    }}
+                  >
+                    {k.referenceUrl && (
+                      <a
+                        href={k.referenceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "var(--v2-accent)" }}
+                      >
+                        Open source video
+                      </a>
+                    )}
+                    {k.note && (
+                      <span title={k.note}>Research note: {k.note}</span>
+                    )}
+                  </div>
+                )}
               </div>
               <a
                 href={k.ktUrl}
@@ -263,7 +352,16 @@ export function MyKeywords({
                 </V2Button>
               )}
               {bound ? (
-                <a href={`/tutorial-studio?tab=${done ? "review" : "dashboard"}&jobId=${encodeURIComponent(k.job!.id)}`} style={{ color: "var(--v2-accent)", fontSize: 12, whiteSpace: "nowrap" }}>Open tutorial</a>
+                <a
+                  href={`/tutorial-studio?tab=${done ? "review" : "dashboard"}&jobId=${encodeURIComponent(k.job!.id)}`}
+                  style={{
+                    color: "var(--v2-accent)",
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Open tutorial
+                </a>
               ) : selected ? (
                 <V2Button variant="outline" onClick={onClear}>
                   Clear

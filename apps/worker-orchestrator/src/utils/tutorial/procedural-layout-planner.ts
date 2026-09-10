@@ -38,7 +38,10 @@ export function planProceduralLayout(input:ProceduralPlanInput):ProceduralLayout
  const variant=Math.abs(input.variantIndex)%6;
  const baseHostScale=[1.08,1,1.13,1.04,1.1,1.02][variant]!;
  const hostScale=hasLong&&words.length>=4?baseHostScale*.88:hasLong&&words.length===3?baseHostScale*.94:baseHostScale;
- const hostEdgeOffset=[92,78,104,84,98,72][variant]!;
+ // Four-word localized copy needs a little more separation from the face. Move
+ // the host farther through the outside edge instead of shrinking the person;
+ // mobile face scale stays strong while the final headline remains protected.
+ const hostEdgeOffset=[92,78,104,84,98,72][variant]!+(hasLong&&words.length>=4?14:0);
  const logoSize=[160,152,168,156,164,148][variant]!;
  // Long localized copy needs vertical room to add a third/fourth row while
  // preserving the mobile type floor. Keeping every retry at 258px made the

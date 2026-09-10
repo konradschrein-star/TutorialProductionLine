@@ -1,6 +1,27 @@
 import { sql } from "drizzle-orm";
 import type { DrizzleClient } from "@repo/db";
 
+class KeywordDeliveryError extends Error {
+  constructor(readonly status?: number, message = "Keyword milestone was not verified") {
+    super(message);
+  }
+}
+
+export function keywordDeliveryFailurePolicy(status?: number, attempts = 1) {
+  if (status === 409) return {
+    delaySeconds: 3600,
+    message: "Keyword Tool rejected milestone identity; Admin reconciliation required",
+  };
+  if (status && status >= 400 && status < 500) return {
+    delaySeconds: 3600,
+    message: "Keyword Tool rejected milestone contract or authentication; Admin action required",
+  };
+  return {
+    delaySeconds: Math.min(3600, 5 * 2 ** Math.min(attempts, 10)),
+    message: "Keyword Tool did not confirm delivery; retry scheduled",
+  };
+}
+
 export async function deliverKeywordMilestone(db: DrizzleClient, options: { url: string; secret: string; fetch?: typeof fetch; jobId?: string }) {
   const url = new URL(options.url);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) throw new Error("Keyword webhook requires HTTPS");
@@ -21,16 +42,19 @@ export async function deliverKeywordMilestone(db: DrizzleClient, options: { url:
   if (!row) return { delivered: false, pending: false };
   try {
     const response = await (options.fetch ?? fetch)(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.secret}` }, body: JSON.stringify(row.payload), signal: AbortSignal.timeout(10_000), redirect: "error" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const receipt = await response.json().catch(() => null) as { verified?: boolean; reconciliationRequired?: boolean; forge_job_id?: unknown; keyword_ref?: unknown; event_sequence?: unknown; dedup_key?: unknown } | null;
-    if (receipt?.verified !== true || receipt.reconciliationRequired) throw new Error("Receiver did not confirm a verified milestone");
+    if (!response.ok) throw new KeywordDeliveryError(response.status);
+    const receipt = await response.json().catch(() => null) as { verified?: boolean; reconciliationRequired?: boolean; reconciliation_required?: boolean; forge_job_id?: unknown; keyword_ref?: unknown; event_sequence?: unknown; dedup_key?: unknown } | null;
+    if (receipt?.verified !== true || receipt.reconciliationRequired || receipt.reconciliation_required) throw new KeywordDeliveryError(undefined);
     const sent = row.payload as { forge_job_id: string; keyword_ref: string; event_sequence: number; dedup_key: string };
-    if (receipt.forge_job_id !== sent.forge_job_id || receipt.keyword_ref !== sent.keyword_ref || receipt.event_sequence !== sent.event_sequence || receipt.dedup_key !== sent.dedup_key) throw new Error("Receiver acknowledgement does not match the sent milestone");
+    if (receipt.forge_job_id !== sent.forge_job_id || receipt.keyword_ref !== sent.keyword_ref || receipt.event_sequence !== sent.event_sequence || receipt.dedup_key !== sent.dedup_key) throw new KeywordDeliveryError(409);
     await db.execute(sql`UPDATE tutorial_keyword_outbox SET delivered_at=now(),lease_until=NULL,last_error=NULL WHERE id=${row.id} AND attempts=${row.attempts}`);
     return { delivered: true, pending: true };
-  } catch {
-    const delay = Math.min(3600, 5 * 2 ** Math.min(row.attempts, 10));
-    await db.execute(sql`UPDATE tutorial_keyword_outbox SET lease_until=NULL, available_at=now()+${delay}*interval '1 second',last_error='Keyword Tool did not confirm delivery; retry scheduled' WHERE id=${row.id} AND attempts=${row.attempts}`);
+  } catch (error) {
+    const policy = keywordDeliveryFailurePolicy(
+      error instanceof KeywordDeliveryError ? error.status : undefined,
+      row.attempts,
+    );
+    await db.execute(sql`UPDATE tutorial_keyword_outbox SET lease_until=NULL, available_at=now()+${policy.delaySeconds}*interval '1 second',last_error=${policy.message} WHERE id=${row.id} AND attempts=${row.attempts}`);
     return { delivered: false, pending: true };
   }
 }

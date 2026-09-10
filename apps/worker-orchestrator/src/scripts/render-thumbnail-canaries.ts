@@ -46,22 +46,23 @@ const common = {
 } as const;
 
 const canaries = [
-  { name: "notion-tutorial", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["AUTO SAVE"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostZoom: 1.12 },
-  { name: "send-email", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["SEND EMAIL"], uiScreenshotPath: gmailUi, theme: "dark-first" as const },
-  { name: "find-closed", backgroundColor: "#eef1f4", logoPath: join(publicDir, "app_logos_png/discord.png"), lines: ["FIND CLOSED"], uiScreenshotPath: discordUi, theme: "light-first" as const },
+  { name: "notion-tutorial", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["AUTO", "SAVE"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostZoom: 1.12, hostPath: join(publicDir, "English/american-finger-up.png") },
+  { name: "send-email", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["SEND", "EMAIL"], uiScreenshotPath: gmailUi, theme: "dark-first" as const, hostPath: join(publicDir, "English/american-explaining.png") },
+  { name: "find-closed", backgroundColor: "#eef1f4", logoPath: join(publicDir, "app_logos_png/discord.png"), lines: ["FIND", "CLOSED"], uiScreenshotPath: discordUi, theme: "light-first" as const, hostPath: join(publicDir, "English/american-thinking.png") },
   { name: "fix-drive", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["UPLOAD FIX"], uiScreenshotPath: driveUi, theme: "light-first" as const, hostZoom: 1.12 },
   { name: "send-email-aura", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["SEND EMAIL"], uiScreenshotPath: gmailUi, theme: "dark-first" as const, logoAura: true },
   { name: "upload-fix-aura", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["UPLOAD FIX"], uiScreenshotPath: driveUi, theme: "light-first" as const, logoAura: true },
-  { name: "one-word-reset", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["RESET"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostZoom: 1.12 },
-  { name: "three-word-recover-files", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["RECOVER LOST FILES"], uiScreenshotPath: driveUi, theme: "light-first" as const },
-  { name: "german-mixed-length", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["DATEN JETZT WIEDERHERSTELLEN"], uiScreenshotPath: gmailUi, theme: "dark-first" as const },
+  { name: "one-word-reset", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["RESET"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostZoom: 1.12, hostPath: join(publicDir, "English/american-stop-palm.png") },
+  { name: "three-word-recover-files", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["RECOVER", "LOST", "FILES"], uiScreenshotPath: driveUi, theme: "light-first" as const, hostPath: join(publicDir, "English/american-celebrate.png") },
+  { name: "four-word-auto-save", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["TURN", "OFF", "AUTO", "SAVE"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostPath: join(publicDir, "English/american-hero.png") },
+  { name: "german-mixed-length", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["DATEN", "JETZT", "WIEDERHERSTELLEN"], uiScreenshotPath: gmailUi, theme: "dark-first" as const, hostPath: join(publicDir, "germanese/german-pointing.png") },
   { name: "host-left-variant", backgroundColor: "#eef1f4", logoPath: join(publicDir, "app_logos_png/discord.png"), lines: ["SCHNELL DATEI FINDEN"], uiScreenshotPath: discordUi, theme: "light-first" as const, hostSide: "left" as const, layoutId: "ui-card-host-left" as const },
   { name: "short-long", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["FIX WIEDERHERSTELLUNG"], uiScreenshotPath: driveUi, theme: "light-first" as const },
   { name: "long-short", backgroundColor: "#f6f7f8", logoPath: join(publicDir, "app_logos_png/googledrive.png"), lines: ["WIEDERHERSTELLUNG FIX"], uiScreenshotPath: driveUi, theme: "light-first" as const },
   { name: "long-long", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["AUTOMATISCHE WIEDERHERSTELLUNG"], uiScreenshotPath: gmailUi, theme: "dark-first" as const },
-  { name: "french-four-words", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["DÉSACTIVER LA SAUVEGARDE AUTOMATIQUE"], uiScreenshotPath: notionUi, theme: "light-first" as const },
-  { name: "italian-three-words", backgroundColor: "#eef1f4", logoPath: join(publicDir, "app_logos_png/discord.png"), lines: ["RIPRISTINA FILE ELIMINATI"], uiScreenshotPath: discordUi, theme: "light-first" as const },
-  { name: "swedish-four-words", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["STÄNG AV AUTOMATISK SPARNING"], uiScreenshotPath: gmailUi, theme: "dark-first" as const },
+  { name: "french-four-words", backgroundColor: "#f3f5f7", logoPath: join(publicDir, "app_logos_png/notion.png"), lines: ["DÉSACTIVER", "LA", "SAUVEGARDE", "AUTOMATIQUE"], uiScreenshotPath: notionUi, theme: "light-first" as const, hostPath: join(publicDir, "French/french-pointing.png") },
+  { name: "italian-three-words", backgroundColor: "#eef1f4", logoPath: join(publicDir, "app_logos_png/discord.png"), lines: ["RIPRISTINA", "FILE", "ELIMINATI"], uiScreenshotPath: discordUi, theme: "light-first" as const, hostPath: join(publicDir, "Italy/italian-pointing.png") },
+  { name: "swedish-four-words", backgroundColor: "#111318", logoPath: join(publicDir, "app_logos_png/gmail.png"), lines: ["STÄNG", "AV", "AUTOMATISK", "SPARNING"], uiScreenshotPath: gmailUi, theme: "dark-first" as const, hostPath: join(publicDir, "Swedish/swedish-pointing.png") },
 ] as const;
 
 const qualityReports:Array<{name:string;score:number|null;passed:boolean|null;issues:string[]}>=[];

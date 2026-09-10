@@ -20,6 +20,7 @@ async function snapshot(tx: Transaction, job: typeof tutorialJobs.$inferSelect, 
 export async function reconcileLateLocalePublication(db: DrizzleClient, afterId?: string, now = new Date()) {
   const pending = await db.select({ id: tutorialJobs.id, sourceId: tutorialJobs.source_job_id }).from(tutorialJobs).where(and(eq(tutorialJobs.status, "COMPLETED"), isNotNull(tutorialJobs.source_job_id), isNotNull(tutorialJobs.localization_source_revision), isNull(tutorialJobs.publication_approval), isNull(tutorialJobs.scheduled_for), afterId ? gt(tutorialJobs.id, afterId) : undefined)).orderBy(asc(tutorialJobs.id)).limit(20);
   let approved = 0; let outstanding = 0;
+  const failures: Array<{ jobId: string; reason: string }> = [];
   for (const candidate of pending) {
     try {
       const accepted = await db.transaction(async (tx) => {
@@ -37,10 +38,17 @@ export async function reconcileLateLocalePublication(db: DrizzleClient, afterId?
         await reserveTutorialPublicationSlot(tx, job.id, now);
         return true;
       });
-      if (accepted) approved++; else outstanding++;
-    } catch { outstanding++; }
+      if (accepted) approved++;
+      else {
+        outstanding++;
+        failures.push({ jobId: candidate.id, reason: "Locale is no longer eligible for inherited approval." });
+      }
+    } catch (error) {
+      outstanding++;
+      failures.push({ jobId: candidate.id, reason: error instanceof Error ? error.message : "Late-locale approval failed." });
+    }
   }
-  return { approved, outstanding, nextCursor: pending.length === 20 ? pending[pending.length - 1]!.id : undefined };
+  return { approved, outstanding, failures, nextCursor: pending.length === 20 ? pending[pending.length - 1]!.id : undefined };
 }
 
 export function startLateLocalePublicationRecovery(db: DrizzleClient) {

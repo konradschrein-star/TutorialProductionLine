@@ -8,20 +8,21 @@ import { tutorialSourceRevision } from "../packages/db/dist/index.js";
 
 const url = process.env.DATABASE_URL;
 if (url !== "postgresql://recovery:local-test-only@127.0.0.1:55438/tutorial_recovery_test") throw new Error("Isolated test database only");
+if (process.env.LOCAL_MEDIA_ROOT !== "C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media") throw new Error("Isolated recovery media root required");
 const sql = postgres(url, { max: 3 });
 const id = randomUUID();
 const directory = `C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media/scheduled-${id}`;
 let previousSettings: unknown;
 let previousPause = false;
 try {
-  await sql.unsafe(await readFile("../../packages/db/src/migrations/0095_tutorial_scheduled_delivery.sql", "utf8"));
+  await sql.unsafe(await readFile(new URL("../packages/db/src/migrations/0095_tutorial_scheduled_delivery.sql", import.meta.url), "utf8"));
   const { queueScheduledDelivery, claimScheduledDelivery, ingestScheduledReceipt, getScheduledAsset } = await import("../apps/hub-web/src/lib/uploader/scheduled-delivery");
   const [owner] = await sql`SELECT id FROM users WHERE email='va@recovery.test'`;
   const [channel] = await sql`SELECT * FROM channels WHERE language='en' AND uploader_channel_key IS NOT NULL LIMIT 1`;
   assert(owner && channel);
   const [settings] = await sql`SELECT uploader,tutorial_dispatch_paused FROM system_settings WHERE id='singleton'`;
   assert(settings); previousSettings = settings.uploader; previousPause = settings.tutorial_dispatch_paused;
-  await sql`UPDATE system_settings SET uploader=${sql.json({ ...(settings.uploader ?? {}), enabled: true, executionMode: "live" })},tutorial_dispatch_paused=false WHERE id='singleton'`;
+  await sql`UPDATE system_settings SET uploader=${sql.json({ ...(settings.uploader ?? {}), enabled: true, executionMode: "live", requireManualRelease: false })},tutorial_dispatch_paused=false WHERE id='singleton'`;
   await mkdir(directory, { recursive: true });
   const videoPath = `${directory}/video.mp4`; const thumbPath = `${directory}/thumb.jpg`;
   await copyFile("C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media/pilot-test-pattern.mp4", videoPath);

@@ -1163,8 +1163,11 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
     const [initialJob] = dispatch ? await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, dispatch.tutorial_job_id)) : [];
     if (!dispatch || !initialJob) throw new TutorialUploaderExchangeError("approval_withdrawn", "The tutorial dispatch no longer exists.");
     // Same lock order as Hub: root, variant, then admission control.
-    const [root] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.source_job_id ?? initialJob.id)).for("update", { noWait: true });
-    const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.id)).for("update", { noWait: true });
+    // Drizzle renders `noWait` as the invalid PostgreSQL token pair `NO WAIT`
+    // in the pinned runtime. A normal row lock preserves the shared lock order
+    // without turning every admitted dispatch into a syntax error.
+    const [root] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.source_job_id ?? initialJob.id)).for("update");
+    const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.id)).for("update");
     if (!root || !current || root.va_review_status !== "approved" || root.status !== "COMPLETED" || current.status !== "COMPLETED" || (current.source_job_id ?? current.id) !== root.id) throw new TutorialUploaderExchangeError("approval_withdrawn", "Final review is no longer valid.");
     const sourceRevision = tutorialSourceRevision(root);
     for (const job of current.id === root.id ? [root] : [root, current]) {

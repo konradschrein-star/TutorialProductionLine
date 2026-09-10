@@ -25,6 +25,22 @@ describe("renderManualTutorialArtwork", () => {
     expect(Math.max(...topAlpha)).toBe(0);
     expect(data.some((value,index)=>index%info.channels===3&&value===255)).toBe(true);
   });
+  it("removes opaque black bars baked into a downloaded logo",async()=>{
+    const directory=await mkdtemp(join(tmpdir(),'tutorial-logo-bars-'));temporaryDirectories.push(directory);
+    const input=join(directory,'letterboxed.png');
+    const artwork=await sharp({create:{width:180,height:64,channels:4,background:{r:38,g:112,b:238,alpha:1}}}).png().toBuffer();
+    await sharp({create:{width:180,height:112,channels:4,background:{r:0,g:0,b:0,alpha:1}}})
+      .composite([{input:artwork,left:0,top:24}]).png().toFile(input);
+    const {data,info}=await sharp(await prepareLogoArtwork(input,112)).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+    const visible=[] as Array<{r:number;g:number;b:number}>;
+    for(let index=0;index<data.length;index+=info.channels){
+      if((data[index+3]??0)>240)visible.push({r:data[index]??0,g:data[index+1]??0,b:data[index+2]??0});
+    }
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.filter(pixel=>pixel.r<25&&pixel.g<25&&pixel.b<25)).toHaveLength(0);
+    const topAlpha=Array.from({length:info.width},(_,x)=>data[x*info.channels+3]??255);
+    expect(Math.max(...topAlpha)).toBe(0);
+  });
   it("falls back cleanly when a recorded interface frame is unavailable", async () => {
     await expect(extractBestInterfaceFrame(join(tmpdir(), "missing-tutorial.mp4"), join(tmpdir(), "missing-frame.png"))).resolves.toBeNull();
   });

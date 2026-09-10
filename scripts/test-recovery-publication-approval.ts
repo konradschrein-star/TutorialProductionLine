@@ -8,7 +8,7 @@ import { createDrizzleClient, tutorialSourceRevision } from "../packages/db/dist
 import { DrizzleTutorialUploaderExchangeRepository } from "../apps/worker-orchestrator/src/storage/tutorial-uploader-exchange";
 import { reconcileLateLocalePublication } from "../apps/worker-orchestrator/src/services/late-locale-publication";
 const url = process.env.DATABASE_URL ?? "";
-if (url !== "postgresql://recovery:local-test-only@127.0.0.1:55438/tutorial_recovery_test" || process.env.JWT_SECRET !== "local-recovery-test-secret-not-for-production-2026") throw new Error("Isolated recovery runtime only");
+if (url !== "postgresql://recovery:local-test-only@127.0.0.1:55438/tutorial_recovery_test" || process.env.JWT_SECRET !== "local-recovery-test-secret-not-for-production-2026" || process.env.LOCAL_MEDIA_ROOT !== "C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media") throw new Error("Isolated recovery runtime only");
 const sql = postgres(url, { max: 1 });
 const root = randomUUID();
 const directory = `C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media/approval-${root}`;
@@ -104,9 +104,19 @@ try {
   assert.equal(blockedLate!.publication_approval, null);
   await sql`UPDATE tutorial_jobs SET title='Exact approval test' WHERE id=${root}`;
   const recoveries = await Promise.all(Array.from({ length: 4 }, () => reconcileLateLocalePublication(recoveryDb)));
-  assert.equal(recoveries.reduce((sum, row) => sum + row.approved, 0), 1);
+  const recoveryEvidence = [...recoveries];
+  assert(recoveries.reduce((sum, row) => sum + row.approved, 0) <= 1, "Concurrent recovery may approve this locale only once");
+  // This isolated database intentionally retains earlier acceptance evidence.
+  // Walk every deterministic page so accumulated fixtures cannot starve the
+  // newly-created locale merely because its UUID is not in the first page.
+  let cursor = recoveries.find((row) => row.nextCursor)?.nextCursor;
+  for (let page = 0; cursor && page < 100; page++) {
+    const result = await reconcileLateLocalePublication(recoveryDb, cursor);
+    recoveryEvidence.push(result);
+    cursor = result.nextCursor;
+  }
   const results = await sql`SELECT id,language,publication_approval,scheduled_for FROM tutorial_jobs WHERE source_job_id=${root}`;
-  assert(results.find((row) => row.language === "de")!.publication_approval);
+  assert(results.find((row) => row.language === "de")!.publication_approval, JSON.stringify(recoveryEvidence.flatMap((row) => row.failures).filter((failure) => failure.jobId === childIds.de)));
   assert(results.find((row) => row.language === "de")!.scheduled_for);
   for (const language of ["fr", "it"]) { const row = results.find((item) => item.language === language)!; assert.equal(row.publication_approval, null); assert.equal(row.scheduled_for, null); }
   assert.equal((await reconcileLateLocalePublication(recoveryDb)).approved, 0);

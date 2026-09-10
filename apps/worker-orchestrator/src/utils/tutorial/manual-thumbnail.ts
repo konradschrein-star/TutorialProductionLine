@@ -370,12 +370,45 @@ async function sampledLogoColors(
   return [hex(first, fallback), hex(second, "#7c3aed")];
 }
 
+/** Remove opaque black letterboxing that is already baked into a downloaded
+ * logo. Transparent trimming alone cannot remove those source pixels. Only
+ * near-solid, near-black edge runs qualify, so dark artwork inside a transparent
+ * or differently coloured canvas is preserved. */
+async function cropOpaqueBlackLogoBars(input:Buffer):Promise<Buffer>{
+ const {data,info}=await sharp(input).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+ const isBlackOpaque=(offset:number)=>{
+  const alpha=data[offset+3]??255;
+  return alpha>=245&&(data[offset]??0)<=24&&(data[offset+1]??0)<=24&&(data[offset+2]??0)<=24;
+ };
+ const rowIsBar=(y:number)=>{
+  let matching=0;
+  for(let x=0;x<info.width;x+=1)if(isBlackOpaque((y*info.width+x)*info.channels))matching+=1;
+  return matching/info.width>=.96;
+ };
+ const columnIsBar=(x:number)=>{
+  let matching=0;
+  for(let y=0;y<info.height;y+=1)if(isBlackOpaque((y*info.width+x)*info.channels))matching+=1;
+  return matching/info.height>=.96;
+ };
+ let top=0,bottom=0,left=0,right=0;
+ while(top<info.height&&rowIsBar(top))top+=1;
+ while(bottom<info.height-top&&rowIsBar(info.height-1-bottom))bottom+=1;
+ while(left<info.width&&columnIsBar(left))left+=1;
+ while(right<info.width-left&&columnIsBar(info.width-1-right))right+=1;
+ const width=info.width-left-right,height=info.height-top-bottom;
+ // A uniformly black logo or an implausibly tiny remainder is artwork, not a
+ // trustworthy letterbox. Fail closed and keep the original in that case.
+ if(width<Math.max(8,info.width*.25)||height<Math.max(8,info.height*.25)||(top===0&&bottom===0&&left===0&&right===0))return input;
+ return sharp(input).extract({left,top,width,height}).png().toBuffer();
+}
+
 /** Normalize arbitrary rectangular brand marks without manufacturing opaque
- * letterbox pixels. The explicit transparent contain background is essential:
- * Sharp otherwise pads some decoded inputs with black, which caused the bars
- * previously visible above and below Drive/Canva logos. */
+ * padding and without preserving source letterbox bars. The final contain
+ * operation always uses a transparent canvas. */
 export async function prepareLogoArtwork(logoPath:string,size=112):Promise<Buffer>{
- return sharp(logoPath).ensureAlpha().trim({background:'#00000000',threshold:2}).resize(size,size,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}}).png().toBuffer();
+ const transparentTrimmed=await sharp(logoPath).ensureAlpha().trim({background:'#00000000',threshold:2}).png().toBuffer();
+ const cropped=await cropOpaqueBlackLogoBars(transparentTrimmed);
+ return sharp(cropped).resize(size,size,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}}).png().toBuffer();
 }
 
 async function logoRasterMetrics(buffer:Buffer):Promise<LogoRasterMetrics>{
