@@ -133,6 +133,8 @@ const BRAND_QUALIFIERS: readonly string[] = [
   "premium",
   "enterprise",
   "business",
+  "template",
+  "templates",
 ];
 
 function tokenise(text: string): string[] {
@@ -157,6 +159,7 @@ export function stripBrand(text: string, logoSubject: string): string {
   const brandWords = tokenise(
     logoSubject.toLowerCase().replace(/[^\w\s.]/g, ""),
   ).filter(Boolean);
+  while (brandWords.length > 1 && BRAND_QUALIFIERS.includes(brandWords[brandWords.length - 1]!)) brandWords.pop();
   if (brandWords.length === 0) return text;
 
   const words = tokenise(text);
@@ -244,6 +247,53 @@ export function condenseHeadline(raw: string, opts: CondenseOptions): string {
   if (words.length > ceiling)
     words = stripEdgeConnectives(words.slice(0, ceiling));
   return words.join(" ");
+}
+
+/** Split compact copy without ever stranding &, +, and/or on their own line. */
+export function compactHeadlineBlocks(
+  raw: string,
+  options: CondenseOptions & { blocks?: number },
+): string[] {
+  const condensed = tokenise(condenseHeadline(raw, options));
+  // Connectors cost a visual beat and are the first thing to become a dangling
+  // glyph when copy is split ("ACCESS CODES &" / "ID"). The two concrete
+  // phrases already communicate their relationship.
+  const withoutConnectors = condensed.filter((word) => !/^(?:&|\+|and|or)$/i.test(word));
+  const words = withoutConnectors.length ? withoutConnectors : condensed;
+  if (!words.length) return [];
+  const count = Math.max(1, Math.min(options.blocks ?? 2, words.length));
+  if (count === 1) return [words.join(" ")];
+  const candidates: string[][] = [];
+  const partition = (start: number, remaining: number, groups: string[]) => {
+    if (remaining === 1) {
+      candidates.push([...groups, words.slice(start).join(" ")]);
+      return;
+    }
+    for (let end = start + 1; end <= words.length - remaining + 1; end += 1) {
+      partition(end, remaining - 1, [...groups, words.slice(start, end).join(" ")]);
+    }
+  };
+  partition(0, count, []);
+  const score = (lines: string[]) => {
+    const lengths = lines.map((line) => line.length);
+    return Math.max(...lengths) * 1_000 + lengths.reduce((sum, length) => sum + length * length, 0);
+  }
+  return candidates.sort((a, b) => score(a) - score(b))[0] ?? [words.join(" ")];
+}
+
+/** Automatic procedural line policy. Short copy becomes one dominant,
+ * shrink-wrapped banner; three or four words may balance across two hitboxes. */
+export function proceduralHeadlineBlocks(
+  raw: string,
+  options: CondenseOptions,
+): string[] {
+  const condensed = compactHeadlineBlocks(raw, { ...options, blocks: 1 }).join(" ");
+  const wordCount = tokenise(condensed).length;
+  return compactHeadlineBlocks(condensed, {
+    maxWords: options.maxWords,
+    blocks: wordCount <= 2 ? 1 : 2,
+    logoSubject: null,
+  });
 }
 
 /**

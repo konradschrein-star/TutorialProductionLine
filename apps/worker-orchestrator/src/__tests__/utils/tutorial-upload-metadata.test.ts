@@ -17,8 +17,8 @@ describe("parseUploadMetadataResponse", () => {
     );
     expect(r.description).toBe("Do the thing.");
     expect(r.tags).toEqual(["gmail 2fa", "security"]);
-    expect(r.thumbnailTextTop).toBe("LOCK IT DOWN");
-    expect(r.thumbnailTextBottom).toBe("IN 2 MINUTES");
+    expect(`${r.thumbnailTextTop} ${r.thumbnailTextBottom}`.trim().split(/\s+/).length).toBeLessThanOrEqual(4);
+    expect(r.thumbnailTextTop).toContain("LOCK");
   });
 
   it("survives the fenced code block models insist on adding", () => {
@@ -124,6 +124,16 @@ describe("parseUploadMetadataResponse", () => {
     expect(tooLong.thumbnailTextTop).toBeNull();
     expect(tooLong.thumbnailTextBottom).toBeNull();
   });
+
+  it("condenses generated thumbnail copy to four meaningful words", () => {
+    const result = parseUploadMetadataResponse(JSON.stringify({
+      description: "x",
+      tags: ["gmail"],
+      thumbnail_text_top: "SCHEDULE FROM CANVA",
+      thumbnail_text_bottom: "NO APP SWITCHING",
+    }));
+    expect(`${result.thumbnailTextTop} ${result.thumbnailTextBottom}`.trim().split(/\s+/)).toHaveLength(4);
+  });
 });
 
 describe("buildUploadMetadataPrompt", () => {
@@ -145,5 +155,16 @@ describe("buildUploadMetadataPrompt", () => {
     expect(buildUploadMetadataPrompt("T", "s", "de")).toContain("in de");
     expect(buildUploadMetadataPrompt("T", "s", "en")).toContain("in English");
     expect(buildUploadMetadataPrompt("T", "s", null)).toContain("in English");
+  });
+
+  it("applies per-channel metadata and thumbnail-copy instructions", () => {
+    const prompt = buildUploadMetadataPrompt("T", "s", "ja", {
+      metadataInstructions: "Use the channel's formal closing line.",
+      thumbnailTextInstructions: "Prefer imperative verbs.",
+    });
+    expect(prompt).toContain("CHANNEL-SPECIFIC METADATA INSTRUCTIONS");
+    expect(prompt).toContain("formal closing line");
+    expect(prompt).toContain("CHANNEL-SPECIFIC THUMBNAIL COPY INSTRUCTIONS");
+    expect(prompt).toContain("Prefer imperative verbs");
   });
 });

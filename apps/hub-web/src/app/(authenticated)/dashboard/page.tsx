@@ -274,7 +274,7 @@ function EmptyLine({ text }: { text: string }) {
   );
 }
 
-export default async function DashboardPage() {
+async function LegacyContentDashboard() {
   // Queue metrics hit Redis, which may be down. Track that honestly rather than
   // rendering zeros that look like an idle-but-healthy system.
   const queueMetrics = await getAllQueueMetrics().catch(() => null);
@@ -770,4 +770,10 @@ export default async function DashboardPage() {
       </GlassCard>
     </div>
   );
+}
+import { redirect } from "next/navigation";
+
+/** Standalone Studio starts with tutorial work, not unrelated content counters. */
+export default function DashboardPage() {
+  redirect("/tutorial-studio?tab=dashboard");
 }

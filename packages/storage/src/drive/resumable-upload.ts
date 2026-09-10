@@ -29,6 +29,7 @@ export interface ResumableUploadArgs {
   mimeType: string;
   jobId: string;
   kind: string;
+  sourceSha256?: string;
   chunkSizeBytes: number;
   /** Persist a newly created session URI / progress so a restart can resume. */
   onProgress?: (info: {
@@ -66,6 +67,7 @@ export async function resumableUpload(
         const existing = await client.findExistingArtifact(
           args.jobId,
           args.kind,
+          args.sourceSha256,
         );
         if (!existing.ok) return existing;
         if (existing.value !== null) return { ok: true, value: existing.value };
@@ -90,6 +92,7 @@ export async function resumableUpload(
       sizeBytes: args.totalBytes,
       jobId: args.jobId,
       kind: args.kind,
+      ...(args.sourceSha256 ? { sourceSha256: args.sourceSha256 } : {}),
     });
     if (!created.ok) return created;
     sessionUri = created.value;
@@ -162,7 +165,7 @@ export async function resumableUpload(
       return resync;
     }
     if (resync.value === "complete") {
-      const existing = await client.findExistingArtifact(args.jobId, args.kind);
+      const existing = await client.findExistingArtifact(args.jobId, args.kind, args.sourceSha256);
       if (!existing.ok) return existing;
       if (existing.value !== null) return { ok: true, value: existing.value };
       return {

@@ -2,6 +2,7 @@ import { pgEnum } from "drizzle-orm/pg-core";
 
 export const tutorialJobStatusEnum = pgEnum("tutorial_job_status", [
   "QUEUED",
+  "AWAITING_THUMBNAILS",
   "GENERATING_SCRIPT",
   "GENERATING_AUDIO",
   "READY_TO_RECORD",

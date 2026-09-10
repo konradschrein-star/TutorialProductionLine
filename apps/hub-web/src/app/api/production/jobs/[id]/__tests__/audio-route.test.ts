@@ -33,9 +33,14 @@ vi.mock("@/lib/auth/rbac", () => ({
   hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 vi.mock("@/lib/db", () => ({ db: {} }));
-vi.mock("@repo/db", () => ({
+vi.mock("@repo/db", async importOriginal => ({
+  ...await importOriginal<object>(),
   getTutorialJobById: (...args: unknown[]) => mockGetTutorialJobById(...args),
 }));
+vi.mock("@/lib/tutorial/media-access", async () => {
+  const { openLeasedMediaStream } = await import("@repo/storage");
+  return { openTutorialAssetStream: (input: {path:string}, options: {range?:string|null;ifNoneMatch?:string|null}) => openLeasedMediaStream(consume => consume(input.path), options) };
+});
 
 const { GET } = await import("../audio/route");
 

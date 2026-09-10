@@ -1,0 +1,22 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+const mocks = vi.hoisted(() => ({ session: vi.fn(), select: vi.fn(), update: vi.fn(), set: vi.fn(), lease: vi.fn() }));
+vi.mock("@/lib/auth/session", () => ({ getSession: mocks.session }));
+vi.mock("@/lib/auth/rbac", () => ({ hasPermission: (_: unknown, p: string) => p === "manage:thumbnails" }));
+vi.mock("@/lib/config", () => ({ getHubConfig: () => ({ LOCAL_MEDIA_ROOT: "/local" }) }));
+vi.mock("@repo/db", () => ({ englishThumbnailApprovalRevision: () => "revision" }));
+vi.mock("@repo/storage", () => ({ withTutorialMedia: mocks.lease }));
+vi.mock("@/lib/db", () => ({ db: { transaction: async (fn: (tx: unknown) => unknown) => fn({ select: mocks.select, update: mocks.update }) }, tutorialJobs: {}, tutorialSettings: {}, thumbnails: {}, tutorialThumbnailFanout: {}, tutorialUploadDispatches: {} }));
+const { POST } = await import("../route");
+const source = { id: "11111111-1111-4111-8111-111111111111", language: "en", channel_id: "channel", created_by: "owner", status: "READY_TO_RECORD" };
+const image = { id: "image", channel_id: "channel", output_path: "/local/master.png", status: "completed", review_verdict: "acceptable" };
+const intent = { id: "intent", state: "failed", retry_history: [], source_thumbnail_id: "image", source_path: image.output_path, source_sha256: "a".repeat(64), source_size: 123, approval_revision: "revision", target_channel_id: "german" };
+const requestId = "22222222-2222-4222-8222-222222222222";
+function rows(values: unknown[]) { const p = Promise.resolve(values); const q = { from: () => q, where: () => q, limit: () => q, for: () => q, orderBy: () => q, then: p.then.bind(p) }; mocks.select.mockReturnValueOnce(q); }
+const request = () => POST(new NextRequest("http://localhost", { method: "POST", body: JSON.stringify({ requestId }) }), { params: Promise.resolve({ id: source.id, language: "de" }) });
+beforeEach(() => { vi.clearAllMocks(); mocks.session.mockResolvedValue({ userId: "owner", role: "VA" }); mocks.update.mockReturnValue({ set: mocks.set }); mocks.set.mockReturnValue({ where: async () => undefined }); mocks.lease.mockImplementation(async (_db, _ref, _opts, consume) => consume()); });
+it("denies another VA without inspecting intent", async () => { rows([{ ...source, created_by: "another" }]); expect((await request()).status).toBe(403); expect(mocks.update).not.toHaveBeenCalled(); });
+it("never retries uncertain provider outcomes", async () => { rows([source]); rows([{ ...intent, state: "uncertain" }]); rows([image]); const response = await request(); expect(response.status).toBe(409); expect((await response.json()).code).toBe("ADMIN_RECONCILIATION_REQUIRED"); expect(mocks.update).not.toHaveBeenCalled(); });
+it("makes duplicate user requests read-only", async () => { rows([source]); rows([{ ...intent, state: "pending", retry_history: [{ requestId }] }]); expect((await request()).status).toBe(200); expect(mocks.update).not.toHaveBeenCalled(); });
+it("marks invalidated source superseded rather than retrying", async () => { rows([source]); rows([intent]); rows([{ ...image, id: "replacement" }]); expect((await request()).status).toBe(409); expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ state: "superseded" })); expect(mocks.lease).not.toHaveBeenCalled(); });
+it("audits a new attempt under an exact English media lease", async () => { rows([source]); rows([intent]); rows([image]); rows([{ thumbnail_generation_mode: "ai" }]); rows([source, { id: "child", source_job_id: source.id, language: "de", channel_id: "german", created_by: "owner" }]); rows([]); expect((await request()).status).toBe(200); expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ state: "pending", generation_request_id: expect.any(String), retry_history: [expect.objectContaining({ requestId, actorId: "owner", previousState: "failed" })] })); expect(mocks.lease.mock.calls[0]![1]).toMatchObject({ expectedContent: { sha256: intent.source_sha256, size: 123 } }); });

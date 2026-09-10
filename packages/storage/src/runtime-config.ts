@@ -39,7 +39,7 @@ function setNumber(
  * process.env, and secret values never leave this server-side boundary.
  */
 export async function loadStorageConfigFromDatabase(
-  db: DrizzleClient,
+  db: DrizzleClient | Parameters<Parameters<DrizzleClient["transaction"]>[0]>[0],
 ): Promise<StorageConfigResult> {
   const env: StorageEnv = { ...process.env };
   let row: { storage: unknown } | undefined;
@@ -88,7 +88,9 @@ export async function loadStorageConfigFromDatabase(
     "GOOGLE_DRIVE_REFRESH_TOKEN",
   ] as const) {
     try {
-      env[name] = await getSecret(db, name);
+      // getSecret only selects rows; the transaction exposes that same surface.
+      // Keep these reads pinned instead of falling back to a global pool.
+      env[name] = await getSecret(db as DrizzleClient, name);
     } catch {
       // loadStorageConfig provides one complete, non-secret diagnostic listing
       // missing fields. Absence here is therefore expected and not swallowed.

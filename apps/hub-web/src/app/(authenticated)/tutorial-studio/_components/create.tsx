@@ -1,4 +1,7 @@
 "use client";
+import { inferKeywordChannel } from "@/lib/keyword-tool/workflow";
+import layout from "./production-layout.module.css";
+import { isParkedTutorialMode } from "@/lib/tutorial/record-session";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
@@ -8,6 +11,8 @@ import { V2Listbox } from "@/components/thumbnails/v2-listbox";
 import type { TutorialPromptPreset, TutorialSettingsRow } from "@repo/db";
 import type { ProviderMeta } from "@repo/contracts";
 import {
+  buildGeneratedTutorialTitle,
+  recommendTutorialTitleSuffix,
   tutorialLengthPlan,
   labelForMode,
   type TutorialLengthPlan,
@@ -247,7 +252,7 @@ export function ProductionCreate({
   onCreated,
 }: CreateProps) {
   const [title, setTitle] = useState("");
-  const [channelId, setChannelId] = useState("");
+  const [channelId, setChannelId] = useState(() => inferKeywordChannel(channels));
   const [steps, setSteps] = useState("");
   // "AUTO" (the default) means: take the length from the reference material,
   // not a fixed 3-minute floor. See effectiveMode below.
@@ -532,8 +537,6 @@ export function ProductionCreate({
     { value: "SHORT_MATCH", label: "Short — Match the reference length" },
     { value: "SHORT_PLUS", label: "Short — Plus (reference + examples)" },
     { value: "SIX_MIN", label: "6-Minute Tutorial" },
-    { value: "SIX_MIN_STITCH", label: "Long-Form Stitch (6-Min segments)" },
-    { value: "LONG_FORM", label: "Long-form (40+ min, stitched)" },
   ];
 
   // Channel is REQUIRED as of 2026-08-03. It used to default to "— None —"
@@ -569,6 +572,12 @@ export function ProductionCreate({
   ];
 
   async function handleGenerate() {
+    if (isParkedTutorialMode(effectiveMode)) {
+      toast.error(
+        "Long-form and stitching are archived workflows. Choose a standard tutorial format.",
+      );
+      return;
+    }
     if (!title.trim()) {
       toast.error("Please enter a tutorial title.");
       return;
@@ -590,7 +599,7 @@ export function ProductionCreate({
     // user gets a clear, immediate message instead of a silent failure.
     const hasPreset = presetId !== "none";
     const hasCustomPrompt = useCustomPrompt && customPrompt.trim().length > 0;
-    if (!hasPreset && !hasCustomPrompt) {
+    if (!keyword && !hasPreset && !hasCustomPrompt) {
       if (relevantPresets.length === 0) {
         toast.error(
           `No prompt presets exist for "${mode}" mode yet. Enable "Use custom prompt instead" and paste one, or add a preset in Settings.`,
@@ -606,13 +615,13 @@ export function ProductionCreate({
     // The pickers only ever contain engines with a resolvable credential, so
     // this is the belt for the braces: it catches a stale selection left over
     // from a key being removed while the tab was open.
-    if (!scriptProvider || !providerAvailability.llm[scriptProvider]) {
+    if (!keyword && (!scriptProvider || !providerAvailability.llm[scriptProvider])) {
       toast.error(
         "That script engine has no working API key any more. Pick another one.",
       );
       return;
     }
-    if (!ttsProvider || !providerAvailability.tts[ttsProvider]) {
+    if (!keyword && (!ttsProvider || !providerAvailability.tts[ttsProvider])) {
       toast.error(
         "That voice engine has no working API key any more. Pick another one.",
       );
@@ -667,7 +676,7 @@ export function ProductionCreate({
         // Source mode + language are always sent; reference fields only when
         // rewriting (and only if non-empty).
         source_mode: sourceMode,
-        language: language || "English",
+        language: selectedChannel?.language ?? "en",
       };
       if (sourceMode === "TRANSCRIPT_REWRITE") {
         if (referenceUrl.trim()) body.reference_url = referenceUrl.trim();
@@ -678,29 +687,25 @@ export function ProductionCreate({
       // runtime, it seeds the STITCH length target, and it tells the rewrite
       // prompt how much coverage it has to beat. Send it whenever it is set.
       if (refVideoSeconds !== "") body.ref_video_seconds = refVideoSeconds;
-      if (effectiveMode === "SIX_MIN_STITCH") {
-        if (effectiveTargetMinutes !== null)
-          body.target_minutes = effectiveTargetMinutes;
-      }
-      if (effectiveMode === "LONG_FORM") {
-        if (effectiveTargetMinutes !== null)
-          body.target_minutes = effectiveTargetMinutes;
-        if (effectivePartLengthMinutes !== null)
-          body.part_length_minutes = effectivePartLengthMinutes;
-        if (extraContext.trim()) body.extra_context = extraContext.trim();
-      }
       if (keyword) {
         body.keyword_ref = String(keyword.id);
-        body.kt_url = keyword.ktUrl;
       }
       if (presetId !== "none") body.prompt_preset_id = presetId;
       if (useCustomPrompt && customPrompt.trim())
         body.custom_prompt = customPrompt.trim();
 
+      // Linked work always uses the same KT durable-intent path as the board.
+      // Never send displayed per-job overrides that this contract cannot honor.
+      const requestBody = keyword ? {
+        keyword_ref: String(keyword.id), title: body.title, channel_id: body.channel_id,
+        language: body.language, mode: body.mode, steps_input: body.steps_input,
+        source_mode: body.source_mode, reference_url: body.reference_url,
+        reference_transcript: body.reference_transcript,
+      } : body;
       const res = await fetch("/api/production/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(requestBody),
       });
 
       if (!res.ok) {
@@ -835,7 +840,10 @@ export function ProductionCreate({
 
   const pickKeyword = (k: MyKeyword) => {
     setKeyword(k);
-    setTitle(k.keyword);
+    const suffix = recommendTutorialTitleSuffix(k.keyword, String(k.id));
+    setTitle(buildGeneratedTutorialTitle(k.keyword, suffix));
+    const inferredChannel = inferKeywordChannel(channels, k.assignedChannelId);
+    if (k.assignedChannelId || inferredChannel) setChannelId(inferredChannel);
 
     /**
      * THE LENGTH COMES FROM THE KEYWORD.
@@ -882,13 +890,10 @@ export function ProductionCreate({
   return (
     <div
       ref={topRef}
+      className={layout.prepare}
       /* scrollMarginTop keeps the tab bar from covering the top of the form
          when we scroll back here after queuing a job. */
       style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 320px",
-        gap: 20,
-        alignItems: "start",
         scrollMarginTop: 16,
       }}
     >
@@ -1012,7 +1017,7 @@ export function ProductionCreate({
                       color: active ? "var(--v2-accent)" : "var(--v2-text-2)",
                       border: active
                         ? "1px solid var(--v2-accent)"
-                        : "1px solid rgba(255,255,255,0.1)",
+                        : "1px solid var(--v2-surface-2)",
                       transition: "all 150ms",
                     }}
                   >
@@ -1162,7 +1167,7 @@ export function ProductionCreate({
                     border:
                       transcript.status === "ok"
                         ? "1px solid rgba(34,197,94,0.4)"
-                        : "1px solid rgba(255,255,255,0.1)",
+                        : "1px solid var(--v2-surface-2)",
                     borderRadius: 8,
                     padding: "10px 12px",
                     color: "var(--v2-text-1)",
@@ -1220,7 +1225,7 @@ export function ProductionCreate({
                 position: "relative",
                 border: isDragActive
                   ? "2px dashed var(--v2-accent)"
-                  : "2px dashed rgba(255,255,255,0.1)",
+                  : "2px dashed var(--v2-surface-2)",
                 borderRadius: 8,
                 transition: "border-color 150ms",
               }}
@@ -1399,7 +1404,7 @@ export function ProductionCreate({
                   style={{
                     width: "100%",
                     background: "var(--v2-surface-2)",
-                    border: "1px solid rgba(255,255,255,0.1)",
+                    border: "1px solid var(--v2-border-1)",
                     borderRadius: 8,
                     padding: "8px 12px",
                     color: "var(--v2-text-1)",
@@ -1435,7 +1440,7 @@ export function ProductionCreate({
                   style={{
                     width: "100%",
                     background: "var(--v2-surface-2)",
-                    border: "1px solid rgba(255,255,255,0.1)",
+                    border: "1px solid var(--v2-border-1)",
                     borderRadius: 8,
                     padding: "8px 12px",
                     color: "var(--v2-text-1)",
@@ -1492,7 +1497,7 @@ export function ProductionCreate({
                     style={{
                       width: "100%",
                       background: "var(--v2-surface-2)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      border: "1px solid var(--v2-border-1)",
                       borderRadius: 8,
                       padding: "8px 12px",
                       color: "var(--v2-text-1)",
@@ -1529,7 +1534,7 @@ export function ProductionCreate({
                     style={{
                       width: "100%",
                       background: "var(--v2-surface-2)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      border: "1px solid var(--v2-border-1)",
                       borderRadius: 8,
                       padding: "8px 12px",
                       color: "var(--v2-text-1)",
@@ -1560,7 +1565,7 @@ export function ProductionCreate({
                   style={{
                     width: "100%",
                     background: "var(--v2-surface-2)",
-                    border: "1px solid rgba(255,255,255,0.1)",
+                    border: "1px solid var(--v2-border-1)",
                     borderRadius: 8,
                     padding: "8px 12px",
                     color: "var(--v2-text-1)",
@@ -1614,7 +1619,7 @@ export function ProductionCreate({
                     alignItems: "center",
                     justifyContent: "space-between",
                     padding: "8px 12px",
-                    background: "rgba(255,255,255,0.03)",
+                    background: "var(--v2-surface-2)",
                     borderRadius: 8,
                     gap: 12,
                   }}
@@ -1667,19 +1672,22 @@ export function ProductionCreate({
             How this will be made
           </div>
 
+          {keyword && <p style={{ fontSize: 12, color: "var(--v2-text-2)", lineHeight: 1.6 }}>
+            Keyword-linked tutorials use the Admin workspace recipe below. Once sent, the request is saved; retrying this keyword resumes that same request, including its original channel and settings.
+          </p>}
           <RecipeRow
             label="Script"
-            value={scriptProviderMeta?.label ?? scriptProvider ?? "—"}
+            value={keyword ? settings.default_script_provider : scriptProviderMeta?.label ?? scriptProvider ?? "—"}
             detail={
-              scriptProviderMeta?.models?.find((m) => m.value === scriptModel)
+              keyword ? settings.default_script_model ?? undefined : scriptProviderMeta?.models?.find((m) => m.value === scriptModel)
                 ?.label ?? scriptModel
             }
           />
           <RecipeRow
             label="Voice"
-            value={ttsProviderMeta?.label ?? ttsProvider ?? "—"}
+            value={keyword ? settings.default_tts_provider : ttsProviderMeta?.label ?? ttsProvider ?? "—"}
             detail={
-              ttsVoice.trim()
+              keyword ? `Workspace voice: ${settings.default_tts_voice || "channel / language default"}` : ttsVoice.trim()
                 ? `voice ${ttsVoice.trim()}`
                 : channelId
                   ? "the voice bound to this channel"
@@ -1689,7 +1697,7 @@ export function ProductionCreate({
           <RecipeRow
             label="Prompt"
             value={
-              useCustomPrompt
+              keyword ? (presets.find((p) => p.is_default)?.name ?? "Admin must set a default preset") : useCustomPrompt
                 ? "Custom prompt"
                 : (relevantPresets.find((p) => p.id === presetId)?.name ??
                   "— none selected —")
@@ -1714,14 +1722,14 @@ export function ProductionCreate({
             </div>
           )}
 
-          {canManage && (
+          {canManage && !keyword && (
             <button
               type="button"
               onClick={() => setShowEngines((v) => !v)}
               style={{
                 marginTop: 14,
                 background: "none",
-                border: "1px solid rgba(255,255,255,0.14)",
+                border: "1px solid var(--v2-border-1)",
                 borderRadius: 6,
                 color: "var(--v2-text-2)",
                 fontSize: 11,
@@ -1734,7 +1742,7 @@ export function ProductionCreate({
           )}
         </GlassCard>
 
-        {canManage && showEngines && (
+        {canManage && !keyword && showEngines && (
           <>
             <GlassCard style={{ padding: 20 }}>
               <div
@@ -1988,7 +1996,7 @@ export function ProductionCreate({
                     style={{
                       width: "100%",
                       background: "var(--v2-surface-2)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      border: "1px solid var(--v2-border-1)",
                       borderRadius: 8,
                       padding: "10px 12px",
                       color: "var(--v2-text-1)",
@@ -2026,7 +2034,7 @@ function RecipeRow({
         gap: 12,
         alignItems: "baseline",
         padding: "7px 0",
-        borderTop: "1px solid rgba(255,255,255,0.06)",
+        borderTop: "1px solid var(--v2-border-1)",
       }}
     >
       <span

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { keywordIntegrationState, keywordIsProduced } from "@/lib/keyword-tool/workflow";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db, tutorialJobs } from "@/lib/db";
@@ -78,6 +79,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const url = new URL(request.url);
+  const integration = keywordIntegrationState(process.env);
+  if (integration !== "configured") {
+    return NextResponse.json({ integration, keywords: [], total: 0, remaining: 0, unstarted: 0, produced: 0 });
+  }
   const includeDone = url.searchParams.get("includeDone") === "1";
 
   let rows: KtKeyword[];
@@ -111,9 +116,10 @@ export async function GET(request: Request): Promise<NextResponse> {
             keywordRef: tutorialJobs.keyword_ref,
             status: tutorialJobs.status,
             title: tutorialJobs.title,
+            channelId: tutorialJobs.channel_id,
           })
           .from(tutorialJobs)
-          .where(inArray(tutorialJobs.keyword_ref, refs))
+          .where(and(inArray(tutorialJobs.keyword_ref, refs), eq(tutorialJobs.created_by, session.userId), isNull(tutorialJobs.source_job_id)))
       : [];
   const byRef = new Map(produced.map((p) => [p.keywordRef ?? "", p]));
 
@@ -134,13 +140,17 @@ export async function GET(request: Request): Promise<NextResponse> {
         : null,
       ktUrl: ktKeywordUrl(k.id),
       job: job ? { id: job.id, status: job.status, title: job.title } : null,
+      assignedChannelId: job?.channelId ?? null,
     };
   });
 
   return NextResponse.json({
+    integration: "configured",
     ktUser: ktUserName,
     total: keywords.length,
-    remaining: keywords.filter((k) => k.job === null).length,
+    remaining: keywords.filter((k) => !keywordIsProduced(k)).length,
+    unstarted: keywords.filter((k) => !k.job && !keywordIsProduced(k)).length,
+    produced: keywords.filter(keywordIsProduced).length,
     keywords,
   });
 }

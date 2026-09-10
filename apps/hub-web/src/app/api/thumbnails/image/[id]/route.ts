@@ -5,6 +5,10 @@ import { extname } from "node:path";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getThumbnail } from "@/lib/repositories/thumbnail-studio-repository";
+import { db, tutorialJobs } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { mayAccessDelivery } from "@/lib/tutorial/delivery-access";
+import { withTutorialAsset } from "@/lib/tutorial/media-access";
 
 /**
  * GET /api/thumbnails/image/[id]
@@ -41,10 +45,19 @@ export async function GET(
   if (!thumbnail || !thumbnail.output_path) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (thumbnail.subject_kind === "tutorial_job") {
+    const [job] = await db.select({ created_by: tutorialJobs.created_by, channel_id: tutorialJobs.channel_id })
+      .from(tutorialJobs).where(eq(tutorialJobs.id, thumbnail.subject_id)).limit(1);
+    if (!job || !await mayAccessDelivery(session, job)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  } else if (!hasPermission(session, "view:settings")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   let buffer: Buffer;
   try {
-    buffer = await readFile(thumbnail.output_path);
+    buffer = thumbnail.subject_kind === "tutorial_job"
+      ? await withTutorialAsset({ jobId: thumbnail.subject_id, kind: "thumbnail", path: thumbnail.output_path }, (path) => readFile(path))
+      : await readFile(thumbnail.output_path);
   } catch {
     return NextResponse.json(
       { error: "File not found on disk" },

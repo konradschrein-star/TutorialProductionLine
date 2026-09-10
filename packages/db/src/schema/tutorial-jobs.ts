@@ -8,6 +8,7 @@ import {
   timestamp,
   index,
   jsonb,
+  varchar,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
@@ -160,13 +161,14 @@ export const tutorialJobs = pgTable(
     }),
     upload_verified_at: timestamp("upload_verified_at", { withTimezone: true }),
 
-    // VA end-of-day review (migration 0066). NULL = not reviewed, and that is
-    // a valid, permanent outcome: the gate is non-blocking, so NULL and
-    // 'approved' behave identically. Only 'disapproved' destroys anything, and
-    // only because a human said so.
+    // Final approval is required for dispatch. NULL = awaiting review;
+    // rework_requested returns to recording without deleting existing assets.
+    // Legacy disapproved rows remain historical records, never deletion orders.
     va_review_status: text("va_review_status"),
     va_reviewed_at: timestamp("va_reviewed_at", { withTimezone: true }),
     va_reviewed_by: uuid("va_reviewed_by"),
+    publication_approval: jsonb("publication_approval").$type<Record<string, unknown>>(),
+    localization_source_revision: varchar("localization_source_revision", { length: 64 }),
 
     // Output QA verdict (migration 0064). NULL = never checked, which is the
     // correct state for every tutorial that completed before the gate existed —

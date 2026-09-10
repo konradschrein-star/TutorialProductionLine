@@ -111,6 +111,7 @@ function btn(kind: "primary" | "ghost" | "danger" = "ghost"): CSSProperties {
 function Glyph({ name, size = 16 }: { name: string; size?: number }) {
   return (
     <span
+      aria-hidden="true"
       className="material-symbols-outlined"
       style={{ fontSize: size, lineHeight: 1, verticalAlign: "middle" }}
     >
@@ -122,13 +123,17 @@ function Glyph({ name, size = 16 }: { name: string; size?: number }) {
 export function CharacterLibraryClient({
   initialCharacters,
   channels,
+  characterId,
+  canEdit = true,
 }: {
   initialCharacters: LibraryCharacter[];
   channels: ChannelOption[];
+  characterId?: string;
+  canEdit?: boolean;
 }) {
   const [characters, setCharacters] =
     useState<LibraryCharacter[]>(initialCharacters);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(characterId ?? null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -147,8 +152,8 @@ export function CharacterLibraryClient({
       return;
     }
     const data = await res.json();
-    setCharacters(data.characters ?? []);
-  }, []);
+    setCharacters((data.characters ?? []).filter((c: LibraryCharacter) => !characterId || c.id === characterId));
+  }, [characterId]);
 
   const create = useCallback(async () => {
     if (!newName.trim() || !newDescription.trim()) {
@@ -197,14 +202,14 @@ export function CharacterLibraryClient({
       )}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <button
+        {!characterId && canEdit && <button
           type="button"
           style={btn("primary")}
           onClick={() => setCreating((c) => !c)}
         >
           <Glyph name={creating ? "close" : "person_add"} />{" "}
           {creating ? "Cancel" : "New character"}
-        </button>
+        </button>}
         <span style={{ fontSize: 12, color: TEXT_2 }}>
           {characters.length} character{characters.length === 1 ? "" : "s"} ·{" "}
           {characters.reduce((n, c) => n + c.images.length, 0)} images
@@ -255,18 +260,21 @@ export function CharacterLibraryClient({
       )}
 
       {characters.map((character) => (
+        <fieldset key={character.id} disabled={!canEdit} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        {!canEdit && <legend style={{ color: TEXT_2, fontSize: 12 }}>Read-only character images</legend>}
         <CharacterCard
           key={character.id}
           character={character}
           channels={channels}
           channelName={channelName}
-          expanded={expanded === character.id}
+          expanded={!canEdit || expanded === character.id}
           onToggle={() =>
             setExpanded((e) => (e === character.id ? null : character.id))
           }
           onChanged={refresh}
           onError={setError}
         />
+        </fieldset>
       ))}
     </div>
   );
@@ -331,12 +339,12 @@ function CharacterCard({
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            channels: ids.map((channel_id, i) => ({
+            channels: ids.map((channel_id) => ({
               channel_id,
-              role: "host",
-              // Exactly one primary host binding; the DB enforces one per
-              // channel, so a clash comes back as a 409 with an explanation.
-              is_primary: i === 0,
+              // Existing channel semantics are preserved by the server.
+              // New bindings explicitly make this the host of THAT channel.
+              ...(!character.channel_ids.includes(channel_id)
+                ? { role: "host", is_primary: true } : {}),
             })),
           }),
         });
@@ -348,7 +356,7 @@ function CharacterCard({
         setBusy(null);
       }
     },
-    [character.id, onChanged, onError],
+    [character.id, character.channel_ids, onChanged, onError],
   );
 
   const upload = useCallback(
@@ -491,6 +499,7 @@ function CharacterCard({
                 <button
                   type="button"
                   title="Unbind"
+                  aria-label={`Unbind ${character.name} from ${channelName(id)}`}
                   onClick={() =>
                     setChannels(character.channel_ids.filter((c) => c !== id))
                   }
@@ -510,7 +519,7 @@ function CharacterCard({
           </div>
         </div>
 
-        <button type="button" style={btn()} onClick={onToggle}>
+        <button type="button" style={btn()} onClick={onToggle} aria-expanded={expanded} aria-label={`${expanded ? 'Close' : 'Manage'} ${character.name} images`}>
           <Glyph name={expanded ? "expand_less" : "expand_more"} />{" "}
           {expanded ? "Close" : "Manage"}
         </button>
@@ -523,7 +532,7 @@ function CharacterCard({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/api/characters/images/${img.id}/file`}
-              alt={img.pose ?? ""}
+              alt={`${character.name} — ${img.pose ?? `image ${i + 1}`}${img.expression ? `, ${img.expression}` : ''}`}
               title={`#${i} ${img.pose ?? "-"} / ${img.expression ?? "-"} · ${img.width}x${img.height}`}
               style={{
                 width: 116,
@@ -541,6 +550,7 @@ function CharacterCard({
               <button
                 type="button"
                 title={img.is_active ? "Remove from cycle" : "Return to cycle"}
+                aria-label={`${img.is_active ? 'Remove from' : 'Return to'} thumbnail rotation: ${character.name}, image ${i + 1}`}
                 disabled={busy === `img-${img.id}`}
                 onClick={() => toggleImage(img)}
                 style={{
@@ -596,8 +606,9 @@ function CharacterCard({
           }}
         >
           <div>
-            <label style={labelStyle}>Physical description</label>
+            <label htmlFor={`character-description-${character.id}`} style={labelStyle}>Physical description</label>
             <textarea
+              id={`character-description-${character.id}`}
               style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -636,16 +647,18 @@ function CharacterCard({
               }}
               footer={
                 <span style={{ fontSize: 11, color: TEXT_2 }}>
-                  The first binding is the primary host. A channel can only have
-                  one primary host at a time.
+                  Adding a channel makes this character its primary host. Existing
+                  channel roles stay unchanged. Each channel can have only one
+                  primary host; this character can host multiple channels.
                 </span>
               }
             />
           </div>
 
           <div>
-            <label style={labelStyle}>Add an image to the cycle</label>
+            <label htmlFor={`character-image-${character.id}`} style={labelStyle}>Add an image to the cycle</label>
             <input
+              id={`character-image-${character.id}`}
               ref={fileRef}
               type="file"
               accept="image/*"
@@ -659,7 +672,7 @@ function CharacterCard({
             <p style={{ fontSize: 11, color: TEXT_2, margin: "6px 0 0 0" }}>
               {busy === "upload"
                 ? "Normalising…"
-                : "Uploaded photos are resized to a 1280px long edge and re-encoded as JPEG so they fit the image gateway's reference budget. The output thumbnail is always 1280x720 regardless."}
+                : "Uploaded photos are resized to a 1280px long edge and re-encoded as JPEG for use as reference images. Output size is controlled by the thumbnail generation settings."}
             </p>
           </div>
         </div>

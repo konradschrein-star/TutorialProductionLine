@@ -1,0 +1,25 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const session = vi.hoisted(() => vi.fn());
+const authorized = vi.hoisted(() => vi.fn());
+const claim = vi.hoisted(() => vi.fn());
+const receipt = vi.hoisted(() => vi.fn());
+const queue = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/auth/session", () => ({ getSession: session }));
+vi.mock("@/lib/auth/rbac", () => ({ hasPermission: (_session: unknown, permission: string) => permission === "upload:youtube-video" }));
+vi.mock("@/lib/db", () => ({ db: {}, tutorialUploadDispatches: {} }));
+vi.mock("@/lib/uploader/scheduled-delivery", () => ({ authorizeDeliveryConnector: authorized, claimScheduledDelivery: claim, ingestScheduledReceipt: receipt, queueScheduledDelivery: queue, DeliveryError: class extends Error {} }));
+import { POST as claimRoute } from "@/app/api/production/delivery/claim/route";
+import { POST as receiptRoute } from "@/app/api/production/delivery/receipts/route";
+import { POST as queueRoute } from "@/app/api/production/jobs/[id]/scheduled-delivery/route";
+import { NextRequest } from "next/server";
+const id = "11111111-1111-4111-8111-111111111111";
+const request = (body: unknown) => new NextRequest("https://studio.example/api/production/delivery/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+describe("scheduled connector API admission", () => {
+  beforeEach(() => { vi.clearAllMocks(); authorized.mockResolvedValue(false); });
+  it("requires machine authentication, not mere discovery access", async () => { expect((await claimRoute(request({ dispatchId: id, claimId: id }))).status).toBe(401); expect(claim).not.toHaveBeenCalled(); });
+  it("requires authentication for callbacks even during pause", async () => { expect((await receiptRoute(request({}))).status).toBe(401); expect(receipt).not.toHaveBeenCalled(); });
+  it("requires UUID identity instead of accepting arbitrary claims", async () => { authorized.mockResolvedValue(true); expect((await claimRoute(request({ dispatchId: "bad", claimId: id }))).status).toBe(400); expect(claim).not.toHaveBeenCalled(); });
+  it("forwards durable claim identity to atomic admission", async () => { authorized.mockResolvedValue(true); claim.mockResolvedValue({ mayStart: true }); expect((await claimRoute(request({ dispatchId: id, claimId: id }))).status).toBe(200); expect(claim).toHaveBeenCalledWith(id, id); });
+  it("does not queue without a session", async () => { session.mockResolvedValue(null); expect((await queueRoute(request({}), { params: Promise.resolve({ id }) })).status).toBe(401); expect(queue).not.toHaveBeenCalled(); });
+  it("requires explicit audience and monetization declarations", async () => { session.mockResolvedValue({ userId: id, role: "UPLOADER_VA" }); expect((await queueRoute(request({ visibility: "private" }), { params: Promise.resolve({ id }) })).status).toBe(400); expect(queue).not.toHaveBeenCalled(); });
+});

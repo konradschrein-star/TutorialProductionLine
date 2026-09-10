@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const TutorialJobStatus = z.enum([
   "QUEUED",
+  "AWAITING_THUMBNAILS",
   "GENERATING_SCRIPT",
   "GENERATING_AUDIO",
   "READY_TO_RECORD",

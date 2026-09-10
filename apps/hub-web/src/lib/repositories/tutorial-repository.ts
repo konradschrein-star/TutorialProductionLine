@@ -56,7 +56,7 @@ export interface VADailyEntry {
   minutes_today: number;
 }
 
-export async function getTutorialTotals(): Promise<TutorialTotals> {
+export async function getTutorialTotals(userId?: string): Promise<TutorialTotals> {
   // One pass, filtered counts: English vs translation, all-time vs last 7 days.
   // Admin/owner jobs excluded (NOT_ADMIN) so this is real VA production only.
   const [row] = await db
@@ -67,7 +67,7 @@ export async function getTutorialTotals(): Promise<TutorialTotals> {
       translationsWeek: sql<number>`cast(count(*) filter (where ${IS_TRANSLATION} and ${tutorialJobs.completed_at} >= now() - interval '7 days') as integer)`,
     })
     .from(tutorialJobs)
-    .where(sql`${tutorialJobs.status} = 'COMPLETED' AND ${NOT_ADMIN}`);
+    .where(sql`${tutorialJobs.status} = 'COMPLETED' AND ${NOT_ADMIN} ${userId ? sql`AND ${tutorialJobs.created_by} = ${userId}` : sql``}`);
 
   return {
     total: row?.englishTotal ?? 0,

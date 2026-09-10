@@ -18,7 +18,9 @@ export interface JWTPayload extends JoseJWTPayload {
 }
 
 function getSecret(): Uint8Array {
-  return new TextEncoder().encode(process.env.JWT_SECRET ?? '');
+  const value = process.env.JWT_SECRET;
+  if (!value || value.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
+  return new TextEncoder().encode(value);
 }
 
 export async function signToken(payload: JWTPayload): Promise<string> {
@@ -32,7 +34,8 @@ export async function signToken(payload: JWTPayload): Promise<string> {
 
 export async function verifyToken(token: string): Promise<JWTPayload> {
   try {
-    const { payload } = await jwtVerify(token, getSecret());
+    const { payload } = await jwtVerify(token, getSecret(), { algorithms: ['HS256'] });
+    if (typeof payload.userId !== 'string' || typeof payload.role !== 'string' || typeof payload.email !== 'string') throw new Error('Invalid session payload');
     return payload as unknown as JWTPayload;
   } catch {
     throw new Error('Invalid or expired token');

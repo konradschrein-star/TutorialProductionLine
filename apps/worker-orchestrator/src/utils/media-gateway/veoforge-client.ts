@@ -504,6 +504,7 @@ const VEOFORGE_REFERENCE_SLOTS = ["style", "subject", "scene"] as const;
 
 export interface VeoForgeImageOptions {
   aspectRatio?: MediaAspect;
+  idempotencyKey?: string;
   model?: string;
   /** Reference image bytes in gateway order: [style, persona, extra]. */
   referenceImages?: Buffer[];
@@ -515,14 +516,14 @@ export async function submitVeoForgeImage(
 ): Promise<string> {
   if (!veoforgeImagesEnabled()) {
     throw new Error(
-      "VeoForge image generation is not entitled — every image job returns " +
-        "'whisk:generateImage (auth/bot wall): HTTP 401 UNAUTHENTICATED' until an " +
-        "image-entitled pooled lease exists (re-lab/FLOW-API-WHISK.md). " +
-        "Set VEOFORGE_IMAGES_ENABLED=1 once that lease is in place.",
+      "VeoForge image generation is disabled on this installation. " +
+        "An Admin must verify current image capability and readiness before " +
+        "setting VEOFORGE_IMAGES_ENABLED=1. Video readiness alone does not prove image capability.",
     );
   }
   assertPromptLength(prompt);
   const refs = opts.referenceImages ?? [];
+  if (opts.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,200}$/.test(opts.idempotencyKey)) throw new Error("Invalid VeoForge operation identity");
   if (refs.length > VEOFORGE_MAX_IMAGE_REFERENCES) {
     throw new Error(
       `VeoForge carries at most ${VEOFORGE_MAX_IMAGE_REFERENCES} reference images ` +
@@ -535,7 +536,7 @@ export async function submitVeoForgeImage(
     prompt,
     model: opts.model ?? "nano-banana",
     aspect: mapVeoForgeAspect(opts.aspectRatio),
-    idempotency_key: randomUUID(),
+    idempotency_key: opts.idempotencyKey ?? randomUUID(),
   };
   if (refs.length > 0) {
     body["reference_images"] = refs.map((buf, i) => ({

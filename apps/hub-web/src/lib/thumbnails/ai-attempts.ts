@@ -1,0 +1,3 @@
+export function unresolvedAdmittedVariants(batches: readonly { requestId: string; attempted: readonly number[] }[], outputs: readonly { requestId: string | null; index: number; status: string; path: string | null }[]) {
+  return batches.flatMap(batch => batch.attempted.filter(index => !outputs.some(output => output.requestId === batch.requestId && output.index === index && (output.path || ["pending", "generating"].includes(output.status)))).map(index => ({ requestId: batch.requestId, variantIndex: index, state: outputs.some(output => output.requestId === batch.requestId && output.index === index && output.status === "failed") ? "reconciliation_required" : "awaiting_result_or_reconciliation" })));
+}

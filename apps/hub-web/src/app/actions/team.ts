@@ -70,6 +70,7 @@ export async function updateUser(
     email: string;
     name: string;
     role: string;
+    password?: string;
   }
 ): Promise<ActionResult> {
   try {
@@ -78,7 +79,16 @@ export async function updateUser(
       return { success: false, error: 'Unauthorized' };
     }
 
-    const user = await updateUserRepo(id, data);
+    const password = data.password?.trim();
+    if (password && password.length < 12) {
+      return { success: false, error: 'Replacement passwords must be at least 12 characters.' };
+    }
+    const user = await updateUserRepo(id, {
+      email: data.email,
+      name: data.name,
+      role: data.role,
+      ...(password ? { passwordHash: await hashPassword(password) } : {}),
+    });
 
     if (!user) {
       return { success: false, error: 'User not found' };

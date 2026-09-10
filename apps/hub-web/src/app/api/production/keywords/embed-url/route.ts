@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
+import { keywordIntegrationState } from "@/lib/keyword-tool/workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,8 @@ export async function GET() {
 
   const base = process.env.KT_EMBED_URL;
   const secret = process.env.KT_EMBED_SECRET;
+  const integration = keywordIntegrationState(process.env);
+  if (integration !== "configured") return NextResponse.json({ integration, url: null });
   if (!base || !secret) {
     return NextResponse.json(
       {
@@ -39,6 +42,12 @@ export async function GET() {
     .setExpirationTime("2m")
     .sign(new TextEncoder().encode(secret));
 
-  const url = `${base.replace(/\/$/, "")}/embed/board?t=${encodeURIComponent(token)}`;
-  return NextResponse.json({ url });
+  const normalizedBase = base.replace(/\/$/, "");
+  const url = `${normalizedBase}/embed/board?t=${encodeURIComponent(token)}`;
+  return NextResponse.json({
+    url,
+    boardUrl: `${normalizedBase}/embed/board`,
+    adminUrl: `${normalizedBase}/admin`,
+    canAdmin: session.role === "ADMIN" || session.role === "MANAGER",
+  });
 }

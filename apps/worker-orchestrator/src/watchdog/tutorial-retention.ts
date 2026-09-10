@@ -2,7 +2,7 @@ import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { DrizzleClient } from "@repo/db";
 import { tutorialJobs, storageArtifacts } from "@repo/db";
 import { logger } from "@repo/logger";
-import { stat, unlink } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 /**
@@ -50,6 +50,9 @@ export interface RetentionSweepResult {
   skippedUnconfirmed: number;
   skippedMissing: number;
   dryRun: boolean;
+  proposedFiles: number;
+  proposedBytes: number;
+  blockedUnsafeEviction: boolean;
 }
 
 function resolveLocal(path: string | null, mediaRoot: string): string | null {
@@ -70,7 +73,12 @@ export async function runRetentionSweepOnce(
   },
 ): Promise<RetentionSweepResult> {
   const retentionDays = opts.retentionDays ?? DEFAULT_RETENTION_DAYS;
-  const dryRun = opts.dryRun ?? true;
+  // Recovery safety fence: the legacy predicate proves neither current bytes
+  // nor Drive readability, and consumers do not yet hydrate archived media.
+  // Even an inherited TUTORIAL_RETENTION_ENABLED=true must not evict files.
+  // Enable deletion only after revision-aware verification, hydration and
+  // consumer leases replace this legacy candidate scanner.
+  const dryRun = true;
   const batchSize = opts.batchSize ?? 200;
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
@@ -81,6 +89,9 @@ export async function runRetentionSweepOnce(
     skippedUnconfirmed: 0,
     skippedMissing: 0,
     dryRun,
+    proposedFiles: 0,
+    proposedBytes: 0,
+    blockedUnsafeEviction: opts.dryRun === false,
   };
 
   try {
@@ -142,27 +153,8 @@ export async function runRetentionSweepOnce(
           continue;
         }
 
-        if (dryRun) {
-          result.deleted += 1;
-          result.bytesFreed += sizeBytes;
-          continue;
-        }
-
-        try {
-          await unlink(localPath);
-          result.deleted += 1;
-          result.bytesFreed += sizeBytes;
-        } catch (err) {
-          logger.warn(
-            {
-              jobId: job.id,
-              kind,
-              localPath,
-              err: err instanceof Error ? err.message : String(err),
-            },
-            "retention: delete failed",
-          );
-        }
+        result.proposedFiles += 1;
+        result.proposedBytes += sizeBytes;
       }
     }
 
@@ -174,7 +166,7 @@ export async function runRetentionSweepOnce(
         cutoff: cutoff.toISOString(),
       },
       dryRun
-        ? "retention: DRY RUN — nothing deleted (set TUTORIAL_RETENTION_ENABLED=true to enable)"
+        ? "retention: candidates only — eviction blocked pending verified archive restoration and consumer leases"
         : "retention: sweep complete",
     );
   } catch (err) {

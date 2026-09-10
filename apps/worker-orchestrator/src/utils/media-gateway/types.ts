@@ -120,6 +120,8 @@ export const MEDIA_BACKENDS = Object.keys(
 
 export interface ImageRequestOptions {
   format: GatewayFormat;
+  /** Stable operation identity for providers supporting deduplicated submits. */
+  idempotencyKey?: string;
   priority?: number;
   aspectRatio?: MediaAspect;
   /** Reference images as data: URIs (or http(s) URLs). veo_fleet accepts any

@@ -35,15 +35,14 @@ import {
   TUTORIAL_ARCHIVE_FOLDER_NAME,
   TranscriptUnavailableError,
   ensureArtifactRow,
-  getArtifact,
   markSkipped,
-  resetForRetry,
   type FinishedTutorialRow,
 } from "@repo/storage";
 import { logger } from "@repo/logger";
 import { writeFile, mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { ensureTutorialOutputQa } from "../utils/tutorial/output-qa.js";
 
 /**
  * Tutorial Drive scanner.
@@ -332,166 +331,23 @@ async function settleMissingArtifact(
  * scan pass does not re-decode the same file.
  *
  * Deliberate choices:
- *  - A video that has ALREADY passed is not re-probed (`output_qa_status`).
+ *  - Matching checksum/render revision reuses its saved result; a boolean alone
+ *    is never enough to reuse an older output's QA.
  *  - The video is never deleted or failed. It simply does not ship, and a human
  *    decides — per the owner's instruction that nothing auto-deletes.
  *  - If the probe THROWS (unreadable file, ffmpeg missing) delivery is blocked
  *    and the error recorded. Shipping an unprobeable file would defeat the gate;
  *    "we could not check it" is not "it is fine".
  */
-async function passesOutputQa(
-  db: DrizzleClient,
-  job: TutorialCandidate,
-  mediaRoot: string,
-): Promise<boolean> {
-  if (job.output_qa_status === "passed") return true;
-  if (job.output_qa_status === "failed") {
-    logger.warn(
-      { jobId: job.id },
-      "tutorial held by output QA — not delivering to Drive",
-    );
-    return false;
-  }
-
+async function passesOutputQa(db: DrizzleClient, job: TutorialCandidate, mediaRoot: string): Promise<boolean> {
   const artifacts = collectFinishedTutorialArtifacts(job, mediaRoot);
-  const finalVideo = artifacts.find((a) => a.kind === "final_video");
-  if (!finalVideo) return true; // nothing to check; the push loop reports it
-
-  // A MISSING FILE IS NOT A QUALITY VERDICT.
-  //
-  // Found the hard way on production: 1,177 tutorials are COMPLETED with a
-  // final_path whose file no longer exists on disk. The first version of this
-  // gate ran ffprobe on them, got "Command failed", and recorded
-  // output_qa_status='failed' — which is wrong twice over. It says the video is
-  // bad when the truth is there is no video, and because failed rows are
-  // excluded from the candidate query it buried 1,177 rows behind a label that
-  // misdescribes them.
-  //
-  // Artifact existence belongs to the upload path, which has always reported it
-  // (and now settles it via the attempt ceiling). This gate only judges files
-  // it can actually see.
-  try {
-    await stat(finalVideo.localPath);
-  } catch {
-    await settleMissingArtifact(db, job, finalVideo.localPath);
-    return false;
-  }
-
-  const { runVideoQaGate, logVideoQaResult, SCREEN_RECORDING_QA_THRESHOLDS } =
-    await import("@repo/media-core");
-
-  let verdict: Awaited<ReturnType<typeof runVideoQaGate>> | null = null;
-  let probeError: string | null = null;
-  try {
-    // Screen-recording thresholds: the frozen check is off because a static
-    // screen is the expected picture for a tutorial (see the preset's doc).
-    // Duration, black, silence and stream checks all still apply — and it is
-    // duration that catches the real tutorial defect.
-    // NO duration expectation from `recording_duration_s`.
-    //
-    // That column is the length of the VA's SOURCE RECORDING, not the expected
-    // length of the finished video. Splice deliberately TIME-SCALES the
-    // recording to fit the narration
-    // (`factor = ttsDuration / effectiveRecording`, splice.ts), so the output is
-    // legitimately longer than the recording — measured across production, the
-    // average stretch is 1.78x and the range is 0.78x to 2.51x.
-    //
-    // Comparing the two flagged three tutorials at "~97% longer than expected"
-    // and would have flagged essentially every tutorial as the backlog drained:
-    // the same class of false positive as the frozen thresholds, from the same
-    // root cause — a format-agnostic gate fed a format-inappropriate input.
-    //
-    // `audio_duration_s` IS the expected output length, but it is populated on
-    // only 190 of 2,037 completed jobs, so it is used when present and the check
-    // is skipped otherwise. A skipped check is honest; a check that fires on
-    // everything gets ignored, or worse, blocks everything.
-    verdict = await runVideoQaGate(
-      finalVideo.localPath,
-      {
-        ...(job.audio_duration_s != null
-          ? { durationSeconds: Number(job.audio_duration_s) }
-          : {}),
-        requireAudio: true,
-      },
-      SCREEN_RECORDING_QA_THRESHOLDS,
-    );
-    logVideoQaResult(verdict, {
-      jobId: job.id,
-      format: "TUTORIAL",
-      videoPath: finalVideo.localPath,
-    });
-  } catch (err) {
-    probeError = err instanceof Error ? err.message : String(err);
-  }
-
-  // A PROBE THAT THREW IS NOT A QUALITY VERDICT EITHER.
-  //
-  // Same class of bug as the missing-file case above, one step further along.
-  // `stat` succeeds while ffmpeg is still muxing final.mp4, so the file is
-  // there but not yet readable as a container — ffprobe fails, and the first
-  // version of this recorded output_qa_status='failed'. Because the candidate
-  // query excludes failed rows, that verdict is permanent: the job is never
-  // re-probed, so a video that became perfectly readable seconds later is
-  // quarantined forever.
-  //
-  // Measured on production: six tutorials sat held this way, every one of them
-  // probing clean (h264 1920x1080, full duration, audio present) when checked
-  // by hand, and every one with output_qa_checked_at 8-21 SECONDS BEFORE its
-  // own completed_at.
-  //
-  // So: an unprobeable file still blocks THIS pass — "we could not check it" is
-  // not "it is fine" — but the status stays NULL so the next pass checks again.
-  // Only a verdict the gate actually reached is written down.
-  if (verdict === null) {
-    await db
-      .update(tutorialJobs)
-      .set({
-        output_qa_detail: {
-          summary: `Output QA could not probe the file (will retry): ${probeError}`,
-          checks: [],
-        } as unknown,
-        output_qa_checked_at: new Date(),
-        updated_at: new Date(),
-      })
-      .where(eq(tutorialJobs.id, job.id));
-    logger.warn(
-      { jobId: job.id, videoPath: finalVideo.localPath, probeError },
-      "tutorial output QA could not probe the file — holding, will retry",
-    );
-    return false;
-  }
-
-  const passed = verdict.passed;
-  await db
-    .update(tutorialJobs)
-    .set({
-      output_qa_status: passed ? "passed" : "failed",
-      output_qa_detail: {
-        summary: verdict.summary,
-        checks: verdict.checks.map((c) => ({
-          id: c.id,
-          status: c.status,
-          detail: c.detail,
-          ...(c.measured ?? {}),
-        })),
-      } as unknown,
-      output_qa_checked_at: new Date(),
-      updated_at: new Date(),
-    })
-    .where(eq(tutorialJobs.id, job.id));
-
-  if (!passed) {
-    logger.error(
-      {
-        jobId: job.id,
-        videoPath: finalVideo.localPath,
-        summary: verdict.summary,
-        failedChecks: verdict.failures.map((f) => f.id),
-      },
-      "tutorial FAILED output QA — blocked from Drive, awaiting a human",
-    );
-  }
-  return passed;
+  const finalVideo = artifacts.find(artifact => artifact.kind === "final_video");
+  if (!finalVideo) return true;
+  try { await stat(finalVideo.localPath); }
+  catch { await settleMissingArtifact(db, job, finalVideo.localPath); return false; }
+  // Reuses exact-output local QA after restoration. No extra Drive call here.
+  // Keep the existing Drive policy: unknown/failed measurements hold delivery.
+  return (await ensureTutorialOutputQa(db, job.id, mediaRoot)) === "passed";
 }
 
 /**
@@ -632,16 +488,8 @@ async function backfillLateThumbnails(
     const bundleCompletedAt =
       source?.completed_at ?? source?.created_at ?? completedAt;
     try {
-      const existing = await getArtifact(db, row.id, "thumbnail");
-      if (
-        existing?.error_kind === "thumbnail_replaced" &&
-        existing.drive_file_id
-      ) {
-        const deleted = await store.deleteArtifactFromDrive(existing.id);
-        if (!deleted)
-          throw new Error("Could not delete the previous Drive thumbnail");
-        await resetForRetry(db, existing.id);
-      }
+      // ArtifactStore archives the old exact Drive ID and publishes a separately
+      // verified revision. Never delete the durable old copy before replacement.
       const result = await store.putFinalArtifact({
         jobId: row.id,
         channelId: row.channel_id,

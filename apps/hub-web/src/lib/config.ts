@@ -55,27 +55,24 @@ export function getHubConfig(): Env {
     configLoaded = true;
     configCache = getConfig();
     return configCache;
-  } catch (error) {
+  } catch {
     // NEXT_PHASE is set to 'phase-production-build' during `next build`.
     // NODE_ENV=production during both build and runtime, so we use NEXT_PHASE
     // to distinguish: throw only when actually running as a server, not building.
     const isBuildPhase =
       process.env.NEXT_PHASE === "phase-production-build" ||
       process.env.NEXT_PHASE === "phase-export";
-    const isProductionRuntime =
-      process.env.NODE_ENV === "production" && !isBuildPhase;
-
-    if (isProductionRuntime) {
+    const isUnitTestHarness = process.env.NODE_ENV === "test" && process.env.VITEST === "true";
+    if (!isBuildPhase && !isUnitTestHarness) {
       console.error(
-        "[config] FATAL: Configuration failed to load in production environment",
+        "[config] Configuration is invalid. Check the server environment; refusing to use a placeholder database or credentials.",
       );
-      throw new ConfigurationError("environment variables", "production");
+      throw new ConfigurationError("environment variables", "runtime");
     }
 
-    // Build time or development - allow mock config
+    // Explicit test collection may import skipped DB suites without connecting.
     console.warn(
-      "[config] Using mock config (build time or development):",
-      error instanceof Error ? error.message : String(error),
+      "[config] Using placeholder configuration for static build/test evaluation only.",
     );
     configLoaded = true;
     configCache = mockConfig;

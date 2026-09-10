@@ -6,6 +6,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
 import { getTutorialJobById } from "@repo/db";
 import { getThumbnail } from "@/lib/repositories/thumbnail-studio-repository";
+import { withTutorialAsset } from "@/lib/tutorial/media-access";
 
 export const dynamic = "force-dynamic";
 
@@ -64,10 +65,10 @@ export async function GET(
 
   let buffer: Buffer;
   try {
-    buffer = await readFile(thumbnail.output_path);
+    buffer = await withTutorialAsset({ jobId: id, kind: "thumbnail", path: thumbnail.output_path }, path => readFile(path));
   } catch {
     return NextResponse.json(
-      { error: "File not found on disk" },
+      { error: "Thumbnail unavailable locally and no verified current archive could be restored." },
       { status: 404 },
     );
   }

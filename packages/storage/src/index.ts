@@ -12,6 +12,7 @@
 
 export {
   ArtifactStore,
+  fingerprintStorageSource,
   MIME_BY_KIND,
   type ArtifactStoreDeps,
   type PutFinalArtifactArgs,
@@ -168,3 +169,5 @@ export {
   type FinishedJobArtifact,
   type FinishedJobRow,
 } from "./finished-jobs.js";
+export { withMaterializedArtifact, validateMediaTarget, type ImmutableDriveRevision, type MaterializerPorts } from "./materializer.js";
+export { withTutorialMedia, withTutorialMediaSet, createDatabaseMediaLease, openLeasedMediaStream, parseMediaByteRange, type TutorialMediaRequest, type TutorialMediaOptions, type TutorialMediaTransaction } from "./tutorial-media.js";

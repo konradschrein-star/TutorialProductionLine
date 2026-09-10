@@ -57,10 +57,10 @@ export async function resolveTutorialThumbnailContext(
     );
   }
   const thumbnailTextTop = job.thumbnail_text_top?.trim();
-  const thumbnailTextBottom = job.thumbnail_text_bottom?.trim();
-  if (!thumbnailTextTop || !thumbnailTextBottom) {
+  const thumbnailTextBottom = job.thumbnail_text_bottom?.trim() ?? "";
+  if (!thumbnailTextTop) {
     throw new Error(
-      `Tutorial ${job.id} is missing localized two-line thumbnail copy`,
+      `Tutorial ${job.id} is missing localized thumbnail copy`,
     );
   }
   return {

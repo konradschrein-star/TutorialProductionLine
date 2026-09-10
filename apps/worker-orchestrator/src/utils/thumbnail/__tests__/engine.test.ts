@@ -27,6 +27,7 @@ const repo = vi.hoisted(() => ({
   // no longer reads it at all — there is nothing left to mock.
   resolveChannelHost: vi.fn(),
   getChannelThumbnailProfile: vi.fn(),
+  getTutorialChannelProfile: vi.fn(),
   getThumbnailArchetypeById: vi.fn(),
   resolveArchetypeCandidates: vi.fn(),
   pickLeastRecentlyUsedArchetype: vi.fn(),
@@ -113,6 +114,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   repo.resolveChannelHost.mockResolvedValue(undefined);
   repo.getChannelThumbnailProfile.mockResolvedValue(undefined);
+  repo.getTutorialChannelProfile.mockResolvedValue({
+    version: 1,
+    primaryChannelId: null,
+    translationEnabled: false,
+    translationMethod: "voiceover",
+    youtubeUrl: "",
+    accountLabel: "",
+    thumbnailMode: "both",
+    avatarId: null,
+    referenceImageIds: [],
+    promptOverrides: { script: "", translation: "", metadata: "", thumbnailText: "", thumbnailImage: "" },
+  });
   repo.getThumbnailFormatRule.mockResolvedValue(undefined);
   repo.createThumbnailRecord.mockResolvedValue({ id: "t1" });
   repo.updateThumbnailRecord.mockResolvedValue({ id: "t1" });
@@ -198,6 +211,38 @@ describe("requestThumbnail", () => {
     // is_selected is NOT written as a side effect of completion (fixes A2.12).
     const updateArgs = repo.updateThumbnailRecord.mock.calls.map((c) => c[2]);
     expect(updateArgs.some((u) => u.is_selected === true)).toBe(false);
+  });
+
+  it("keeps explicit channel thumbnail prompt overrides through the repository boundary", async () => {
+    repo.getTutorialChannelProfile.mockResolvedValue({
+      version: 1,
+      primaryChannelId: null,
+      translationEnabled: false,
+      translationMethod: "voiceover",
+      youtubeUrl: "",
+      accountLabel: "",
+      thumbnailMode: "both",
+      avatarId: null,
+      referenceImageIds: [],
+      promptOverrides: { script: "", translation: "", metadata: "", thumbnailText: "", thumbnailImage: "Keep the product logo above the headline." },
+    });
+    repo.resolveArchetypeCandidates.mockResolvedValue({
+      candidates: [archetype],
+      source: "global",
+      tiers: ["base"],
+      difficulty: null,
+      difficultyNote: "no difficulty signal",
+      emptyCurationReason: null,
+    });
+    const result = await requestThumbnail({} as never, {
+      subjectKind: "content_job",
+      subjectId: "job1",
+      format: "TECH_COMPARISON",
+      channelId: "c1",
+      title: "Docker in 5 minutes",
+    });
+    expect(result.status).toBe("completed");
+    expect(gateway.requestImageDetailed.mock.calls[0]?.[0]).toContain("Channel-specific thumbnail instructions: Keep the product logo above the headline.");
   });
 
   it("surfaces a fallback as a visible downgrade, never silently", async () => {
@@ -649,5 +694,6 @@ describe("requestThumbnail", () => {
     });
     expect(res.status).toBe("failed");
     expect(res.error).toContain("gateway down");
+    expect(res.failureCertainty).toBe("uncertain");
   });
 });

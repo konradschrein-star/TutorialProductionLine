@@ -1,0 +1,12 @@
+import { beforeEach, expect, it, vi } from "vitest";
+const mocks=vi.hoisted(()=>({authorize:vi.fn(),asset:vi.fn(),media:vi.fn()}));
+vi.mock("@/lib/uploader/scheduled-delivery",()=>({authorizeDeliveryConnector:mocks.authorize,getScheduledAsset:mocks.asset,DeliveryError:class extends Error {status=409;}}));
+vi.mock("@/lib/tutorial/media-access",()=>({openTutorialAssetStream:mocks.media}));
+const {GET}=await import("../route");
+const id="11111111-1111-4111-8111-111111111111";
+const get=(role="video")=>GET(new Request("http://localhost") as never,{params:Promise.resolve({id,role})});
+beforeEach(()=>{vi.clearAllMocks();mocks.authorize.mockResolvedValue(true);mocks.asset.mockResolvedValue({jobId:"job",path:"/private/video.mp4",sha256:"a".repeat(64),size:4});mocks.media.mockResolvedValue({contentLength:4,stream:new ReadableStream({start(c){c.enqueue(Buffer.from("data"));c.close();}})});});
+it("authorizes before any asset resolution or media acquisition",async()=>{mocks.authorize.mockResolvedValue(false);expect((await get()).status).toBe(401);expect(mocks.asset).not.toHaveBeenCalled();expect(mocks.media).not.toHaveBeenCalled();});
+it("streams the exact approved bytes through the lease-aware adapter",async()=>{const response=await get();expect(response.status).toBe(200);expect(await response.text()).toBe("data");expect(mocks.media).toHaveBeenCalledWith({jobId:"job",kind:"final_video",path:"/private/video.mp4",expectedContent:{sha256:"a".repeat(64),size:4}});expect(response.headers.get("x-content-sha256")).toBe("a".repeat(64));expect(response.headers.get("cache-control")).toBe("no-store");});
+it("uses thumbnail kind for an authorized selected image",async()=>{await get("thumbnail");expect(mocks.media).toHaveBeenCalledWith(expect.objectContaining({kind:"thumbnail"}));});
+it("does not leak paths on failed closed hydration",async()=>{mocks.media.mockRejectedValue(new Error("cannot read /private/video.mp4"));const response=await get();expect(response.status).toBe(500);expect(await response.text()).not.toContain("/private");});

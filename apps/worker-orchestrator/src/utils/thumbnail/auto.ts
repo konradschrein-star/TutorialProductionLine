@@ -57,6 +57,8 @@ export async function generateThumbnailForJob(
   db: DrizzleClient,
   opts: AutoThumbnailOptions,
 ): Promise<AutoThumbnailOutcome> {
+  if (opts.subjectKind === "tutorial_job") return { status: "skipped", thumbnailId: null, outputPath: null,
+    error: "Tutorials use the five-candidate English approval workflow; localized images wait for its selected master" };
   // Idempotent by default — don't burn provider quota on a job that already
   // has a usable thumbnail.
   if (!opts.force) {

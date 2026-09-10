@@ -63,10 +63,11 @@ async function readDisk(): Promise<{
 const KIND_LABELS: Record<CredentialKind, string> = {
   script: "Script engine",
   tts: "Voice / TTS",
+  images: "Thumbnail images",
   delivery: "Delivery (Drive)",
   alerts: "Alerts (Telegram)",
 };
-const KIND_ORDER: CredentialKind[] = ["script", "tts", "delivery", "alerts"];
+const KIND_ORDER: CredentialKind[] = ["script", "tts", "images", "delivery", "alerts"];
 
 export default async function SystemHealthPage() {
   const session = await getSession();

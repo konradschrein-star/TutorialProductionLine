@@ -10,13 +10,16 @@ import { ThumbnailStudioClient } from "./_components/studio-client";
 import type { ChannelBrandingData } from "./_components/branding-form";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
+import type { ThumbnailStudioTabId } from "./_components/studio-client";
 
 export const metadata = {
   title: "Thumbnail Studio",
 };
 
-export default async function ThumbnailsPage({ searchParams }: { searchParams: Promise<{ jobId?: string }> }) {
-  const { jobId } = await searchParams;
+const tabs = new Set<ThumbnailStudioTabId>(["videos", "composer", "archetypes", "generate", "library", "branding"]);
+
+export default async function ThumbnailsPage({ searchParams }: { searchParams: Promise<{ jobId?: string; tab?: string }> }) {
+  const { jobId, tab } = await searchParams;
   const session = await getSession();
   const [archetypes, channels, formats] = await Promise.all([
     listArchetypes(),
@@ -47,6 +50,7 @@ export default async function ThumbnailsPage({ searchParams }: { searchParams: P
       formats={formats}
       channelData={channelData}
       initialJobId={jobId ?? null}
+      initialTab={tabs.has(tab as ThumbnailStudioTabId) ? tab as ThumbnailStudioTabId : "videos"}
       canConfigure={hasPermission(session, "view:settings")}
     />
   );

@@ -130,7 +130,7 @@ async function testTts(): Promise<{ ok: boolean; detail: string }> {
   if (!res.ok) {
     return {
       ok: false,
-      detail: `Fish Audio auth HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`,
+      detail: `Fish Audio authentication returned HTTP ${res.status}. Check the saved FISH_API_KEY and provider endpoint.`,
     };
   }
   const json = (await res.json().catch(() => ({}))) as {

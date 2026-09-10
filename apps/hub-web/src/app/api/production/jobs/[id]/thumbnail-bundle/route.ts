@@ -2,16 +2,31 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { normalizeTutorialLanguage } from "@repo/contracts";
+import {
+  configuredTutorialThumbnailMode,
+  normalizeTutorialLanguage,
+  tutorialChannelProfile,
+  resolveTutorialChannelTargets,
+} from "@repo/contracts";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db, thumbnails, tutorialJobs } from "@/lib/db";
 import {
-  THUMBNAIL_PACK_LANGUAGES,
   assessThumbnailPack,
   type ThumbnailPackJob,
 } from "@/lib/tutorial/thumbnail-pack";
 import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
+import { readThumbnailLayout } from "@/lib/thumbnails/layout-document";
+import {
+  channels,
+  characterImages,
+  thumbnailLibraryAssets,
+  tutorialThumbnailDrafts,
+  tutorialSettings,
+} from "@repo/db";
+import { resolveChannelHost } from "@repo/db/repositories";
+import { findSoftwareLogo } from "@/lib/thumbnails/software-logo";
+import { deriveLogoSubject } from "@repo/domain";
 
 export async function GET(
   _request: NextRequest,
@@ -30,6 +45,7 @@ export async function GET(
   const [requested] = await db
     .select({
       id: tutorialJobs.id,
+      createdBy: tutorialJobs.created_by,
       sourceJobId: tutorialJobs.source_job_id,
     })
     .from(tutorialJobs)
@@ -37,6 +53,13 @@ export async function GET(
     .limit(1);
   if (!requested) {
     return NextResponse.json({ error: "Video not found" }, { status: 404 });
+  }
+  const privileged =
+    session.role === "ADMIN" ||
+    session.role === "MANAGER" ||
+    hasPermission(session, "manage:tutorial-settings");
+  if (!privileged && requested.createdBy !== session.userId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const rootId = requested.sourceJobId ?? requested.id;
@@ -53,6 +76,8 @@ export async function GET(
       thumbnailTextBottom: tutorialJobs.thumbnail_text_bottom,
       status: tutorialJobs.status,
       finalPath: tutorialJobs.final_path,
+      errorStage: tutorialJobs.error_stage,
+      errorMessage: tutorialJobs.error_message,
     })
     .from(tutorialJobs)
     .where(
@@ -72,12 +97,15 @@ export async function GET(
 
   const activeRows = rows.flatMap((row) => {
     const language = normalizeTutorialLanguage(row.language);
-    return language &&
-      THUMBNAIL_PACK_LANGUAGES.some((candidate) => candidate === language)
-      ? [{ ...row, language }]
-      : [];
+    return language ? [{ ...row, language }] : [];
   });
   const subjectIds = activeRows.map((row) => row.jobId);
+  const savedDrafts = subjectIds.length
+    ? await db
+        .select()
+        .from(tutorialThumbnailDrafts)
+        .where(inArray(tutorialThumbnailDrafts.tutorial_job_id, subjectIds))
+    : [];
   const thumbnailRows = subjectIds.length
     ? await db
         .select({
@@ -89,6 +117,8 @@ export async function GET(
           isSelected: thumbnails.is_selected,
           outputPath: thumbnails.output_path,
           verdict: thumbnails.review_verdict,
+          headlineText: thumbnails.headline_text,
+          layoutDocument: thumbnails.prompt_used,
         })
         .from(thumbnails)
         .where(
@@ -115,10 +145,103 @@ export async function GET(
     ...row,
     thumbnailId: selections.get(row.jobId)?.thumbnail?.id ?? null,
   }));
-  const pack = assessThumbnailPack(jobs);
+  const configuredChannels = await db
+    .select({
+      id: channels.id,
+      language: channels.language,
+      metadata: channels.metadata,
+      isPrimary: channels.is_primary,
+      enabled: channels.accepts_tutorials,
+    })
+    .from(channels);
+  const profileTargets = resolveTutorialChannelTargets(
+    root.channelId,
+    configuredChannels,
+  ).targets.map((target) => target.language);
+  // The active pack follows the channel-group configuration. Historical locale
+  // rows stay in the database and remain directly addressable, but must not
+  // silently reactivate a retired 18-language fan-out in every editor view.
+  const requestedLanguage = activeRows.find(
+    (row) => row.jobId === requested.id,
+  )?.language;
+  const expectedLanguages = [
+    ...new Set(
+      [
+        "en",
+        ...profileTargets,
+        ...(requestedLanguage && requestedLanguage !== "en"
+          ? [requestedLanguage]
+          : []),
+      ]
+        .map(normalizeTutorialLanguage)
+        .filter((language): language is string => Boolean(language)),
+    ),
+  ];
+  const pack = assessThumbnailPack(jobs, "editing", expectedLanguages);
+  const hostImages = new Map<string, string[]>();
+  for (const channelId of new Set(
+    activeRows
+      .map((row) => row.channelId)
+      .filter((value): value is string => Boolean(value)),
+  )) {
+    const channel = configuredChannels.find((item) => item.id === channelId);
+    const profile = tutorialChannelProfile(channel?.metadata);
+    if (profile.avatarId) {
+      const images = await db
+        .select({ id: characterImages.id })
+        .from(characterImages)
+        .where(
+          and(
+            eq(characterImages.character_id, profile.avatarId),
+            eq(characterImages.is_active, true),
+          ),
+        );
+      hostImages.set(
+        channelId,
+        images
+          .filter(
+            (image) =>
+              !profile.referenceImageIds.length ||
+              profile.referenceImageIds.includes(image.id),
+          )
+          .map((image) => `/api/characters/images/${image.id}/file`),
+      );
+    } else {
+      const host = await resolveChannelHost(db, channelId);
+      hostImages.set(
+        channelId,
+        host?.images.map(
+          (image) => `/api/characters/images/${image.id}/file`,
+        ) ?? [],
+      );
+    }
+  }
+  const logos = await db
+    .select({
+      name: thumbnailLibraryAssets.name,
+      fileName: thumbnailLibraryAssets.file_name,
+    })
+    .from(thumbnailLibraryAssets)
+    .where(eq(thumbnailLibraryAssets.category, "LOGOS"))
+    .orderBy(desc(thumbnailLibraryAssets.created_at));
+  const softwareLogo = findSoftwareLogo(
+    root.title ?? "",
+    logos.map((logo) => ({
+      name: logo.name,
+      url: `/api/media/thumbnail-library/${logo.fileName}`,
+    })),
+  );
+  const softwareSubject = deriveLogoSubject(root.title ?? "");
+  const [settings] = await db
+    .select({ mode: tutorialSettings.thumbnail_generation_mode })
+    .from(tutorialSettings)
+    .where(eq(tutorialSettings.id, 1));
 
   return NextResponse.json({
     rootId,
+    softwareLogo,
+    softwareSubject,
+    generationMode: settings?.mode === "ai" ? "ai" : "manual",
     requestedId: id,
     ready: pack.ready,
     expected: pack.expected,
@@ -136,6 +259,15 @@ export async function GET(
       return {
         id: variant.jobId,
         sourceJobId: row?.sourceJobId ?? null,
+        thumbnailMode: row?.channelId
+          ? configuredTutorialThumbnailMode(
+              configuredChannels.find((channel) => channel.id === row.channelId)
+                ?.metadata,
+            )
+          : undefined,
+        hostImageUrls: row?.channelId
+          ? (hostImages.get(row.channelId) ?? [])
+          : [],
         language: variant.language,
         title: variant.title,
         status: variant.status,
@@ -146,6 +278,27 @@ export async function GET(
             ? `/api/production/jobs/${variant.jobId}/download?inline=1`
             : null,
         thumbnailId: selection?.thumbnail?.id ?? null,
+        hasSelectedImage: Boolean(selectedRow?.outputPath),
+        selectedHeadlineLines: selectedRow?.headlineText
+          ? selectedRow.headlineText
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .slice(0, 4)
+          : [],
+        layout: readThumbnailLayout(selectedRow?.layoutDocument),
+        draftLayout: (() => {
+          const draft = savedDrafts.find(
+            (item) => item.tutorial_job_id === variant.jobId,
+          );
+          return draft &&
+            draft.base_thumbnail_id === (selection?.thumbnail?.id ?? null)
+            ? readThumbnailLayout(JSON.stringify(draft.layout))
+            : null;
+        })(),
+        draftRevision:
+          savedDrafts.find((item) => item.tutorial_job_id === variant.jobId)
+            ?.revision ?? 0,
         thumbnailReady: selection?.ready ?? false,
         thumbnailReasons: selection?.reasons ?? [
           "language variant job missing",
@@ -155,6 +308,8 @@ export async function GET(
           selectedRow?.verdict === "strong",
         ready: variant.ready,
         reasons: variant.reasons,
+        copyError:
+          row?.errorStage === "thumbnail_copy" ? row.errorMessage : null,
       };
     }),
   });

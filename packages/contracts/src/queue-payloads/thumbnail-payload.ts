@@ -12,6 +12,8 @@ export const ThumbnailPayloadSchema = z
   .object({
     subjectKind: z.enum(["content_job", "tutorial_job", "studio", "test"]),
     subjectId: z.string().uuid(),
+    /** Explicit operator generation must not reselect or replace approved assets. */
+    manualSelection: z.boolean().optional(),
     format: z.string().min(1),
     /** Optional: Studio renders need not belong to a channel. */
     channelId: z.string().uuid().nullable().optional(),

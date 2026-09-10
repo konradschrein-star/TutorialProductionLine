@@ -22,6 +22,7 @@ export interface SubtitleConfig {
  * someone adds it by hand. Worth replacing with `typeof channels.$inferSelect`.
  */
 export interface Channel {
+  metadata?: unknown;
   id: string;
   youtube_channel_id: string;
   /** Provider-neutral key of the uploader's isolated channel profile. */

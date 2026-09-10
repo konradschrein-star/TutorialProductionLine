@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
+import { z } from 'zod';
 import {
   getCharacterWithImages,
   setCharacterChannels,
@@ -32,24 +33,25 @@ export async function PUT(
     return NextResponse.json({ error: "Character not found" }, { status: 404 });
   }
 
-  let body: {
-    channels?: Array<{
-      channel_id: string;
-      role?: string;
-      is_primary?: boolean;
-    }>;
-  };
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
-  const bindings = (body.channels ?? []).filter((b) => !!b.channel_id);
+  const parsed = z.object({ channels: z.array(z.object({
+    channel_id: z.string().uuid(), role: z.enum(['host', 'cast']).optional(), is_primary: z.boolean().optional(),
+  })).max(100) }).safeParse(body);
+  if (!parsed.success || new Set(parsed.data.channels.map(b => b.channel_id)).size !== parsed.data.channels.length) {
+    return NextResponse.json({ error: 'Explicit unique channel bindings are required' }, { status: 400 });
+  }
+  const bindings = parsed.data.channels;
 
   try {
     await setCharacterChannels(id, bindings);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const cause = (err as { cause?: { message?: string } })?.cause;
+    const msg = `${err instanceof Error ? err.message : ''} ${cause?.message ?? ''}`;
     if (/idx_character_channels_one_primary_host/.test(msg)) {
       return NextResponse.json(
         {
@@ -61,7 +63,7 @@ export async function PUT(
         { status: 409 },
       );
     }
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: 'Channel bindings were not changed. Check the selected channels and retry.' }, { status: 500 });
   }
 
   const character = await getCharacterWithImages(id);

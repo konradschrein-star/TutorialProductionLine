@@ -1,0 +1,21 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+const mocks = vi.hoisted(() => ({ session: vi.fn(), select: vi.fn(), update: vi.fn(), set: vi.fn(), fanout: vi.fn(), lease: vi.fn(), hash: vi.fn() }));
+vi.mock("@/lib/auth/session", () => ({ getSession: mocks.session }));
+vi.mock("@/lib/auth/rbac", () => ({ hasPermission: (_: unknown, permission: string) => permission === "manage:thumbnails" }));
+vi.mock("@/lib/config", () => ({ getHubConfig: () => ({ LOCAL_MEDIA_ROOT: "/local-test" }) }));
+vi.mock("@repo/db", () => ({ recordApprovedEnglishThumbnailFanout: mocks.fanout, englishThumbnailApprovalRevision: () => "new-revision" }));
+vi.mock("@repo/storage", () => ({ withTutorialMediaSet: mocks.lease, fingerprintStorageSource: mocks.hash }));
+vi.mock("@/lib/db", () => ({ db: { select: mocks.select, transaction: async (fn: (tx: unknown) => unknown) => fn({ select: mocks.select, update: mocks.update }) }, tutorialJobs: {}, thumbnails: {}, storageArtifacts: {}, tutorialUploadDispatches: {}, tutorialSettings: {}, tutorialThumbnailFanout: {} }));
+const { POST } = await import("../route");
+const job = { id: "11111111-1111-4111-8111-111111111111", created_by: "owner", channel_id: "22222222-2222-4222-8222-222222222222", language: "en" };
+const candidate = { id: "33333333-3333-4333-8333-333333333333", channel_id: job.channel_id, language: "en", status: "completed", output_path: "/local-test/thumb.png" };
+function rows(values: unknown[]) { const promise = Promise.resolve(values); const q = { from: () => q, where: () => q, limit: () => q, for: () => q, then: promise.then.bind(promise) }; mocks.select.mockReturnValueOnce(q); }
+const request = () => POST(new NextRequest("http://localhost", { method: "POST", body: JSON.stringify({ thumbnailId: candidate.id }) }), { params: Promise.resolve({ id: job.id }) });
+function validRows() { rows([job]); rows([job]); rows([job]); rows([{ thumbnail_generation_mode: "ai" }]); rows([{ id: job.id }]); rows([]); rows([candidate]); }
+beforeEach(() => { vi.clearAllMocks(); mocks.session.mockResolvedValue({ userId: "owner", role: "VA" }); mocks.update.mockReturnValue({ set: mocks.set }); mocks.set.mockReturnValue({ where: async () => undefined }); mocks.lease.mockImplementation(async (_db, _request, _options, consume) => consume([candidate.output_path])); mocks.hash.mockResolvedValue({ sha256: "a".repeat(64), bytes: 123 }); });
+it("denies cross VA before inspecting bytes or changing selection", async () => { rows([{ ...job, created_by: "someone-else" }]); expect((await request()).status).toBe(403); expect(mocks.lease).not.toHaveBeenCalled(); expect(mocks.update).not.toHaveBeenCalled(); });
+it("records exact approved bytes under the caller's transaction lease", async () => { validRows(); expect((await request()).status).toBe(200); expect(mocks.fanout).toHaveBeenCalledWith(expect.anything(), { sourceJobId: job.id, thumbnailId: candidate.id, sourcePath: candidate.output_path, sha256: "a".repeat(64), size: 123 }); expect(mocks.lease.mock.calls[0]![2]).toMatchObject({ transaction: expect.anything(), maxBytes: 32 * 1024 * 1024 }); });
+it("does not select or record localization if source bytes are missing", async () => { validRows(); mocks.lease.mockRejectedValueOnce(new Error("missing exact archive")); expect((await request()).status).toBe(409); expect(mocks.update).not.toHaveBeenCalled(); expect(mocks.fanout).not.toHaveBeenCalled(); });
+it("reports failed atomic approval if durable fanout cannot commit", async () => { validRows(); mocks.fanout.mockRejectedValueOnce(new Error("DB unavailable")); expect((await request()).status).toBe(409); });
+it("replacement English invalidates child selections and publication receipts without deleting bytes", async () => { rows([job]); rows([job]); rows([job]); rows([{ thumbnail_generation_mode: "ai" }]); rows([{ id: job.id }, { id: "44444444-4444-4444-8444-444444444444" }]); rows([]); rows([candidate]); rows([{ revision: "old-revision" }]); expect((await request()).status).toBe(200); expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ is_selected: false, review_verdict: "not_reviewed", reviewed_at: null })); expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ publication_approval: null, va_review_status: null })); });

@@ -1,11 +1,56 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { toast } from "sonner";
+import { prepareThumbnailExport } from "@/lib/thumbnails/export-ready";
+import { BoundedArtwork } from "@/components/thumbnails/bounded-artwork";
+import {
+  distributeHeadlineWords,
+  removeRepresentedProduct,
+  validateProceduralHeadlines,
+  initialLocaleOnly,
+  moveLayerBefore,
+} from "@/lib/thumbnails/procedural-policy";
+import {
+  automaticHeadlineCeiling,
+  fitThumbnailText,
+} from "@/lib/thumbnails/fit-text";
+import {
+  CLOSE_HOST_CROP,
+  TUTORIAL_HEADLINE_SIZE,
+  backgroundToneColor,
+  layerShadowCss,
+  sampleBackgroundColor,
+} from "@/lib/thumbnails/visual-style";
+import { ALL_TARGET_LANGUAGES } from "@/lib/tutorial/languages";
+import type { ThumbnailLayout } from "@/lib/thumbnails/layout-document";
+import { inheritThumbnailLayout } from "@/lib/thumbnails/shared-layout";
+import {
+  applySoftwareLogo,
+  type SoftwareLogo,
+} from "@/lib/thumbnails/software-logo";
 import { Rnd } from "react-rnd";
 import { toBlob } from "html-to-image";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import { GlassCard } from "@/app/(authenticated)/_components";
+import { V2Card as GlassCard } from "@/app/(authenticated)/_components";
+import workspace from "./composer-workspace.module.css";
+import {
+  thumbnailCanvasScale,
+  thumbnailEditorAvailability,
+} from "@/lib/thumbnails/workspace-model";
+import { ThumbnailPreviewImage } from "@/components/thumbnails/thumbnail-preview-image";
+import { TutorialAiPanel } from "@/components/thumbnails/tutorial-ai-panel";
+import {
+  AssetCollection,
+  type AssetPreferences,
+  type CollectionAsset,
+} from "@/components/thumbnails/asset-collection";
+import {
+  nextLayerId,
+  thumbnailTextPadding,
+} from "@/lib/thumbnails/editor-layout";
 import { FlagIcon } from "@/lib/tutorial/flag-icon";
 import {
   ACTIVE_PERSONA_LANGUAGES,
@@ -21,7 +66,7 @@ import {
  * drag/resize layers on a fixed canvas, a static offline asset catalog served
  * from /public, shared uploads persisted on the server (with a local fallback), PNG
  * export (html-to-image), and a launch-network ZIP export that swaps the
- * approved 1–3-word headline and the assigned host for each language.
+ * approved 1–4-word headline and the assigned host for each language.
  *
  * The AI-generation flow (Generate/Archetypes tabs) depends on media-gateway
  * infra the target box does not have; this composer is the real tool + fallback.
@@ -29,8 +74,8 @@ import {
  * Channel variants remain editable so a VA can fix font fit before export.
  */
 
-const TEXT_1 = "#e5e2e1";
-const TEXT_2 = "#cdc3d7";
+const TEXT_1 = "var(--v2-text-1)";
+const TEXT_2 = "var(--v2-text-2)";
 
 const CUSTOM_ASSETS_KEY = "ts_custom_assets";
 
@@ -40,37 +85,224 @@ const LANGUAGES = ACTIVE_PERSONA_LANGUAGES;
 interface VariantCopy {
   top: string;
   bottom: string;
+  third: string;
+  fourth: string;
+}
+
+const TEXT_LINE_KEYS = ["top", "bottom", "third", "fourth"] as const;
+type TextLineKey = (typeof TEXT_LINE_KEYS)[number];
+const TEXT_LAYER_IDS = [
+  "text-top",
+  "text-bottom",
+  "text-third",
+  "text-fourth",
+] as const;
+const EMPTY_COPY: VariantCopy = { top: "", bottom: "", third: "", fourth: "" };
+function textLayerId(line: TextLineKey) {
+  return TEXT_LAYER_IDS[TEXT_LINE_KEYS.indexOf(line)];
+}
+function textLineKey(id: string): TextLineKey | null {
+  const index = TEXT_LAYER_IDS.indexOf(id as (typeof TEXT_LAYER_IDS)[number]);
+  return index < 0 ? null : TEXT_LINE_KEYS[index]!;
+}
+function copyLines(copy?: VariantCopy): string[] {
+  return TEXT_LINE_KEYS.map((key) => copy?.[key] ?? "");
+}
+function copyFromLines(lines: readonly string[]): VariantCopy {
+  return {
+    top: lines[0]?.trim() ?? "",
+    bottom: lines[1]?.trim() ?? "",
+    third: lines[2]?.trim() ?? "",
+    fourth: lines[3]?.trim() ?? "",
+  };
 }
 
 const INITIAL_VARIANT_COPY: Record<(typeof LANGUAGES)[number], VariantCopy> = {
-  English: { top: "", bottom: "" },
-  German: { top: "", bottom: "" },
-  French: { top: "", bottom: "" },
-  Italian: { top: "", bottom: "" },
-  Swedish: { top: "", bottom: "" },
+  English: { ...EMPTY_COPY },
+  German: { ...EMPTY_COPY },
+  French: { ...EMPTY_COPY },
+  Italian: { ...EMPTY_COPY },
+  Swedish: { ...EMPTY_COPY },
 };
 
 const FONT_OPTIONS = [
+  {
+    label: "Anton (Automatic default)",
+    value: "Anton, Impact, sans-serif",
+  },
   {
     label: "Montserrat Bold (Channel Font)",
     value: "var(--font-montserrat), Montserrat, Arial, sans-serif",
   },
 ];
 const THUMBNAIL_FONT = FONT_OPTIONS[0]!.value;
+const MAX_THUMBNAIL_WORDS = 4;
+function copyWords(value: string): string[] {
+  return value.trim().split(/\s+/).filter(Boolean);
+}
+function compactCopyPair(
+  top: string,
+  bottom: string,
+  third = "",
+  fourth = "",
+): VariantCopy {
+  // Preserve meaning in existing/generated copy. Approval validates four words;
+  // saving a replacement draft must not silently delete words such as "no".
+  return {
+    top: top.trim(),
+    bottom: bottom.trim(),
+    third: third.trim(),
+    fourth: fourth.trim(),
+  };
+}
+
+function FittedHeadline({
+  element,
+  scale = 1,
+  style,
+}: {
+  element: ThumbnailElement;
+  scale?: number;
+  style?: React.CSSProperties;
+}) {
+  const [fit, setFit] = useState({
+    text: element.text ?? "",
+    fontSize: element.fontSize ?? TUTORIAL_HEADLINE_SIZE,
+  });
+  useLayoutEffect(() => {
+    const text = element.text?.trim() ?? "";
+    if (!text || typeof document === "undefined") {
+      setFit({ text, fontSize: element.fontSize ?? TUTORIAL_HEADLINE_SIZE });
+      return;
+    }
+    let active = true;
+    const calculate = () => {
+      const context = document.createElement("canvas").getContext("2d");
+      if (!context) return;
+      const stroke = element.strokeWidth ?? 0;
+      const inset = Math.ceil(stroke / 2) + 4;
+      try {
+        const fontSize = fitThumbnailText(
+          {
+            width: Math.max(1, element.width - stroke * 2 - inset * 2 - 56),
+            height: Math.max(1, element.height - stroke * 2 - inset * 2 - 32),
+            preferredSize:
+              element.autoFit === false
+                ? (element.fontSize ?? TUTORIAL_HEADLINE_SIZE)
+                : automaticHeadlineCeiling(element.width, element.height),
+            minimumSize: 24,
+          },
+          (size) => {
+            context.font = `${element.fontStyle ?? "normal"} ${element.fontWeight ?? "900"} ${size}px ${element.fontFamily || THUMBNAIL_FONT}`;
+            const metrics = context.measureText(text.toUpperCase());
+            return {
+              width: metrics.width * 1.04,
+              height:
+                (metrics.actualBoundingBoxAscent || size * 0.78) +
+                (metrics.actualBoundingBoxDescent || size * 0.08),
+            };
+          },
+        );
+        if (active) setFit({ text, fontSize });
+      } catch {
+        if (active) setFit({ text, fontSize: 24 });
+      }
+    };
+    void document.fonts.ready.then(calculate);
+    return () => {
+      active = false;
+    };
+  }, [
+    element.text,
+    element.width,
+    element.height,
+    element.fontSize,
+    element.autoFit,
+    element.fontStyle,
+    element.fontWeight,
+    element.strokeWidth,
+    element.fontFamily,
+  ]);
+  return (
+    <div
+      data-thumbnail-text={element.id}
+      style={{
+        ...style,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        overflow: "visible",
+        whiteSpace: "nowrap",
+        textTransform: "uppercase",
+        letterSpacing: 0,
+        color: element.color || "#fff",
+        fontFamily: element.fontFamily || THUMBNAIL_FONT,
+        fontStyle: element.fontStyle || "normal",
+        fontWeight: element.fontWeight || 900,
+        fontSize: fit.fontSize * scale,
+        lineHeight: 1.02,
+        WebkitTextStroke: `${(element.strokeWidth ?? 5) * scale}px ${element.strokeColor || "#000"}`,
+        paintOrder: "stroke fill",
+        backgroundColor: "transparent",
+        borderRadius: 0,
+        padding: 0,
+        textShadow: layerShadowCss(
+          { ...element, shadow: element.shadow !== false },
+          scale,
+        ),
+        boxSizing: "border-box",
+        userSelect: "none",
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          maxWidth: "100%",
+          height: "fit-content",
+          lineHeight: 0.95,
+          backgroundColor: element.bgColor || "transparent",
+          borderRadius: element.borderRadius || 0,
+          padding: thumbnailTextPadding(
+            element.strokeWidth ?? 0,
+            element.padding || "16px 28px",
+            scale,
+          ),
+          boxSizing: "border-box",
+        }}
+      >
+        {fit.text}
+      </span>
+    </div>
+  );
+}
 
 // The approved backgrounds are the four office photographs in /public/background.
 interface BgOption {
   name: string;
   url?: string;
   css?: string;
+  backgroundTone?: "light" | "dark" | "auto";
 }
 
 const DEFAULT_BGS: BgOption[] = [
+  {
+    name: "Neutral Home Office · New",
+    url: "/background/office-neutral-20260909.png",
+  },
   // Original served image backgrounds (public/background/).
   { name: "Office 1 · Window Desk", url: "/background/bg_1_1128207.jpg" },
   { name: "Office 2 · White Desk", url: "/background/bg_5_4386356.jpg" },
   { name: "Office 3 · Conference Room", url: "/background/bg_9_5717314.jpg" },
   { name: "Office 4 · Desktop", url: "/background/bg_6_322338.jpg" },
+  // Deliberately excluded from automatic rotation. These are manual building
+  // blocks for the two high-contrast circle layouts below.
+  {
+    name: "Plain white · Manual only",
+    css: "#ffffff",
+    backgroundTone: "light",
+  },
+  { name: "Plain black · Manual only", css: "#07090d", backgroundTone: "dark" },
 ];
 
 // Per-language display order + flag emoji for the grouped PERSONAS library.
@@ -78,6 +310,9 @@ const PERSONA_LANG_ORDER = ACTIVE_PERSONA_LANGUAGES;
 
 // Windows has no flag-emoji glyphs, so these render as SVGs via FlagIcon.
 const LANG_NAME_TO_CODE: Record<string, string> = {
+  ...Object.fromEntries(
+    ALL_TARGET_LANGUAGES.map((item) => [item.name, item.code]),
+  ),
   English: "en",
   German: "de",
   Italian: "it",
@@ -85,7 +320,13 @@ const LANG_NAME_TO_CODE: Record<string, string> = {
   Swedish: "sv",
 };
 
-const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
+const CODE_TO_LANG_NAME: Record<string, string> = {
+  ...Object.fromEntries(
+    ALL_TARGET_LANGUAGES.flatMap((item) => [
+      [item.code, item.name],
+      [item.name.toLowerCase(), item.name],
+    ]),
+  ),
   en: "English",
   english: "English",
   de: "German",
@@ -99,9 +340,14 @@ const CODE_TO_LANG_NAME: Record<string, (typeof LANGUAGES)[number]> = {
 };
 
 interface ThumbnailBundle {
+  generationMode?: "ai" | "manual";
+  softwareLogo?: SoftwareLogo | null;
+  softwareSubject?: string | null;
   rootId: string;
   ready: boolean;
   variants: Array<{
+    thumbnailMode?: "procedural" | "ai" | "both";
+    hostImageUrls?: string[];
     id: string | null;
     language: string;
     title: string | null;
@@ -110,8 +356,16 @@ interface ThumbnailBundle {
     thumbnailTextTop: string | null;
     thumbnailTextBottom: string | null;
     approved: boolean;
+    savedApproved?: boolean;
+    thumbnailId?: string | null;
+    hasSelectedImage?: boolean;
+    selectedHeadlineLines?: string[];
     ready: boolean;
     reasons: string[];
+    copyError?: string | null;
+    layout?: ThumbnailLayout | null;
+    draftLayout?: ThumbnailLayout | null;
+    draftRevision?: number;
   }>;
 }
 
@@ -450,9 +704,17 @@ const ALL_SYMBOLS = [
 ];
 
 type ElementType =
-  "TEXT" | "PERSON" | "LOGO" | "SYMBOL" | "BACKGROUND" | "UPLOAD";
+  "TEXT" | "PERSON" | "LOGO" | "SYMBOL" | "BACKGROUND" | "UPLOAD" | "SHAPE";
 
 interface ThumbnailElement {
+  shadow?: boolean;
+  shadowBlur?: number;
+  shadowOpacity?: number;
+  shadowOffsetY?: number;
+  autoColor?: boolean;
+  autoLogo?: boolean;
+  /** True/undefined maximises text in the hitbox; false respects fontSize. */
+  autoFit?: boolean;
   id: string;
   type: ElementType;
   url?: string;
@@ -475,6 +737,11 @@ interface ThumbnailElement {
   bgColor?: string;
   borderRadius?: string;
   padding?: string;
+  imageScale?: number;
+  mirrorX?: boolean;
+  mirrorY?: boolean;
+  tightBounds?: boolean;
+  backgroundTone?: "light" | "dark" | "auto";
 }
 
 type AssetCategory = "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "CUSTOM";
@@ -488,7 +755,14 @@ interface CustomThumbnailAsset {
 }
 
 type LibraryTab =
-  "PRESETS" | "PERSONAS" | "LOGOS" | "SYMBOLS" | "BGS" | "CUSTOM" | "LAYERS";
+  | "PRESETS"
+  | "PERSONAS"
+  | "LOGOS"
+  | "SYMBOLS"
+  | "SHAPES"
+  | "BGS"
+  | "CUSTOM"
+  | "LAYERS";
 
 // ── localStorage helpers (replicate facade StorageService, plain localStorage) ──
 function readCustomAssets(): CustomThumbnailAsset[] {
@@ -525,24 +799,24 @@ function initialElements(): ThumbnailElement[] {
     {
       id: "person-1",
       type: "PERSON",
+      tightBounds: true,
       url: cleanedPersonaUrl("English/american-hero.png"),
-      x: 485,
-      y: 4,
-      width: 330,
-      height: 446,
+      ...CLOSE_HOST_CROP.right,
+      shadow: true,
       zIndex: 2,
     },
     {
       id: "text-top",
       type: "TEXT",
       text: "LEARN FAST",
-      x: 34,
-      y: 58,
-      width: 470,
-      height: 92,
+      x: 28,
+      y: 36,
+      width: 442,
+      height: 102,
       zIndex: 4,
       fontFamily: THUMBNAIL_FONT,
-      fontSize: 66,
+      fontSize: TUTORIAL_HEADLINE_SIZE,
+      autoColor: true,
       color: "#ffffff",
       strokeColor: "#000000",
       strokeWidth: 5,
@@ -554,13 +828,14 @@ function initialElements(): ThumbnailElement[] {
       id: "text-bottom",
       type: "TEXT",
       text: "IN 10 MINS",
-      x: 34,
-      y: 145,
-      width: 470,
-      height: 92,
+      x: 28,
+      y: 138,
+      width: 442,
+      height: 102,
       zIndex: 5,
       fontFamily: THUMBNAIL_FONT,
-      fontSize: 66,
+      fontSize: TUTORIAL_HEADLINE_SIZE,
+      autoColor: true,
       color: "#ffffff",
       strokeColor: "#000000",
       strokeWidth: 5,
@@ -571,24 +846,28 @@ function initialElements(): ThumbnailElement[] {
     {
       id: "logo-1",
       type: "LOGO",
+      tightBounds: true,
+      shadow: true,
       url: "/app_logos_png/notion.png",
-      x: 48,
-      y: 276,
-      width: 128,
-      height: 128,
+      x: 52,
+      y: 252,
+      width: 176,
+      height: 176,
       zIndex: 3,
       bgColor: "#ffffff",
       borderRadius: "50%",
-      padding: "16px",
+      padding: "18px",
     },
     {
       id: "arrow-1",
       type: "SYMBOL",
+      tightBounds: true,
+      shadow: true,
       url: "/bulk_symbols_110_colored/curved-arrow.png",
-      x: 202,
-      y: 275,
-      width: 112,
-      height: 112,
+      x: 205,
+      y: 214,
+      width: 128,
+      height: 128,
       zIndex: 6,
       rotation: 0,
     },
@@ -601,6 +880,7 @@ interface ReferenceLayoutPreset {
   references: string;
   description: string;
   patches: Record<string, Partial<ThumbnailElement>>;
+  additions?: ThumbnailElement[];
 }
 
 /**
@@ -610,92 +890,441 @@ interface ReferenceLayoutPreset {
  */
 const REFERENCE_LAYOUTS: readonly ReferenceLayoutPreset[] = [
   {
+    id: "ui-card-host-right",
+    name: "UI Focus · Host right",
+    references: "Tight presenter + recorded interface references",
+    description:
+      "Default: two solid headline hitboxes, a dominant UI card and an inward-pointing close host.",
+    patches: {
+      "bg-1": {
+        url: undefined,
+        css: "linear-gradient(135deg,#ffffff,#dfe4e8)",
+        backgroundTone: "light",
+      },
+      "person-1": {
+        x: 462,
+        y: -36,
+        width: 420,
+        height: 566,
+        mirrorX: true,
+        shadow: true,
+      },
+      "text-top": {
+        x: 144,
+        y: 20,
+        width: 326,
+        height: 88,
+        fontSize: 96,
+        strokeWidth: 0,
+        color: "#ffffff",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "text-bottom": {
+        x: 144,
+        y: 110,
+        width: 326,
+        height: 88,
+        fontSize: 96,
+        strokeWidth: 0,
+        color: "#ffe319",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "logo-1": {
+        x: 28,
+        y: 34,
+        width: 104,
+        height: 104,
+        bgColor: "#ffffff",
+        borderRadius: "22px",
+        padding: "10px",
+      },
+      "arrow-1": { x: 342, y: 232, width: 138, height: 138, rotation: 0 },
+    },
+    additions: [
+      {
+        id: "ui-card",
+        type: "SHAPE",
+        x: 24,
+        y: 205,
+        width: 444,
+        height: 228,
+        zIndex: 1,
+        bgColor: "#ffffff",
+        borderRadius: "18px",
+        shadow: true,
+      },
+    ],
+  },
+  {
+    id: "ui-card-host-left",
+    name: "UI Focus · Host left",
+    references: "Mirrored tight presenter + interface reference",
+    description:
+      "Mirrored default for a host pose that points right into the tutorial interface.",
+    patches: {
+      "bg-1": {
+        url: undefined,
+        css: "linear-gradient(135deg,#ffffff,#dfe4e8)",
+        backgroundTone: "light",
+      },
+      "person-1": {
+        x: -64,
+        y: -36,
+        width: 420,
+        height: 566,
+        mirrorX: false,
+        shadow: true,
+      },
+      "text-top": {
+        x: 330,
+        y: 20,
+        width: 326,
+        height: 88,
+        fontSize: 96,
+        strokeWidth: 0,
+        color: "#ffffff",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "text-bottom": {
+        x: 330,
+        y: 110,
+        width: 326,
+        height: 88,
+        fontSize: 96,
+        strokeWidth: 0,
+        color: "#ffe319",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "logo-1": {
+        x: 668,
+        y: 34,
+        width: 104,
+        height: 104,
+        bgColor: "#ffffff",
+        borderRadius: "22px",
+        padding: "10px",
+      },
+      "arrow-1": {
+        x: 318,
+        y: 232,
+        width: 138,
+        height: 138,
+        mirrorX: true,
+        rotation: 0,
+      },
+    },
+    additions: [
+      {
+        id: "ui-card",
+        type: "SHAPE",
+        x: 330,
+        y: 205,
+        width: 444,
+        height: 228,
+        zIndex: 1,
+        bgColor: "#ffffff",
+        borderRadius: "18px",
+        shadow: true,
+      },
+    ],
+  },
+  {
+    id: "icon-focus-host-right",
+    name: "Icon Focus · Host right",
+    references: "Large tool/document focal-object references",
+    description:
+      "Use when no useful recording frame exists. Put the app icon or document graphic inside the large card.",
+    patches: {
+      "bg-1": { url: undefined, css: "#f4f6f8", backgroundTone: "light" },
+      "person-1": {
+        x: 462,
+        y: -36,
+        width: 420,
+        height: 566,
+        mirrorX: true,
+        shadow: true,
+      },
+      "text-top": {
+        x: 24,
+        y: 20,
+        width: 446,
+        height: 88,
+        strokeWidth: 0,
+        color: "#ffffff",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "text-bottom": {
+        x: 24,
+        y: 110,
+        width: 446,
+        height: 88,
+        strokeWidth: 0,
+        color: "#ffe319",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "logo-1": {
+        x: 82,
+        y: 238,
+        width: 176,
+        height: 176,
+        bgColor: "#ffffff",
+        borderRadius: "50%",
+        padding: "18px",
+      },
+      "arrow-1": { x: 278, y: 238, width: 142, height: 142 },
+    },
+  },
+  {
+    id: "icon-focus-host-left",
+    name: "Icon Focus · Host left",
+    references: "Mirrored large focal-object reference",
+    description:
+      "Mirrored icon/document layout for right-pointing host images.",
+    patches: {
+      "bg-1": { url: undefined, css: "#f4f6f8", backgroundTone: "light" },
+      "person-1": {
+        x: -64,
+        y: -36,
+        width: 420,
+        height: 566,
+        mirrorX: false,
+        shadow: true,
+      },
+      "text-top": {
+        x: 330,
+        y: 20,
+        width: 446,
+        height: 88,
+        strokeWidth: 0,
+        color: "#ffffff",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "text-bottom": {
+        x: 330,
+        y: 110,
+        width: 446,
+        height: 88,
+        strokeWidth: 0,
+        color: "#ffe319",
+        bgColor: "#090a0c",
+        borderRadius: "12px",
+        padding: "8px 12px",
+        autoColor: false,
+      },
+      "logo-1": {
+        x: 542,
+        y: 238,
+        width: 176,
+        height: 176,
+        bgColor: "#ffffff",
+        borderRadius: "50%",
+        padding: "18px",
+      },
+      "arrow-1": { x: 384, y: 238, width: 142, height: 142, mirrorX: true },
+    },
+  },
+  {
+    id: "guide-host-right",
+    name: "Legacy Guide · Host right",
+    references: "User-supplied TechGuidePro reference",
+    description:
+      "Text high and logo low, with a large close-cropped host on the right.",
+    patches: {
+      "person-1": { ...CLOSE_HOST_CROP.right, shadow: true },
+      "text-top": {
+        x: 24,
+        y: 24,
+        width: 470,
+        height: 104,
+        fontSize: 118,
+        strokeWidth: 5,
+        color: "#ffffff",
+        shadow: true,
+        autoColor: true,
+      },
+      "text-bottom": {
+        x: 24,
+        y: 134,
+        width: 470,
+        height: 104,
+        fontSize: 118,
+        strokeWidth: 5,
+        color: "#ffffff",
+        shadow: true,
+        autoColor: true,
+      },
+      "logo-1": { x: 58, y: 284, width: 156, height: 156 },
+      "arrow-1": { x: 212, y: 246, width: 122, height: 122, rotation: 0 },
+    },
+  },
+  {
+    id: "guide-host-left",
+    name: "Legacy Guide · Host left",
+    references: "User-supplied TechGuidePro reference",
+    description:
+      "Mirrored reference composition: host left, text high, logo low right.",
+    patches: {
+      "person-1": { ...CLOSE_HOST_CROP.left, shadow: true },
+      "text-top": {
+        x: 320,
+        y: 24,
+        width: 456,
+        height: 104,
+        fontSize: 118,
+        strokeWidth: 5,
+        color: "#ffffff",
+        shadow: true,
+        autoColor: true,
+      },
+      "text-bottom": {
+        x: 320,
+        y: 134,
+        width: 456,
+        height: 104,
+        fontSize: 118,
+        strokeWidth: 5,
+        color: "#ffffff",
+        shadow: true,
+        autoColor: true,
+      },
+      "logo-1": { x: 586, y: 284, width: 156, height: 156 },
+      "arrow-1": { x: 468, y: 246, width: 122, height: 122, rotation: 0 },
+    },
+  },
+  {
     id: "host-right-headline",
-    name: "Host Right · Big Headline",
+    name: "Logo High · Host right",
     references: "Tutorial 3, Tutorial 4, Tutorial 13",
-    description: "Large host on the right; headline and app mark own the left.",
+    description:
+      "Logo leads at the top-left; large text fills the space below it.",
     patches: {
       "person-1": { x: 488, y: 2, width: 330, height: 448 },
-      "text-top": { x: 34, y: 54, width: 470, height: 92 },
-      "text-bottom": { x: 34, y: 142, width: 470, height: 92 },
-      "logo-1": { x: 48, y: 278, width: 128, height: 128 },
-      "arrow-1": { x: 202, y: 280, width: 110, height: 110 },
+      "text-top": { x: 26, y: 210, width: 474, height: 102 },
+      "text-bottom": { x: 26, y: 320, width: 474, height: 102 },
+      "logo-1": { x: 54, y: 26, width: 164, height: 164 },
+      "arrow-1": { x: 214, y: 78, width: 122, height: 122 },
     },
   },
   {
     id: "host-left-dashboard",
-    name: "Host Left · Product Detail",
+    name: "Logo High · Host left",
     references: "Design 2, Comparison 3",
     description:
-      "Host anchors the left while copy and product proof sit right.",
+      "Mirrored logo-first composition with a close-cropped host on the left.",
     patches: {
       "person-1": { x: -18, y: 2, width: 360, height: 448 },
-      "text-top": { x: 318, y: 50, width: 455, height: 92 },
-      "text-bottom": { x: 318, y: 138, width: 455, height: 92 },
-      "logo-1": { x: 570, y: 270, width: 142, height: 142 },
-      "arrow-1": { x: 420, y: 285, width: 112, height: 112, rotation: 10 },
+      "text-top": { x: 316, y: 210, width: 458, height: 102 },
+      "text-bottom": { x: 316, y: 320, width: 458, height: 102 },
+      "logo-1": { x: 580, y: 26, width: 164, height: 164 },
+      "arrow-1": { x: 462, y: 78, width: 122, height: 122, rotation: 0 },
     },
   },
   {
-    id: "friendly-card",
-    name: "Friendly Tutorial Card",
-    references: "Charles 1, Design 4, Tutorial 4",
+    id: "solid-light-circle",
+    name: "White + Circle · Host right",
+    references: "Simple high-contrast procedural layout",
     description:
-      "Clean text cards and a close host crop for beginner tutorials.",
+      "Plain white canvas with a large brand circle, oversized host, logo and short yellow/black copy.",
     patches: {
-      "person-1": { x: 492, y: -4, width: 340, height: 458 },
+      "bg-1": { url: undefined, css: "#ffffff", backgroundTone: "light" },
+      "person-1": { ...CLOSE_HOST_CROP.right, shadow: true },
       "text-top": {
-        x: 34,
-        y: 82,
-        width: 470,
-        height: 82,
-        color: "#101114",
-        strokeWidth: 0,
-        bgColor: "rgba(255,255,255,.92)",
-        borderRadius: "12px",
-        padding: "0 16px",
+        x: 28,
+        y: 30,
+        width: 458,
+        height: 112,
+        color: "#ffe21a",
+        autoColor: false,
       },
       "text-bottom": {
-        x: 34,
-        y: 170,
-        width: 470,
-        height: 82,
-        color: "#101114",
-        strokeWidth: 0,
-        bgColor: "rgba(255,255,255,.92)",
-        borderRadius: "12px",
-        padding: "0 16px",
+        x: 28,
+        y: 148,
+        width: 458,
+        height: 112,
+        color: "#ffe21a",
+        autoColor: false,
       },
-      "logo-1": { x: 56, y: 288, width: 116, height: 116 },
-      "arrow-1": { x: 205, y: 292, width: 104, height: 104 },
+      "logo-1": { x: 62, y: 286, width: 164, height: 164 },
+      "arrow-1": { x: 218, y: 248, width: 120, height: 120 },
     },
+    additions: [
+      {
+        id: "shape-accent-circle",
+        type: "SHAPE",
+        x: 505,
+        y: 38,
+        width: 360,
+        height: 360,
+        zIndex: 1,
+        bgColor: "#dbeafe",
+        borderRadius: "50%",
+        shadow: false,
+      },
+    ],
   },
   {
-    id: "logo-first",
-    name: "Logo First · Host Right",
-    references: "Design 3, Design 5, Tutorial 8",
-    description: "A strong app mark, compact headline and dominant right host.",
-    patches: {
-      "person-1": { x: 510, y: 0, width: 315, height: 450 },
-      "text-top": { x: 230, y: 48, width: 345, height: 88 },
-      "text-bottom": { x: 230, y: 132, width: 345, height: 88 },
-      "logo-1": { x: 42, y: 45, width: 168, height: 168 },
-      "arrow-1": { x: 295, y: 268, width: 118, height: 118, rotation: -8 },
-    },
-  },
-  {
-    id: "reaction-product",
-    name: "Reaction · Product Focus",
-    references: "Humor 1, Phone 3, Tutorial 7",
+    id: "solid-dark-circle",
+    name: "Black + Circle · Host left",
+    references: "Simple high-contrast procedural layout",
     description:
-      "Product/logo leads high while the reaction and copy stay bold.",
+      "Plain black canvas with a large brand circle, oversized host, logo and short white copy.",
     patches: {
-      "person-1": { x: 465, y: -8, width: 380, height: 466 },
-      "text-top": { x: 35, y: 220, width: 455, height: 88 },
-      "text-bottom": { x: 35, y: 302, width: 455, height: 88 },
-      "logo-1": { x: 52, y: 42, width: 154, height: 154 },
-      "arrow-1": { x: 242, y: 66, width: 116, height: 116, rotation: 12 },
+      "bg-1": { url: undefined, css: "#07090d", backgroundTone: "dark" },
+      "person-1": { ...CLOSE_HOST_CROP.left, shadow: true },
+      "text-top": {
+        x: 318,
+        y: 30,
+        width: 454,
+        height: 112,
+        color: "#ffffff",
+        autoColor: false,
+      },
+      "text-bottom": {
+        x: 318,
+        y: 148,
+        width: 454,
+        height: 112,
+        color: "#ffffff",
+        autoColor: false,
+      },
+      "logo-1": { x: 574, y: 286, width: 164, height: 164 },
+      "arrow-1": { x: 454, y: 248, width: 120, height: 120, mirrorX: true },
     },
+    additions: [
+      {
+        id: "shape-accent-circle",
+        type: "SHAPE",
+        x: -65,
+        y: 50,
+        width: 380,
+        height: 380,
+        zIndex: 1,
+        bgColor: "#1d4ed8",
+        borderRadius: "50%",
+        shadow: false,
+      },
+    ],
   },
 ];
 
@@ -703,23 +1332,161 @@ function applyPresetPatches(
   source: ThumbnailElement[],
   preset: ReferenceLayoutPreset,
 ): ThumbnailElement[] {
-  return source.map((element) => ({
-    ...element,
-    ...(element.type === "TEXT"
-      ? {
-          fontFamily: THUMBNAIL_FONT,
-          fontWeight: "900",
-          fontStyle: "normal",
-          color: "#ffffff",
-          strokeColor: "#000000",
-          strokeWidth: 5,
-          bgColor: "transparent",
-          borderRadius: "0",
-          padding: "0",
-        }
-      : {}),
-    ...(preset.patches[element.id] ?? {}),
+  const managedPresetElements = new Set(["shape-accent-circle", "ui-card"]);
+  const ownedPresetElements = new Set(
+    preset.additions?.map((element) => element.id) ?? [],
+  );
+  const patched = source
+    .filter(
+      (element) =>
+        !managedPresetElements.has(element.id) ||
+        ownedPresetElements.has(element.id),
+    )
+    .map((element) => ({
+      ...element,
+      ...(element.type === "TEXT"
+        ? {
+            fontFamily: THUMBNAIL_FONT,
+            fontWeight: "900",
+            fontStyle: "normal",
+            color: "#ffffff",
+            strokeColor: "#000000",
+            strokeWidth: 5,
+            bgColor: "transparent",
+            borderRadius: "0",
+            padding: "0",
+          }
+        : {}),
+      ...(preset.patches[element.id] ?? {}),
+    }));
+  const present = new Set(patched.map((element) => element.id));
+  return [
+    ...patched,
+    ...(preset.additions ?? [])
+      .filter((element) => !present.has(element.id))
+      .map((element) => ({ ...element })),
+  ];
+}
+
+function orderedTextLayers(source: ThumbnailElement[]): ThumbnailElement[] {
+  return source
+    .filter((layer) => layer.type === "TEXT" && textLineKey(layer.id))
+    .sort(
+      (a, b) =>
+        TEXT_LAYER_IDS.indexOf(a.id as (typeof TEXT_LAYER_IDS)[number]) -
+        TEXT_LAYER_IDS.indexOf(b.id as (typeof TEXT_LAYER_IDS)[number]),
+    );
+}
+
+function copyFromLayout(
+  source: ThumbnailElement[],
+  fallbackTop = "",
+  fallbackBottom = "",
+): VariantCopy {
+  const byId = new Map(
+    source
+      .filter((layer) => layer.type === "TEXT")
+      .map((layer) => [layer.id, layer.text?.trim() ?? ""]),
+  );
+  return copyFromLines([
+    byId.get("text-top") || fallbackTop,
+    byId.get("text-bottom") || fallbackBottom,
+    byId.get("text-third") || "",
+    byId.get("text-fourth") || "",
+  ]);
+}
+
+/**
+ * Build non-overlapping text hitboxes inside the current template's text zone.
+ * Every word remains explicit; the font renderer then maximises each block
+ * independently inside its own safe box.
+ */
+function arrangeTextHitboxes(
+  source: ThumbnailElement[],
+  requestedLines: readonly string[],
+): ThumbnailElement[] {
+  const lines = requestedLines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, MAX_THUMBNAIL_WORDS);
+  if (!lines.length) return source;
+  const current = orderedTextLayers(source);
+  const seed =
+    current[0] ?? initialElements().find((layer) => layer.id === "text-top")!;
+  const left = current.length
+    ? Math.min(...current.map((layer) => layer.x))
+    : seed.x;
+  const top = current.length
+    ? Math.min(...current.map((layer) => layer.y))
+    : seed.y;
+  const right = current.length
+    ? Math.max(...current.map((layer) => layer.x + layer.width))
+    : seed.x + seed.width;
+  const bottom = current.length
+    ? Math.max(...current.map((layer) => layer.y + layer.height))
+    : seed.y + seed.height;
+  const gap = 6;
+  const wantedHeight = Math.max(
+    bottom - top,
+    lines.length * 62 + (lines.length - 1) * gap,
+  );
+  const regionTop = Math.max(16, Math.min(top, 434 - wantedHeight));
+  const regionHeight = Math.min(276, Math.max(92, wantedHeight));
+  const blockHeight = Math.max(
+    48,
+    (regionHeight - gap * (lines.length - 1)) / lines.length,
+  );
+  const width = Math.max(180, right - left);
+  const untouched = source.filter((layer) => layer.type !== "TEXT");
+  const maxZ = Math.max(3, ...source.map((layer) => layer.zIndex));
+  const textLayers = lines.map((text, index): ThumbnailElement => ({
+    ...seed,
+    ...(current[index] ?? {}),
+    id: TEXT_LAYER_IDS[index]!,
+    type: "TEXT",
+    text,
+    x: left,
+    y: regionTop + index * (blockHeight + gap),
+    width,
+    height: blockHeight,
+    zIndex: maxZ + index + 1,
+    fontSize: automaticHeadlineCeiling(width, blockHeight),
+    autoFit: true,
+    padding: "0 10px",
   }));
+  return [...untouched, ...textLayers];
+}
+
+function pointArrowAtLogo(source: ThumbnailElement[]): ThumbnailElement[] {
+  const logo = source.find((layer) => layer.type === "LOGO");
+  const arrow =
+    source.find((layer) => layer.id === "arrow-1") ??
+    source.find((layer) => layer.type === "SYMBOL");
+  if (!logo || !arrow) return source;
+  const size = Math.max(88, Math.min(132, arrow.width, arrow.height));
+  const x = Math.max(
+    8,
+    Math.min(800 - size - 8, logo.x + logo.width / 2 - size * 0.36),
+  );
+  const y = Math.max(
+    8,
+    Math.min(450 - size - 8, logo.y + logo.height / 2 - size * 0.9),
+  );
+  return source.map((layer) =>
+    layer.id === arrow.id
+      ? {
+          ...layer,
+          x,
+          y,
+          width: size,
+          height: size,
+          rotation: 0,
+          mirrorX: false,
+          mirrorY: false,
+          tightBounds: true,
+        }
+      : layer,
+  );
 }
 
 function logoForTitle(title: string): string | undefined {
@@ -744,14 +1511,26 @@ function ThumbnailPreview({
 }) {
   const sourceWidth = portrait ? 450 : 800;
   const sourceHeight = portrait ? 800 : 450;
-  const width = portrait ? 170 : 284;
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(portrait ? 190 : 352);
+  useEffect(() => {
+    const node = previewRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width > 0)
+        setWidth(entry.contentRect.width);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   const scale = width / sourceWidth;
   return (
     <div
+      ref={previewRef}
       style={{
         position: "relative",
-        width,
-        height: sourceHeight * scale,
+        width: "100%",
+        aspectRatio: `${sourceWidth} / ${sourceHeight}`,
         overflow: "hidden",
         background: "#000",
         borderRadius: 6,
@@ -800,57 +1579,97 @@ function ThumbnailPreview({
         };
         if (element.type === "TEXT") {
           return (
+            <FittedHeadline
+              key={element.id}
+              element={element}
+              scale={scale}
+              style={common}
+            />
+          );
+        }
+        if (element.type === "SHAPE")
+          return (
             <div
               key={element.id}
               style={{
                 ...common,
-                display: "flex",
-                alignItems: "center",
-                overflow: "hidden",
-                whiteSpace: "nowrap",
-                color: element.color || "#fff",
-                fontFamily: element.fontFamily || THUMBNAIL_FONT,
-                fontStyle: element.fontStyle || "italic",
-                fontWeight: element.fontWeight || 800,
-                fontSize: (element.fontSize || 64) * scale,
-                lineHeight: 1,
-                WebkitTextStroke: `${(element.strokeWidth ?? 8) * scale}px ${element.strokeColor || "#000"}`,
-                paintOrder: "stroke fill",
-                backgroundColor: element.bgColor || "transparent",
+                background: element.bgColor || "#ffffff",
                 borderRadius: element.borderRadius || "0",
-                padding: element.padding || "0",
-                boxSizing: "border-box",
+                boxShadow: layerShadowCss(element, scale),
               }}
-            >
-              {element.text}
-            </div>
+            />
           );
-        }
         return element.url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <div
             key={element.id}
-            src={element.url}
-            alt=""
-            style={{ ...common, objectFit: "contain" }}
-          />
+            style={{
+              ...common,
+              background: element.bgColor,
+              borderRadius: element.borderRadius,
+              padding: (parseFloat(element.padding ?? "0") || 0) * scale,
+              boxSizing: "border-box",
+            }}
+          >
+            <BoundedArtwork
+              url={element.url}
+              width={
+                (element.width -
+                  2 * (parseFloat(element.padding ?? "0") || 0)) *
+                scale
+              }
+              height={
+                (element.height -
+                  2 * (parseFloat(element.padding ?? "0") || 0)) *
+                scale
+              }
+              scale={element.imageScale ?? 1}
+              tight={element.tightBounds}
+              mirrorX={element.mirrorX}
+              mirrorY={element.mirrorY}
+              shadow={layerShadowCss(element, scale)}
+              alt=""
+            />
+          </div>
         ) : null;
       })}
     </div>
   );
 }
 
-export function Composer({ jobId = null }: { jobId?: string | null }) {
+export function Composer({
+  jobId = null,
+  onDirtyChange,
+  onBack,
+}: {
+  jobId?: string | null;
+  onDirtyChange?: (dirty: boolean) => void;
+  onBack?: () => void;
+}) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const styleRequest = useRef(0);
+  const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const initialLanguageApplied = useRef(false);
+  const [canvasViewportWidth, setCanvasViewportWidth] = useState(800);
+  const [canvasViewportHeight, setCanvasViewportHeight] = useState(720);
+  const [canvasZoom, setCanvasZoom] = useState<"fit" | "100">("fit");
   const layoutsRef = useRef<Record<string, ThumbnailElement[]>>({});
+  const dirtyCopyLanguages = useRef(new Set<string>());
+  const editVersions = useRef<Record<string, number>>({});
+  const [localeOverrides, setLocaleOverrides] = useState<
+    Record<string, boolean>
+  >({});
 
   const [activeTab, setActiveTab] = useState<LibraryTab>("PRESETS");
   const [activeLang, setActiveLang] = useState<string>("English");
+  const currentEditorLanguage = useRef(activeLang);
+  currentEditorLanguage.current = activeLang;
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
 
-  const [customAssets, setCustomAssets] = useState<CustomThumbnailAsset[]>(() =>
-    readCustomAssets(),
+  const [customAssets, setCustomAssets] = useState<CustomThumbnailAsset[]>([]);
+  const [assetPreferences, setAssetPreferences] = useState<AssetPreferences>(
+    {},
   );
   const [elements, setElements] = useState<ThumbnailElement[]>(() =>
     initialElements(),
@@ -862,45 +1681,91 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   const [variantCopy, setVariantCopy] =
     useState<Record<string, VariantCopy>>(INITIAL_VARIANT_COPY);
   const [bundle, setBundle] = useState<ThumbnailBundle | null>(null);
+  const [bundleLoadError, setBundleLoadError] = useState<string | null>(null);
   const [savingApproval, setSavingApproval] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [showAi, setShowAi] = useState(false);
+  const [preparingDrafts, setPreparingDrafts] = useState(false);
   const [assetCursor, setAssetCursor] = useState<string | null>(null);
   const [assetHasMore, setAssetHasMore] = useState(false);
   const [loadingAssets, setLoadingAssets] = useState(false);
+  const [retryingCopy, setRetryingCopy] = useState(false);
+  const [logoName, setLogoName] = useState("");
+  const [failedAssetUrls, setFailedAssetUrls] = useState<Set<string>>(
+    new Set(),
+  );
+  // Worker-rendered procedural/AI thumbnails are often deliberately flattened.
+  // Review the exact selected pixels by default; never impersonate them with
+  // the editor's starter layout. A VA must explicitly start a replacement.
+  const [reviewingSelectedLanguages, setReviewingSelectedLanguages] = useState<
+    Set<string>
+  >(new Set());
 
   useEffect(() => {
-    setLoadingAssets(true);
-    fetch("/api/thumbnails/assets?limit=36")
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : Promise.reject(new Error("Could not load shared assets")),
-      )
-      .then(
-        (data: {
-          assets: CustomThumbnailAsset[];
-          hasMore: boolean;
-          nextCursor: string | null;
-        }) => {
-          setCustomAssets((local) => [
-            ...data.assets,
-            ...local.filter(
-              (item) => !data.assets.some((server) => server.id === item.id),
-            ),
-          ]);
-          setAssetHasMore(data.hasMore);
-          setAssetCursor(data.nextCursor);
-        },
-      )
-      .catch(() => undefined)
-      .finally(() => setLoadingAssets(false));
+    onDirtyChange?.(dirtyCopyLanguages.current.size > 0);
+  }, [bundle, elements, localeOverrides, onDirtyChange]);
+  useEffect(() => {
+    const preventLoss = (event: BeforeUnloadEvent) => {
+      if (dirtyCopyLanguages.current.size > 0) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", preventLoss);
+    return () => window.removeEventListener("beforeunload", preventLoss);
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadingAssets(true);
+    const timer = setTimeout(() => {
+      void fetch(
+        `/api/thumbnails/assets?limit=36&q=${encodeURIComponent(searchQuery)}`,
+        { signal: controller.signal },
+      )
+        .then((response) =>
+          response.ok
+            ? response.json()
+            : Promise.reject(new Error("Could not load shared assets")),
+        )
+        .then(
+          (data: {
+            assets: CustomThumbnailAsset[];
+            preferences?: AssetPreferences;
+            hasMore: boolean;
+            nextCursor: string | null;
+          }) => {
+            if (controller.signal.aborted) return;
+            setCustomAssets((local) => [
+              ...data.assets,
+              ...local.filter(
+                (item) =>
+                  item.id.startsWith("custom_") &&
+                  !data.assets.some((server) => server.id === item.id),
+              ),
+            ]);
+            setAssetPreferences(data.preferences ?? {});
+            setAssetHasMore(data.hasMore);
+            setAssetCursor(data.nextCursor);
+          },
+        )
+        .catch(() => undefined)
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingAssets(false);
+        });
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery]);
 
   async function loadMoreAssets() {
     if (!assetCursor || loadingAssets) return;
     setLoadingAssets(true);
     try {
       const response = await fetch(
-        `/api/thumbnails/assets?limit=36&cursor=${encodeURIComponent(assetCursor)}`,
+        `/api/thumbnails/assets?limit=36&q=${encodeURIComponent(searchQuery)}&cursor=${encodeURIComponent(assetCursor)}`,
       );
       if (!response.ok) throw new Error("Could not load more assets");
       const data = (await response.json()) as {
@@ -925,6 +1790,13 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
   useEffect(() => {
     if (!jobId) return;
+    let cancelled = false;
+    setBundle(null);
+    setBundleLoadError(null);
+    layoutsRef.current = {};
+    initialLanguageApplied.current = false;
+    dirtyCopyLanguages.current.clear();
+    setActiveLang("English");
     fetch(`/api/production/jobs/${jobId}/thumbnail-bundle`)
       .then((response) =>
         response.ok
@@ -932,7 +1804,60 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           : Promise.reject(new Error("Could not load video")),
       )
       .then((data: ThumbnailBundle) => {
-        setBundle(data);
+        if (cancelled) return;
+        data = {
+          ...data,
+          variants: data.variants.map((variant) => ({
+            ...variant,
+            savedApproved: variant.approved,
+            ...(variant.draftLayout
+              ? { layout: variant.draftLayout, approved: false }
+              : {}),
+          })),
+        };
+        setReviewingSelectedLanguages(
+          new Set(
+            data.variants
+              .filter(
+                (variant) =>
+                  variant.thumbnailId &&
+                  variant.hasSelectedImage &&
+                  !variant.layout &&
+                  !variant.draftLayout,
+              )
+              .map(
+                (variant) =>
+                  CODE_TO_LANG_NAME[variant.language.toLowerCase()] ??
+                  variant.language,
+              ),
+          ),
+        );
+        const openedVariant =
+          data.variants.find((variant) => variant.id === jobId) ??
+          data.variants.find(
+            (variant) => variant.language.toLowerCase() === "en",
+          ) ??
+          data.variants[0];
+        const openedModes = thumbnailEditorAvailability(
+          openedVariant?.thumbnailMode,
+          data.generationMode,
+        );
+        setShowAi(
+          !openedModes.procedural ||
+            (openedModes.ai &&
+              data.generationMode === "ai" &&
+              !data.variants.some(
+                (variant) => variant.draftLayout || variant.layout,
+              )),
+        );
+        setLocaleOverrides(
+          Object.fromEntries(
+            data.variants.map((variant) => [
+              CODE_TO_LANG_NAME[variant.language] ?? variant.language,
+              variant.layout?.localeOverride ?? false,
+            ]),
+          ),
+        );
         const copy = Object.fromEntries(
           Object.entries(INITIAL_VARIANT_COPY).map(([language, lines]) => [
             language,
@@ -942,12 +1867,52 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         for (const variant of data.variants) {
           const language = CODE_TO_LANG_NAME[variant.language.toLowerCase()];
           if (language) {
-            copy[language] = {
-              top: variant.thumbnailTextTop ?? "",
-              bottom: variant.thumbnailTextBottom ?? "",
-            };
+            if (variant.layout)
+              layoutsRef.current[language] = variant.layout.elements.map(
+                (element) => ({ ...element }),
+              );
+            const effectiveLayout = variant.draftLayout ?? variant.layout;
+            const loadedCopy =
+              !effectiveLayout &&
+              variant.hasSelectedImage &&
+              variant.selectedHeadlineLines?.length
+                ? copyFromLines(variant.selectedHeadlineLines)
+                : copyFromLayout(
+                    effectiveLayout?.elements ?? [],
+                    variant.thumbnailTextTop ?? "",
+                    variant.thumbnailTextBottom ?? "",
+                  );
+            const originalLines = copyLines(loadedCopy).filter((line) =>
+              line.trim(),
+            );
+            const cleaned = removeRepresentedProduct(
+              originalLines.join(" "),
+              data.softwareSubject ?? data.softwareLogo?.name,
+            );
+            const cleanedLines =
+              cleaned && cleaned !== originalLines.join(" ")
+                ? distributeHeadlineWords(
+                    copyWords(cleaned),
+                    Math.max(1, originalLines.length),
+                  )
+                : originalLines;
+            copy[language] = copyFromLines(cleanedLines);
+            if (cleanedLines.join(" ") !== originalLines.join(" ")) {
+              dirtyCopyLanguages.current.add(language);
+              variant.approved = false;
+              const corrected = arrangeTextHitboxes(
+                effectiveLayout?.elements ?? initialElements(),
+                cleanedLines,
+              );
+              layoutsRef.current[language] = corrected;
+              variant.layout = {
+                aspectRatio: effectiveLayout?.aspectRatio ?? "16:9",
+                elements: corrected,
+              };
+            }
           }
         }
+        setBundle(data);
         setVariantCopy(copy);
         const english =
           data.variants.find(
@@ -955,42 +1920,178 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           ) ?? data.variants[0];
         if (english?.title) {
           setTitle(english.title);
-          const logo = logoForTitle(english.title);
-          setElements((previous) =>
-            previous
-              .filter((element) => logo || element.id !== "logo-1")
-              .map((element) => {
-                if (element.id === "text-top")
-                  return { ...element, text: copy.English?.top ?? "" };
-                if (element.id === "text-bottom")
-                  return { ...element, text: copy.English?.bottom ?? "" };
-                if (element.id === "logo-1")
-                  return logo ? { ...element, url: logo } : element;
-                return element;
+          if (english.layout) {
+            setElements(
+              english.layout.elements.map((element) => {
+                const key = textLineKey(element.id);
+                return key
+                  ? { ...element, text: copy.English?.[key] ?? "" }
+                  : { ...element };
               }),
+            );
+            setAspectRatio(english.layout.aspectRatio);
+            return;
+          }
+          const logo = data.softwareLogo?.url ?? logoForTitle(english.title);
+          setElements(
+            initialElements().map((element) => {
+              const key = textLineKey(element.id);
+              if (key) return { ...element, text: copy.English?.[key] ?? "" };
+              if (element.id === "logo-1")
+                return { ...element, url: logo, autoLogo: true };
+              return element;
+            }),
           );
         }
       })
-      .catch((error) =>
-        alert(error instanceof Error ? error.message : String(error)),
-      );
+      .catch((error) => {
+        if (!cancelled)
+          setBundleLoadError(
+            error instanceof Error ? error.message : String(error),
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [jobId]);
 
+  // Worker-prepared headlines arrive independently of video localization.
+  // Fill only empty local text; never overwrite an operator's unsaved edits.
+  useEffect(() => {
+    if (!jobId) return;
+    const controller = new AbortController();
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/production/jobs/${jobId}/thumbnail-bundle`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) return;
+        const refreshed = (await response.json()) as ThumbnailBundle;
+        setBundle({
+          ...refreshed,
+          variants: refreshed.variants.map((variant) => ({
+            ...variant,
+            savedApproved: variant.approved,
+            ...(variant.draftLayout ||
+            dirtyCopyLanguages.current.has(
+              CODE_TO_LANG_NAME[variant.language] ?? "",
+            )
+              ? { approved: false }
+              : {}),
+          })),
+        });
+        setVariantCopy((previous) => {
+          const next = { ...previous };
+          for (const variant of refreshed.variants) {
+            const language = CODE_TO_LANG_NAME[variant.language];
+            if (language)
+              next[language] = compactCopyPair(
+                previous[language]?.top || variant.thumbnailTextTop || "",
+                previous[language]?.bottom || variant.thumbnailTextBottom || "",
+                previous[language]?.third,
+                previous[language]?.fourth,
+              );
+          }
+          return next;
+        });
+        const active = refreshed.variants.find(
+          (variant) => CODE_TO_LANG_NAME[variant.language] === activeLang,
+        );
+        if (active)
+          setElements((previous) =>
+            previous.map((element) => {
+              if (element.text?.trim()) return element;
+              if (element.id === "text-top" && active.thumbnailTextTop)
+                return { ...element, text: active.thumbnailTextTop };
+              if (element.id === "text-bottom" && active.thumbnailTextBottom)
+                return { ...element, text: active.thumbnailTextBottom };
+              return element;
+            }),
+          );
+      } catch {
+        /* Next poll retries without interrupting editing. */
+      }
+    }, 10_000);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [jobId, activeLang]);
+
   const selectedElement = elements.find((el) => el.id === selectedId);
+  useEffect(() => {
+    if (!bundle?.softwareLogo?.url) return;
+    for (const variant of bundle.variants) {
+      const language = CODE_TO_LANG_NAME[variant.language];
+      if (!language) continue;
+      const protectedLayout =
+        variant.approved || Boolean(localeOverrides[language]);
+      const existing = layoutsRef.current[language];
+      if (existing)
+        layoutsRef.current[language] = applySoftwareLogo(
+          existing,
+          bundle.softwareLogo.url,
+          protectedLayout,
+        );
+      if (language === activeLang)
+        setElements((previous) =>
+          applySoftwareLogo(
+            previous,
+            bundle.softwareLogo?.url,
+            protectedLayout,
+          ),
+        );
+    }
+  }, [bundle, activeLang, localeOverrides]);
+
+  async function retryHeadline() {
+    if (!activeVariant?.id || retryingCopy) return;
+    setRetryingCopy(true);
+    try {
+      const response = await fetch(
+        `/api/production/jobs/${activeVariant.id}/thumbnail-copy`,
+        { method: "POST" },
+      );
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error || "Could not queue headline generation");
+      toast.success(
+        "Headline generation queued. You can keep editing; existing text will not be replaced.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRetryingCopy(false);
+    }
+  }
   const activeVariant =
     bundle?.variants.find(
       (variant) =>
         (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") ===
         activeLang,
     ) ?? bundle?.variants[0];
+  const activeEditorModes = thumbnailEditorAvailability(
+    activeVariant?.thumbnailMode,
+    bundle?.generationMode,
+  );
+  const reviewingExactSelectedImage = Boolean(
+    activeVariant?.thumbnailId && reviewingSelectedLanguages.has(activeLang),
+  );
+  useEffect(() => {
+    if (!activeEditorModes.ai && showAi) setShowAi(false);
+    else if (!activeEditorModes.procedural && !showAi) setShowAi(true);
+  }, [activeEditorModes.ai, activeEditorModes.procedural, showAi]);
   const availableLanguages = bundle
-    ? LANGUAGES.filter((language) =>
-        bundle.variants.some(
-          (variant) =>
-            (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English") ===
-            language,
+    ? [
+        ...new Set(
+          bundle.variants.map(
+            (variant) =>
+              CODE_TO_LANG_NAME[variant.language.toLowerCase()] ??
+              variant.language,
+          ),
         ),
-      )
+      ]
     : [...LANGUAGES];
 
   const filteredLogos = useMemo(
@@ -1014,7 +2115,47 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
 
   const canvasWidth = aspectRatio === "16:9" ? 800 : 450;
   const canvasHeight = aspectRatio === "16:9" ? 450 : 800;
-  const displayScale = aspectRatio === "9:16" ? 0.65 : 1;
+  const displayScale = thumbnailCanvasScale(
+    canvasViewportWidth,
+    canvasWidth,
+    aspectRatio === "9:16",
+    canvasZoom,
+    canvasViewportHeight,
+  );
+
+  useEffect(() => {
+    const surface = canvasSurfaceRef.current;
+    if (!surface) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setCanvasViewportWidth(entry.contentRect.width);
+    });
+    observer.observe(surface);
+    const updateHeight = () => setCanvasViewportHeight(window.innerHeight);
+    updateHeight();
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, [Boolean(bundle), jobId, showAi]);
+
+  useEffect(() => {
+    if (!bundle || initialLanguageApplied.current) return;
+    initialLanguageApplied.current = true;
+    const parameter = new URLSearchParams(window.location.search).get(
+      "language",
+    );
+    const requestedVariant = bundle.variants.find(
+      (variant) => variant.id === jobId,
+    );
+    const requested =
+      CODE_TO_LANG_NAME[parameter ?? requestedVariant?.language ?? "en"];
+    if (requested && availableLanguages.includes(requested)) {
+      if (initialLocaleOnly(parameter, requestedVariant?.language))
+        setLocaleOverrides((previous) => ({ ...previous, [requested]: true }));
+      switchLanguage(requested);
+    }
+  }, [bundle]);
 
   const previewLayouts = availableLanguages.map((language) => {
     const englishSource =
@@ -1023,6 +2164,19 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         : (layoutsRef.current.English ?? elements);
     return {
       language,
+      selectedThumbnailId:
+        bundle?.variants.find(
+          (variant) =>
+            CODE_TO_LANG_NAME[variant.language] === language &&
+            variant.hasSelectedImage,
+        )?.thumbnailId ?? null,
+      selectedThumbnailApproved: Boolean(
+        bundle?.variants.find(
+          (variant) =>
+            CODE_TO_LANG_NAME[variant.language] === language &&
+            variant.approved,
+        )?.thumbnailId,
+      ),
       elements:
         language === activeLang
           ? elements
@@ -1031,6 +2185,17 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   });
 
   function hostForLanguage(language: string): string | undefined {
+    const configured = bundle?.variants.find(
+      (variant) => CODE_TO_LANG_NAME[variant.language] === language,
+    )?.hostImageUrls;
+    if (configured?.length) {
+      const index =
+        [...`${title}:${language}`].reduce(
+          (n, char) => (n * 31 + char.charCodeAt(0)) >>> 0,
+          7,
+        ) % configured.length;
+      return configured[index];
+    }
     const hosts = DEFAULT_PERSONAS[language] ?? [];
     if (hosts.length === 0) return undefined;
     const seed = `${title}:${language}`;
@@ -1047,31 +2212,15 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   ): ThumbnailElement[] {
     const saved = layoutsRef.current[language];
     const hostUrl = hostForLanguage(language);
-    const copy = variantCopy[language] ?? { top: "", bottom: "" };
+    const copy = variantCopy[language] ?? EMPTY_COPY;
     const base = saved ?? source;
     return base.map((element) => {
-      if (element.id === "text-top") {
-        const fitted = Math.max(
-          24,
-          Math.min(
-            element.fontSize ?? 64,
-            Math.floor((element.width * 1.45) / Math.max(1, copy.top.length)),
-          ),
-        );
-        return { ...element, text: copy.top, fontSize: fitted };
-      }
-      if (element.id === "text-bottom") {
-        const fitted = Math.max(
-          24,
-          Math.min(
-            element.fontSize ?? 64,
-            Math.floor(
-              (element.width * 1.45) / Math.max(1, copy.bottom.length),
-            ),
-          ),
-        );
-        return { ...element, text: copy.bottom, fontSize: fitted };
-      }
+      // A saved locale layout is an explicit operator edit. Do not replace its
+      // text with the original generated copy on every switch or export.
+      if (saved && element.type === "TEXT" && element.text?.trim())
+        return { ...element };
+      const key = textLineKey(element.id);
+      if (key) return { ...element, text: copy[key] };
       if (element.id === "person-1" && hostUrl && !saved) {
         return { ...element, url: hostUrl };
       }
@@ -1080,6 +2229,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   }
 
   function switchLanguage(language: string) {
+    if (savingApproval) return;
     if (language === activeLang) return;
     layoutsRef.current[activeLang] = elements.map((element) => ({
       ...element,
@@ -1093,7 +2243,116 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     setActiveLang(language);
   }
 
+  function beginEditableReplacement() {
+    if (!reviewingExactSelectedImage) return;
+    const preset =
+      REFERENCE_LAYOUTS.find((item) => item.id === "ui-card-host-right") ??
+      REFERENCE_LAYOUTS[0]!;
+    const copy = variantCopy[activeLang] ?? EMPTY_COPY;
+    const logo = bundle?.softwareLogo?.url ?? logoForTitle(title);
+    const starter = applyPresetPatches(initialElements(), preset).map(
+      (element) => {
+        const key = textLineKey(element.id);
+        if (key) return { ...element, text: copy[key] };
+        if (element.id === "logo-1")
+          return { ...element, url: logo, autoLogo: true };
+        const host = hostForLanguage(activeLang);
+        if (element.id === "person-1" && host) return { ...element, url: host };
+        return element;
+      },
+    );
+    setReviewingSelectedLanguages((current) => {
+      const next = new Set(current);
+      next.delete(activeLang);
+      return next;
+    });
+    layoutsRef.current[activeLang] = starter;
+    setElements(starter);
+    setSelectedId(null);
+    dirtyCopyLanguages.current.add(activeLang);
+    setBundle((current) =>
+      current
+        ? {
+            ...current,
+            variants: current.variants.map((variant) =>
+              CODE_TO_LANG_NAME[variant.language] === activeLang
+                ? { ...variant, approved: false }
+                : variant,
+            ),
+          }
+        : current,
+    );
+    toast.info(
+      "Editable replacement started. The selected rendered image remains unchanged until you explicitly approve the replacement.",
+    );
+  }
+
+  function editHeadline(language: string, line: TextLineKey, text: string) {
+    if (savingApproval) return;
+    const safeText = text.replace(/[\r\n]+/g, " ");
+    editVersions.current[language] = (editVersions.current[language] ?? 0) + 1;
+    dirtyCopyLanguages.current.add(language);
+    setVariantCopy((previous) => ({
+      ...previous,
+      [language]: { ...(previous[language] ?? EMPTY_COPY), [line]: safeText },
+    }));
+    const id = textLayerId(line);
+    const update = (layout: ThumbnailElement[]) =>
+      layout.map((element) =>
+        element.id === id ? { ...element, text: safeText } : element,
+      );
+    if (layoutsRef.current[language])
+      layoutsRef.current[language] = update(layoutsRef.current[language]!);
+    if (activeLang === language) setElements(update);
+    setBundle((previous) =>
+      previous
+        ? {
+            ...previous,
+            variants: previous.variants.map((variant) =>
+              CODE_TO_LANG_NAME[variant.language] === language
+                ? { ...variant, approved: false }
+                : variant,
+            ),
+          }
+        : previous,
+    );
+  }
+
+  function arrangeHeadline(blockCount: 1 | 2 | 3 | 4) {
+    if (savingApproval) return;
+    const cleaned = removeRepresentedProduct(
+      copyLines(variantCopy[activeLang]).join(" "),
+      bundle?.softwareSubject ?? bundle?.softwareLogo?.name,
+    );
+    const words = copyWords(cleaned);
+    const lines = distributeHeadlineWords(words, blockCount);
+    const next = copyFromLines(lines);
+    editVersions.current[activeLang] =
+      (editVersions.current[activeLang] ?? 0) + 1;
+    dirtyCopyLanguages.current.add(activeLang);
+    setVariantCopy((previous) => ({ ...previous, [activeLang]: next }));
+    const update = (layout: ThumbnailElement[]) =>
+      arrangeTextHitboxes(layout, lines);
+    setElements(update);
+    if (layoutsRef.current[activeLang])
+      layoutsRef.current[activeLang] = update(layoutsRef.current[activeLang]!);
+    setBundle((previous) =>
+      previous
+        ? {
+            ...previous,
+            variants: previous.variants.map((variant) =>
+              CODE_TO_LANG_NAME[variant.language] === activeLang
+                ? { ...variant, approved: false }
+                : variant,
+            ),
+          }
+        : previous,
+    );
+    setSelectedId(blockCount === 1 ? "text-top" : null);
+  }
+
   function selectPersona(language: string, url: string) {
+    if (savingApproval) return;
     layoutsRef.current[activeLang] = elements.map((element) => ({
       ...element,
     }));
@@ -1102,17 +2361,75 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         ? elements
         : languageLayout(language, layoutsRef.current["English"] ?? elements);
     const next = source.map((element) =>
-      element.id === "person-1" ? { ...element, url } : { ...element },
+      element.id === "person-1"
+        ? { ...element, url, tightBounds: true }
+        : { ...element },
     );
     layoutsRef.current[language] = next;
     setElements(next);
+    markLayoutsDirty([language]);
     setSelectedId("person-1");
     setActiveLang(language);
   }
 
   // ── mutation helpers ──
+  function markLayoutsDirty(languages: string[]) {
+    // Delayed image sampling must not replace edits made while it was loading.
+    styleRequest.current++;
+    languages.forEach((language) => {
+      dirtyCopyLanguages.current.add(language);
+      editVersions.current[language] =
+        (editVersions.current[language] ?? 0) + 1;
+    });
+    setBundle((previous) =>
+      previous
+        ? {
+            ...previous,
+            variants: previous.variants.map((variant) =>
+              languages.includes(CODE_TO_LANG_NAME[variant.language] ?? "")
+                ? { ...variant, approved: false }
+                : variant,
+            ),
+          }
+        : previous,
+    );
+  }
+
+  function editLayout(
+    update: (previous: ThumbnailElement[]) => ThumbnailElement[],
+  ) {
+    if (savingApproval) return;
+    const next = update(elements);
+    const changed = [activeLang];
+    if (!localeOverrides[activeLang]) {
+      for (const language of availableLanguages) {
+        if (language === activeLang || localeOverrides[language]) continue;
+        if (
+          bundle?.variants.find(
+            (variant) => CODE_TO_LANG_NAME[variant.language] === language,
+          )?.approved
+        )
+          continue;
+        const localized = languageLayout(
+          language,
+          layoutsRef.current.English ?? elements,
+        );
+        layoutsRef.current[language] = inheritThumbnailLayout(next, localized);
+        changed.push(language);
+      }
+    }
+    layoutsRef.current[activeLang] = next;
+    setElements(next);
+    markLayoutsDirty(changed);
+  }
+
   function patchElement(id: string, patch: Partial<ThumbnailElement>) {
-    setElements((prev) =>
+    const textKey = textLineKey(id);
+    if (textKey && patch.text !== undefined) {
+      editHeadline(activeLang, textKey, patch.text);
+      return;
+    }
+    editLayout((prev) =>
       prev.map((el) => (el.id === id ? { ...el, ...patch } : el)),
     );
   }
@@ -1140,22 +2457,43 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop, { once: true });
+    window.addEventListener("pointercancel", stop, { once: true });
   }
 
-  function handleAddAsset(type: ElementType, url: string) {
-    if (type === "BACKGROUND") {
-      setElements((prev) =>
-        prev.map((el) =>
-          el.type === "BACKGROUND" ? { ...el, url, css: undefined } : el,
+  async function handleAddAsset(type: ElementType, url: string) {
+    const replaceLogo =
+      type === "LOGO"
+        ? selectedElement?.type === "LOGO"
+          ? selectedElement
+          : elements.find((layer) => layer.type === "LOGO")
+        : null;
+    if (replaceLogo) {
+      editLayout((previous) =>
+        previous.map((layer) =>
+          layer.id === replaceLogo.id
+            ? { ...layer, url, autoLogo: false, tightBounds: true }
+            : layer,
         ),
+      );
+      setSelectedId(replaceLogo.id);
+      return;
+    }
+    if (type === "BACKGROUND") {
+      await applyBackground(
+        DEFAULT_BGS.find((bg) => bg.url === url) ?? {
+          name: "Selected background",
+          url,
+          backgroundTone: "auto",
+        },
       );
       return;
     }
     const newEl: ThumbnailElement = {
-      id: `el_${Date.now()}`,
+      id: nextLayerId(),
       type,
       url,
       x: 220,
@@ -1164,61 +2502,118 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       height: type === "LOGO" ? 140 : type === "PERSON" ? 440 : 100,
       zIndex: elements.length + 1,
       rotation: 0,
+      shadow: true,
+      tightBounds: true,
     };
-    setElements((prev) => [...prev, newEl]);
+    editLayout((prev) => [...prev, newEl]);
     setSelectedId(newEl.id);
   }
 
-  function applyBackground(bg: BgOption) {
-    setElements((prev) =>
-      prev.map((el) =>
-        el.type === "BACKGROUND" ? { ...el, url: bg.url, css: bg.css } : el,
-      ),
-    );
+  async function applyBackground(bg: BgOption) {
+    const request = ++styleRequest.current;
+    const color =
+      backgroundToneColor(bg.backgroundTone) ??
+      (await sampleBackgroundColor(bg.url, bg.css));
+    if (
+      request !== styleRequest.current ||
+      currentEditorLanguage.current !== activeLang
+    )
+      return;
+    editLayout((prev) => {
+      const layers = prev.some((el) => el.type === "BACKGROUND")
+        ? prev
+        : [
+            {
+              id: nextLayerId(),
+              type: "BACKGROUND" as const,
+              x: 0,
+              y: 0,
+              width: canvasWidth,
+              height: canvasHeight,
+              zIndex: 0,
+            },
+            ...prev,
+          ];
+      return layers.map((el) =>
+        el.type === "BACKGROUND"
+          ? {
+              ...el,
+              url: bg.url,
+              css: bg.css,
+              backgroundTone: bg.backgroundTone ?? "auto",
+            }
+          : el.type === "TEXT" && el.autoColor && color
+            ? {
+                ...el,
+                color,
+                strokeColor: "#000000",
+                strokeWidth: Math.max(5, el.strokeWidth ?? 5),
+              }
+            : el,
+      );
+    });
+    if (!color)
+      toast.info(
+        "Background applied. Automatic color could not be sampled; check headline contrast.",
+      );
   }
 
-  function applyReferenceLayout(preset: ReferenceLayoutPreset) {
-    setElements((previous) => applyPresetPatches(previous, preset));
+  async function applyReferenceLayout(preset: ReferenceLayoutPreset) {
+    const request = ++styleRequest.current;
+    const bg = elements.find((layer) => layer.type === "BACKGROUND");
+    const color =
+      backgroundToneColor(bg?.backgroundTone) ??
+      (await sampleBackgroundColor(bg?.url, bg?.css));
+    if (
+      request !== styleRequest.current ||
+      currentEditorLanguage.current !== activeLang
+    )
+      return;
+    editLayout((previous) => {
+      const patched = applyPresetPatches(previous, preset).map((el) =>
+        el.type === "TEXT" && el.autoColor && color
+          ? {
+              ...el,
+              color,
+              strokeColor: "#000000",
+              strokeWidth: Math.max(5, el.strokeWidth ?? 5),
+            }
+          : el,
+      );
+      const lines = copyLines(variantCopy[activeLang]).filter(Boolean);
+      return pointArrowAtLogo(arrangeTextHitboxes(patched, lines));
+    });
     setSelectedId(null);
   }
 
   function handleAddTextElement() {
-    const newText: ThumbnailElement = {
-      id: `text_${Date.now()}`,
-      type: "TEXT",
-      text: "NEW TEXT",
-      x: 350,
-      y: 200,
-      width: 380,
-      height: 70,
-      zIndex: elements.length + 1,
-      fontFamily: THUMBNAIL_FONT,
-      fontSize: 56,
-      color: "#ffffff",
-      strokeColor: "#000000",
-      strokeWidth: 6,
-      fontWeight: "900",
-      fontStyle: "normal",
-      rotation: 0,
-    };
-    setElements((prev) => [...prev, newText]);
-    setSelectedId(newText.id);
+    const count = orderedTextLayers(elements).length;
+    if (count >= 4) {
+      toast.error("A thumbnail can contain at most four headline hitboxes.");
+      return;
+    }
+    const words = copyLines(variantCopy[activeLang]).flatMap(copyWords);
+    if (words.length <= count) {
+      toast.info("Add another word before creating another headline hitbox.");
+      return;
+    }
+    arrangeHeadline(Math.min(4, count + 1) as 1 | 2 | 3 | 4);
   }
 
   function handleDuplicate(el: ThumbnailElement) {
     const dupe: ThumbnailElement = {
       ...el,
-      id: `el_${Date.now()}`,
+      id: nextLayerId(),
       x: el.x + 20,
       y: el.y + 20,
       zIndex: elements.length + 1,
     };
-    setElements((prev) => [...prev, dupe]);
+    editLayout((prev) => [...prev, dupe]);
     setSelectedId(dupe.id);
   }
 
   function handleMoveLayer(id: string, direction: "up" | "down") {
-    setElements((prev) => {
+    editLayout((prev) => {
       const idx = prev.findIndex((e) => e.id === id);
       if (idx < 0) return prev;
       const targetIdx = direction === "up" ? idx + 1 : idx - 1;
@@ -1232,8 +2627,27 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
   }
 
   function handleDeleteLayer(id: string) {
-    setElements((prev) => prev.filter((el) => el.id !== id));
+    editLayout((prev) => prev.filter((el) => el.id !== id));
     if (selectedId === id) setSelectedId(null);
+  }
+
+  function addShape(kind: "circle" | "rounded" | "rectangle" = "rounded") {
+    const square = kind === "circle";
+    const shape: ThumbnailElement = {
+      id: nextLayerId(),
+      type: "SHAPE",
+      x: 160,
+      y: 180,
+      width: square ? 180 : 220,
+      height: square ? 180 : 128,
+      zIndex: Math.max(0, ...elements.map((layer) => layer.zIndex)) + 1,
+      bgColor: "#ffffff",
+      borderRadius:
+        kind === "circle" ? "50%" : kind === "rounded" ? "24px" : "0",
+      shadow: true,
+    };
+    editLayout((previous) => [...previous, shape]);
+    setSelectedId(shape.id);
   }
 
   async function handleUploadCustomAsset(
@@ -1246,6 +2660,8 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     const form = new FormData();
     form.append("file", file);
     form.append("category", category);
+    if (category === "LOGOS" && logoName.trim())
+      form.append("name", logoName.trim());
     try {
       const response = await fetch("/api/thumbnails/assets", {
         method: "POST",
@@ -1265,55 +2681,77 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           ? "BACKGROUND"
           : category === "PERSONAS"
             ? "PERSON"
-            : "LOGO",
+            : category === "SYMBOLS"
+              ? "SYMBOL"
+              : "LOGO",
         asset.url,
       );
       return;
     } catch (error) {
       alert(error instanceof Error ? error.message : String(error));
     }
-    /* Offline/local fallback keeps the editor usable if the asset service is
-       temporarily unavailable, without losing the operator's selection. */
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      const newAsset: CustomThumbnailAsset = {
-        id: `custom_${Date.now()}`,
-        name: file.name.replace(/\.[^/.]+$/, ""),
-        category,
-        url: dataUrl,
-        createdAt: new Date().toISOString(),
-      };
-      const next = [newAsset, ...readCustomAssets()];
-      writeCustomAssets(next);
-      setCustomAssets(next);
-      handleAddAsset(
-        category === "BGS"
-          ? "BACKGROUND"
-          : category === "PERSONAS"
-            ? "PERSON"
-            : "LOGO",
-        dataUrl,
-      );
-    };
-    reader.readAsDataURL(file);
   }
 
-  async function handleDeleteCustomAsset(id: string) {
-    if (!id.startsWith("custom_")) {
-      const response = await fetch(
-        `/api/thumbnails/assets?id=${encodeURIComponent(id)}`,
-        { method: "DELETE" },
-      );
-      if (!response.ok) {
-        alert("Could not delete the shared asset");
-        return;
-      }
-    }
-    const next = readCustomAssets().filter((a) => a.id !== id);
-    writeCustomAssets(next);
-    setCustomAssets((previous) => previous.filter((asset) => asset.id !== id));
+  async function updateAssetPreference(
+    assetKey: string,
+    patch: { hidden?: boolean; includeInRotation?: boolean },
+  ) {
+    const response = await fetch("/api/thumbnails/assets", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assetKey, ...patch }),
+    });
+    const result = await response.json();
+    if (!response.ok)
+      throw new Error(result.error ?? "Preference could not be saved");
+    setAssetPreferences((previous) => ({
+      ...previous,
+      [assetKey]: { ...previous[assetKey], ...patch },
+    }));
   }
+
+  const catalogAssets: CollectionAsset[] = [
+    ...customAssets.map((asset) => ({
+      key: asset.id,
+      name: asset.name,
+      category: asset.category,
+      url: asset.url,
+    })),
+    ...ALL_APP_LOGOS.map((name) => ({
+      key: `/app_logos_png/${name}`,
+      name: name.replace(/\.png$/i, "").replace(/[-_]/g, " "),
+      category: "LOGOS",
+      url: `/app_logos_png/${name}`,
+    })),
+    ...ALL_SYMBOLS.map((name) => ({
+      key: `/bulk_symbols_110_colored/${name}`,
+      name: name.replace(/\.png$/i, "").replace(/[-_]/g, " "),
+      category: "SYMBOLS",
+      url: `/bulk_symbols_110_colored/${name}`,
+    })),
+    ...DEFAULT_BGS.filter((bg) => bg.url).map((bg) => ({
+      key: bg.url!,
+      name: bg.name,
+      category: "BGS",
+      url: bg.url!,
+    })),
+    ...PERSONA_LANG_ORDER.flatMap((language) =>
+      (DEFAULT_PERSONAS[language] ?? []).map((persona) => ({
+        key: persona.url,
+        name: `${language} · ${persona.name}`,
+        category: "PERSONAS",
+        url: persona.url,
+        language,
+      })),
+    ),
+  ].filter(
+    (asset) =>
+      (activeTab === "CUSTOM"
+        ? customAssets.some((item) => item.id === asset.key)
+        : asset.category === activeTab) &&
+      (!searchQuery ||
+        asset.name.toLowerCase().includes(searchQuery.toLowerCase())),
+  );
 
   // ── exporters ──
   async function handleExportPNG() {
@@ -1321,8 +2759,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     setIsExporting(true);
     setSelectedId(null);
     try {
-      await new Promise((r) => setTimeout(r, 200));
-      const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
+      const { blob } = await captureCanvas(elements);
       if (blob) {
         saveAs(
           blob,
@@ -1343,16 +2780,14 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     if (!canvasRef.current) return;
     if (bundle && !bundle.ready) {
       alert(
-        "The five-language bundle is incomplete. Resolve the listed video, metadata, or localized-copy blockers before exporting.",
+        "The thumbnail drafts are incomplete. Resolve the listed language or localized-copy blockers before exporting.",
       );
       return;
     }
     setIsBatchExporting(true);
     setSelectedId(null);
     // Snapshot the current headline text so we can restore it afterwards.
-    const originalTop = elements.find((el) => el.id === "text-top")?.text;
-    const originalBottom = elements.find((el) => el.id === "text-bottom")?.text;
-    const originalPerson = elements.find((el) => el.id === "person-1")?.url;
+    const originalElements = elements.map((element) => ({ ...element }));
     layoutsRef.current[activeLang] = elements.map((element) => ({
       ...element,
     }));
@@ -1361,10 +2796,7 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       const zip = new JSZip();
       for (const lang of availableLanguages) {
         const layout = languageLayout(lang, englishSource);
-        setElements(layout);
-        // let React flush the text swap before capturing
-        await new Promise((r) => setTimeout(r, 250));
-        const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
+        const { blob } = await captureCanvas(layout);
         if (blob) {
           const folder = zip.folder(lang.toLowerCase());
           folder?.file(`thumbnail_${lang.toLowerCase()}.png`, blob);
@@ -1382,29 +2814,104 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
           (err instanceof Error ? err.message : String(err)),
       );
     } finally {
-      // restore the pre-batch headline text
-      setElements((prev) =>
-        prev.map((el) => {
-          if (el.id === "text-top" && originalTop !== undefined)
-            return { ...el, text: originalTop };
-          if (el.id === "text-bottom" && originalBottom !== undefined)
-            return { ...el, text: originalBottom };
-          if (el.id === "person-1" && originalPerson)
-            return { ...el, url: originalPerson };
-          return el;
-        }),
-      );
+      setElements(originalElements);
       setIsBatchExporting(false);
     }
   }
 
-  async function captureCanvas(): Promise<Blob> {
+  async function captureCanvas(
+    input: ThumbnailElement[],
+  ): Promise<{ blob: Blob; layout: ThumbnailElement[] }> {
     if (!canvasRef.current) throw new Error("Canvas is not ready");
-    setSelectedId(null);
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    const blob = await toBlob(canvasRef.current, { pixelRatio: 2.4 });
+    flushSync(() => {
+      setSelectedId(null);
+      setElements(input);
+    });
+    await prepareThumbnailExport(canvasRef.current);
+    const context = document.createElement("canvas").getContext("2d");
+    if (!context)
+      throw new Error("Text measurement is unavailable in this browser.");
+    const layout = input.map((element) => {
+      if (element.type !== "TEXT" || !element.text?.trim())
+        return { ...element };
+      const node = canvasRef.current!.querySelector<HTMLElement>(
+        `[data-thumbnail-text="${CSS.escape(element.id)}"]`,
+      );
+      if (!node)
+        throw new Error(
+          "A text layer is not rendered yet. Reopen the editor and retry.",
+        );
+      const style = getComputedStyle(node);
+      const renderedText =
+        style.textTransform === "uppercase"
+          ? element.text.toUpperCase()
+          : element.text;
+      const spacingRatio =
+        (parseFloat(style.letterSpacing) || 0) /
+        (parseFloat(style.fontSize) || 64);
+      const stroke = (element.strokeWidth ?? 8) * 2;
+      const horizontalPadding =
+        (parseFloat(style.paddingLeft) || 0) +
+        (parseFloat(style.paddingRight) || 0);
+      const verticalPadding =
+        (parseFloat(style.paddingTop) || 0) +
+        (parseFloat(style.paddingBottom) || 0);
+      const fontSize = fitThumbnailText(
+        {
+          width: element.width - stroke - horizontalPadding,
+          height: element.height - stroke - verticalPadding,
+          preferredSize:
+            element.autoFit === false
+              ? (element.fontSize ?? 64)
+              : automaticHeadlineCeiling(element.width, element.height),
+          minimumSize: (canvasWidth * 15) / 320,
+        },
+        (size) => {
+          // Canvas cannot resolve CSS var() font families. Use the renderer's
+          // computed font, casing and tracking so measurement matches the image.
+          context.font = `${style.fontStyle} ${style.fontWeight} ${size}px ${style.fontFamily}`;
+          const metrics = context.measureText(renderedText);
+          return {
+            width:
+              Math.max(
+                metrics.width,
+                (metrics.actualBoundingBoxLeft || 0) +
+                  (metrics.actualBoundingBoxRight || 0),
+              ) +
+              renderedText.length * spacingRatio * size,
+            height:
+              (metrics.actualBoundingBoxAscent || size) +
+              (metrics.actualBoundingBoxDescent || 0),
+          };
+        },
+      );
+      return { ...element, text: renderedText, fontSize };
+    });
+    flushSync(() => {
+      setSelectedId(null);
+      setElements(layout);
+    });
+    await prepareThumbnailExport(canvasRef.current);
+    for (const node of canvasRef.current.querySelectorAll<HTMLElement>(
+      "[data-thumbnail-text]",
+    )) {
+      if (
+        node.scrollWidth > node.clientWidth + 1 ||
+        node.scrollHeight > node.clientHeight + 1
+      )
+        throw new Error(
+          "Text still overflows its box. Shorten the headline or enlarge the box before approval.",
+        );
+    }
+    // Workspace zoom is presentation only; exports always use logical canvas dimensions.
+    const blob = await toBlob(canvasRef.current, {
+      pixelRatio: 2.4,
+      width: canvasWidth,
+      height: canvasHeight,
+      style: { transform: "none", transformOrigin: "top left" },
+    });
     if (!blob) throw new Error("Could not render thumbnail");
-    return blob;
+    return { blob, layout };
   }
 
   async function saveVariantApproval(
@@ -1416,7 +2923,22 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
       throw new Error(`${variant.language}: language variant job is missing`);
     const body = new FormData();
     body.append("file", blob, `thumbnail-${variant.language}.png`);
-    body.append("layout", JSON.stringify({ aspectRatio, elements: layout }));
+    body.append(
+      "layout",
+      JSON.stringify({
+        aspectRatio,
+        elements: layout,
+        localeOverride:
+          localeOverrides[CODE_TO_LANG_NAME[variant.language] ?? ""] ?? false,
+      }),
+    );
+    const headlineLines = orderedTextLayers(layout)
+      .map((element) => element.text?.trim() ?? "")
+      .filter(Boolean);
+    body.append("top", headlineLines[0] ?? "");
+    body.append("bottom", headlineLines.slice(1).join(" "));
+    body.append("baseThumbnailId", variant.thumbnailId ?? "");
+    body.append("draftRevision", String(variant.draftRevision ?? 0));
     const response = await fetch(
       `/api/production/jobs/${variant.id}/thumbnail/manual`,
       { method: "POST", body },
@@ -1428,10 +2950,97 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         : "";
       throw new Error(`${failure?.error ?? "Save failed"}${reasons}`);
     }
+    return (await response.json()) as { thumbnailId: string };
+  }
+
+  async function saveDrafts() {
+    if (!bundle || savingDraft) return;
+    layoutsRef.current[activeLang] = elements.map((layer) => ({ ...layer }));
+    const changed = bundle.variants.filter((variant) =>
+      dirtyCopyLanguages.current.has(CODE_TO_LANG_NAME[variant.language] ?? ""),
+    );
+    const requested = changed.length
+      ? changed
+      : bundle.variants.filter(
+          (variant) => CODE_TO_LANG_NAME[variant.language] === activeLang,
+        );
+    const targets = requested.filter((variant) => variant.id);
+    if (!targets.length) {
+      toast.error("Prepare this language draft before saving its layout.");
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      for (const variant of targets) {
+        const language = CODE_TO_LANG_NAME[variant.language] ?? activeLang;
+        const layout = {
+          aspectRatio,
+          elements: languageLayout(
+            language,
+            layoutsRef.current.English ?? elements,
+          ),
+          localeOverride: localeOverrides[language] ?? false,
+        };
+        const savedEditVersion = editVersions.current[language] ?? 0;
+        const response = await fetch(
+          `/api/production/jobs/${variant.id}/thumbnail/draft`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              layout,
+              revision: variant.draftRevision ?? 0,
+              baseThumbnailId: variant.thumbnailId ?? null,
+            }),
+          },
+        );
+        const result = await response.json();
+        if (!response.ok)
+          throw new Error(
+            `${language}: ${result.error ?? "Draft save failed"}`,
+          );
+        if ((editVersions.current[language] ?? 0) === savedEditVersion)
+          dirtyCopyLanguages.current.delete(language);
+        setBundle((previous) =>
+          previous
+            ? {
+                ...previous,
+                variants: previous.variants.map((item) =>
+                  item.id === variant.id
+                    ? {
+                        ...item,
+                        draftRevision: result.revision,
+                        draftLayout: layout,
+                        approved: false,
+                      }
+                    : item,
+                ),
+              }
+            : previous,
+        );
+      }
+      toast.success(
+        "Draft layouts saved. Approved images and delivery remain unchanged.",
+      );
+      if (requested.length !== targets.length)
+        toast.warning(
+          "Unprepared languages remain unsaved. Prepare those language drafts before leaving the editor.",
+        );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingDraft(false);
+    }
   }
 
   async function saveApproved(all: boolean) {
     if (!bundle) return;
+    if (aspectRatio !== "16:9") {
+      toast.error(
+        "Tutorial delivery requires a 16:9 thumbnail. Switch to 16:9 and check the layout before approving.",
+      );
+      return;
+    }
     setSavingApproval(true);
     layoutsRef.current[activeLang] = elements.map((element) => ({
       ...element,
@@ -1440,15 +3049,19 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     const englishSource = layoutsRef.current.English ?? elements;
     try {
       const variants = all
-        ? bundle.variants
+        ? bundle.variants.filter(
+            (variant) =>
+              !variant.approved ||
+              dirtyCopyLanguages.current.has(
+                CODE_TO_LANG_NAME[variant.language] ?? "",
+              ),
+          )
         : bundle.variants.filter(
             (variant) =>
               (CODE_TO_LANG_NAME[variant.language.toLowerCase()] ??
                 "English") === activeLang,
           );
-      const blocked = variants.filter(
-        (variant) => !variant.id || !variant.ready,
-      );
+      const blocked = variants.filter((variant) => !variant.id);
       if (blocked.length > 0) {
         throw new Error(
           blocked
@@ -1468,13 +3081,45 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
         const language =
           CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
         const layout = languageLayout(language, englishSource);
-        setElements(layout);
-        setActiveLang(language);
-        await new Promise((resolve) => setTimeout(resolve, 180));
-        rendered.push({ variant, blob: await captureCanvas(), layout });
+        const copyError = validateProceduralHeadlines(layout);
+        if (copyError) throw new Error(`${language}: ${copyError}`);
+        flushSync(() => {
+          setElements(layout);
+          setActiveLang(language);
+        });
+        rendered.push({ variant, ...(await captureCanvas(layout)) });
       }
       for (const item of rendered) {
-        await saveVariantApproval(item.variant, item.blob, item.layout);
+        const saved = await saveVariantApproval(
+          item.variant,
+          item.blob,
+          item.layout,
+        );
+        layoutsRef.current[CODE_TO_LANG_NAME[item.variant.language] ?? ""] =
+          item.layout;
+        setBundle((current) =>
+          current
+            ? {
+                ...current,
+                variants: current.variants.map((variant) =>
+                  variant.id === item.variant.id
+                    ? {
+                        ...variant,
+                        thumbnailId: saved.thumbnailId,
+                        layout: { aspectRatio, elements: item.layout },
+                        draftLayout: null,
+                        draftRevision: 0,
+                        approved: true,
+                        savedApproved: true,
+                      }
+                    : variant,
+                ),
+              }
+            : current,
+        );
+        dirtyCopyLanguages.current.delete(
+          CODE_TO_LANG_NAME[item.variant.language] ?? "",
+        );
       }
       const savedIds = new Set(rendered.map((item) => item.variant.id));
       setBundle((current) =>
@@ -1489,13 +3134,42 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
             }
           : current,
       );
-      alert(
+      toast.success(
         all
           ? "All video thumbnails were saved and approved."
           : `${originalLanguage} thumbnail was saved and approved.`,
       );
+      if (
+        bundle.variants.every(
+          (variant) => variant.approved || savedIds.has(variant.id),
+        )
+      ) {
+        const response = await fetch(
+          "/api/production/tutorial-translate/enqueue",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceJobId: bundle.rootId,
+              mode: "automatic",
+              languages: bundle.variants
+                .map((variant) => variant.language)
+                .filter((language) => language !== "en"),
+            }),
+          },
+        );
+        const result = await response.json().catch(() => null);
+        if (!response.ok)
+          toast.warning(
+            `Thumbnails are saved. Localization needs attention: ${result?.error ?? "queue unavailable"}. Retry from Languages; do not recreate the thumbnails.`,
+          );
+        else
+          toast.success(
+            "Thumbnail pack approved. Localization is queued or already in progress.",
+          );
+      }
     } catch (error) {
-      alert(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : String(error));
     } finally {
       setElements(languageLayout(originalLanguage, englishSource));
       setActiveLang(originalLanguage);
@@ -1503,16 +3177,101 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     }
   }
 
+  async function approveSelectedImage(all: boolean) {
+    if (!bundle || savingApproval) return;
+    const targets = bundle.variants.filter((variant) => {
+      const language =
+        CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? variant.language;
+      return Boolean(
+        variant.thumbnailId &&
+        reviewingSelectedLanguages.has(language) &&
+        (all || language === activeLang),
+      );
+    });
+    if (!targets.length) {
+      toast.error("No rendered thumbnail is selected for this language.");
+      return;
+    }
+    setSavingApproval(true);
+    try {
+      const response = await fetch("/api/thumbnails/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thumbnailIds: targets.map((variant) => variant.thumbnailId),
+        }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(
+          result?.error ?? "Could not approve the selected thumbnail",
+        );
+      const approvedIds = new Set(targets.map((variant) => variant.id));
+      setBundle((current) =>
+        current
+          ? {
+              ...current,
+              variants: current.variants.map((variant) =>
+                approvedIds.has(variant.id)
+                  ? { ...variant, approved: true, savedApproved: true }
+                  : variant,
+              ),
+            }
+          : current,
+      );
+
+      // English is the master. Its approval is the explicit signal to create
+      // configured locale variants; the operator never has to approve fake
+      // reconstructions first.
+      if (targets.some((variant) => variant.language.toLowerCase() === "en")) {
+        const localization = await fetch(
+          "/api/production/tutorial-translate/enqueue",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceJobId: bundle.rootId,
+              mode: "automatic",
+              languages: bundle.variants
+                .map((variant) => variant.language)
+                .filter((language) => language.toLowerCase() !== "en"),
+            }),
+          },
+        );
+        const localizationResult = await localization.json().catch(() => null);
+        if (!localization.ok)
+          toast.warning(
+            `English is approved. Localization needs attention: ${localizationResult?.error ?? "queue unavailable"}.`,
+          );
+        else
+          toast.success(
+            "Exact English thumbnail approved. Configured language variants are queued.",
+          );
+      } else {
+        toast.success(
+          all
+            ? "Exact rendered thumbnails approved."
+            : `Exact ${activeLang} thumbnail approved.`,
+        );
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingApproval(false);
+    }
+  }
+
   // ── shared inline style tokens ──
   const panelBtn = (active: boolean): React.CSSProperties => ({
-    padding: "6px 10px",
+    padding: "9px 12px",
+    minHeight: 40,
     borderRadius: 6,
     border: active
       ? "1px solid var(--v2-accent)"
-      : "1px solid rgba(255,255,255,0.12)",
+      : "1px solid var(--v2-border-2)",
     background: active ? "rgba(var(--v2-accent-rgb), 0.14)" : "transparent",
     color: active ? "var(--v2-accent)" : TEXT_2,
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: 700,
     cursor: "pointer",
   });
@@ -1521,1749 +3280,2170 @@ export function Composer({ jobId = null }: { jobId?: string | null }) {
     width: "100%",
     padding: "7px 9px",
     borderRadius: 6,
-    background: "rgba(0,0,0,0.28)",
-    border: "1px solid rgba(255,255,255,0.14)",
+    background: "var(--v2-surface-2)",
+    border: "1px solid var(--v2-border-2)",
     color: TEXT_1,
     fontSize: 12,
-    outline: "none",
   };
 
+  if (jobId && !bundle)
+    return (
+      <div role={bundleLoadError ? "alert" : "status"} style={{ padding: 24 }}>
+        {bundleLoadError ?? "Loading your saved thumbnail pack…"}
+        {bundleLoadError && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{ marginLeft: 12 }}
+          >
+            Retry loading
+          </button>
+        )}
+      </div>
+    );
+
   return (
-    <div>
-      {bundle && (
-        <GlassCard style={{ padding: 14, marginBottom: 14 }}>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 800,
-              color: "var(--v2-accent)",
-              letterSpacing: "0.08em",
-            }}
-          >
-            THUMBNAILS FOR THIS VIDEO
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(420px, 1.35fr) minmax(300px, 1fr)",
-              gap: 18,
-              marginTop: 10,
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  color: TEXT_2,
-                  marginBottom: 7,
-                }}
-              >
-                VIDEO YOU ARE WORKING ON · {activeLang.toUpperCase()}
-              </div>
-              {activeVariant && (
-                <>
-                  {activeVariant.videoUrl ? (
-                    <video
-                      key={activeVariant.id}
-                      controls
-                      preload="metadata"
-                      src={activeVariant.videoUrl}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        maxHeight: 330,
-                        background: "#000",
-                        borderRadius: 9,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        padding: 18,
-                        borderRadius: 9,
-                        background: "rgba(255,90,90,.09)",
-                        color: "#ffabab",
-                        fontSize: 12,
-                      }}
-                    >
-                      Localized video is missing.
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      marginTop: 8,
-                      fontSize: 13,
-                      color: TEXT_1,
-                      fontWeight: 750,
-                    }}
-                  >
-                    {activeVariant.title ?? "Localized title missing"}
-                  </div>
-                  {!activeVariant.ready && (
-                    <div
-                      style={{ marginTop: 6, color: "#ffabab", fontSize: 11 }}
-                    >
-                      {activeVariant.reasons.join(" · ")}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 800,
-                  color: TEXT_2,
-                  letterSpacing: ".08em",
-                }}
-              >
-                WORKFLOW
-              </div>
-              {[
-                "1  Watch the video",
-                "2  Adjust the layout and check every language",
-                "3  Approve the finished thumbnails",
-              ].map((step) => (
-                <div
-                  key={step}
-                  style={{
-                    padding: "9px 11px",
-                    borderRadius: 7,
-                    background: "rgba(255,255,255,.045)",
-                    color: TEXT_1,
-                    fontSize: 11,
-                  }}
-                >
-                  {step}
-                </div>
-              ))}
-              <button
-                type="button"
-                disabled={
-                  savingApproval || !activeVariant?.ready || !activeVariant.id
-                }
-                onClick={() => void saveApproved(false)}
-                style={{
-                  ...panelBtn(true),
-                  padding: "11px 14px",
-                  marginTop: 4,
-                  background: "var(--v2-accent)",
-                  color: "#071000",
-                  fontSize: 12,
-                }}
-              >
-                {activeVariant?.approved
-                  ? `${activeLang} approved · Save changes`
-                  : `Approve ${activeLang} thumbnail`}
-              </button>
-              <button
-                type="button"
-                disabled={savingApproval || !bundle.ready}
-                onClick={() => void saveApproved(true)}
-                style={{
-                  ...panelBtn(false),
-                  padding: "10px 14px",
-                  fontSize: 12,
-                }}
-              >
-                Approve all {bundle.variants.length} language thumbnails
-              </button>
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              overflowX: "auto",
-              marginTop: 9,
-            }}
-          >
-            {bundle.variants.map((variant) => {
-              const language =
-                CODE_TO_LANG_NAME[variant.language.toLowerCase()] ?? "English";
-              return (
-                <button
-                  type="button"
-                  onClick={() => switchLanguage(language)}
-                  key={variant.language}
-                  style={{
-                    minWidth: 220,
-                    padding: 9,
-                    borderRadius: 8,
-                    border:
-                      language === activeLang
-                        ? "1px solid var(--v2-accent)"
-                        : "1px solid rgba(255,255,255,.1)",
-                    background:
-                      language === activeLang
-                        ? "rgba(var(--v2-accent-rgb),.08)"
-                        : "transparent",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: TEXT_1, fontWeight: 700 }}>
-                    {variant.language.toUpperCase()} ·{" "}
-                    {variant.title ?? "Variant missing"}
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      marginTop: 6,
-                      fontSize: 10,
-                    }}
-                  >
-                    {variant.videoUrl && (
-                      <a
-                        href={variant.videoUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: "var(--v2-accent)" }}
-                      >
-                        Watch video
-                      </a>
-                    )}
-                    <span
-                      style={{
-                        color: variant.ready
-                          ? variant.approved
-                            ? "#82e6aa"
-                            : TEXT_2
-                          : "#ffabab",
-                      }}
-                    >
-                      {variant.ready
-                        ? variant.approved
-                          ? "Approved"
-                          : "Needs approval"
-                        : variant.reasons.join(" · ")}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </GlassCard>
-      )}
-      {/* Toolbar */}
-      <GlassCard
-        style={{
-          padding: 12,
-          marginBottom: 14,
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 12,
-          justifyContent: "space-between",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
-          {/* Aspect toggle */}
-          <div
-            style={{
-              display: "inline-flex",
-              padding: 3,
-              borderRadius: 8,
-              background: "rgba(0,0,0,0.3)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              gap: 3,
-            }}
-          >
-            {(["16:9", "9:16"] as const).map((ar) => {
-              const on = aspectRatio === ar;
-              return (
-                <button
-                  key={ar}
-                  type="button"
-                  onClick={() => setAspectRatio(ar)}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: on ? "var(--v2-accent)" : "transparent",
-                    color: on ? "#0b0b0f" : TEXT_2,
-                    fontSize: 11,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
-                >
-                  {ar === "16:9" ? "16:9 HD" : "9:16 Shorts"}
-                </button>
-              );
-            })}
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: TEXT_1 }}>
-              Manual Composer
-            </div>
-            <div style={{ fontSize: 10.5, color: TEXT_2 }}>
-              Adjust this video’s thumbnail, check its available languages, then
-              approve delivery.
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <button
-            type="button"
-            disabled={isExporting || isBatchExporting}
-            onClick={handleExportPNG}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "1px solid rgba(var(--v2-accent-rgb), 0.4)",
-              background: "rgba(var(--v2-accent-rgb), 0.12)",
-              color: "var(--v2-accent)",
-              fontSize: 11.5,
-              fontWeight: 700,
-              cursor:
-                isExporting || isBatchExporting ? "not-allowed" : "pointer",
-              opacity: isExporting || isBatchExporting ? 0.5 : 1,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              download
-            </span>
-            {isExporting ? "Exporting…" : "Download current PNG"}
+    <div className={workspace.editor}>
+      <header className={workspace.compactHeader}>
+        {onBack && (
+          <button type="button" onClick={onBack} style={panelBtn(false)}>
+            ← Matrix
           </button>
-          <button
-            type="button"
-            disabled={
-              isBatchExporting ||
-              isExporting ||
-              Boolean(bundle && !bundle.ready)
-            }
-            onClick={handleBatchExportZip}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "none",
-              background: "var(--v2-accent)",
-              color: "#0b0b0f",
-              fontSize: 11.5,
-              fontWeight: 800,
-              cursor:
-                isBatchExporting ||
-                isExporting ||
-                Boolean(bundle && !bundle.ready)
-                  ? "not-allowed"
-                  : "pointer",
-              opacity:
-                isBatchExporting ||
-                isExporting ||
-                Boolean(bundle && !bundle.ready)
-                  ? 0.6
-                  : 1,
-            }}
+        )}
+        <div className={workspace.titleBlock}>
+          <h1>{title || "Thumbnail editor"}</h1>
+          <span>
+            {bundle
+              ? `Current edits: ${bundle.variants.filter((variant) => variant.approved).length}/${bundle.variants.length} approved · Saved images: ${bundle.variants.filter((variant) => variant.savedApproved ?? variant.approved).length}/${bundle.variants.length} approved`
+              : "Manual thumbnail"}{" "}
+            · {activeLang}
+          </span>
+        </div>
+        <label className={workspace.languageSelect}>
+          Language
+          <select
+            aria-label="Editing language"
+            value={activeLang}
+            onChange={(event) => switchLanguage(event.target.value)}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              folder_zip
-            </span>
-            {isBatchExporting
-              ? "Packaging ZIP…"
-              : availableLanguages.length === 1
-                ? "Download ZIP"
-                : `Download all ${availableLanguages.length} (ZIP)`}
-          </button>
-        </div>
-      </GlassCard>
-
-      <GlassCard style={{ padding: 12 }}>
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 800,
-            color: TEXT_1,
-            marginBottom: 8,
-          }}
-        >
-          LOCALIZED TWO-LINE THUMBNAIL COPY
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(180px, 1fr))",
-            gap: 8,
-          }}
-        >
-          {availableLanguages.map((lang) => (
-            <label
-              key={lang}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "26px 1fr",
-                gap: 6,
-                alignItems: "center",
-                padding: 5,
-                borderRadius: 7,
-                border:
-                  activeLang === lang
-                    ? "1px solid var(--v2-accent)"
-                    : "1px solid transparent",
-              }}
-            >
-              <button
-                type="button"
-                title={`Edit ${lang}`}
-                onClick={() => switchLanguage(lang)}
-                style={{
-                  border: 0,
-                  background: "transparent",
-                  padding: 0,
-                  cursor: "pointer",
-                }}
-              >
-                <FlagIcon code={LANG_NAME_TO_CODE[lang] ?? "en"} />
-              </button>
-              <div style={{ display: "grid", gap: 5 }}>
-                <input
-                  value={variantCopy[lang]?.top ?? ""}
-                  readOnly
-                  onFocus={() => switchLanguage(lang)}
-                  aria-label={`${lang} thumbnail top line`}
-                  title={`${lang} top line`}
-                  style={inputStyle}
-                />
-                <input
-                  value={variantCopy[lang]?.bottom ?? ""}
-                  readOnly
-                  onFocus={() => switchLanguage(lang)}
-                  aria-label={`${lang} thumbnail bottom line`}
-                  title={`${lang} bottom line`}
-                  style={inputStyle}
-                />
-              </div>
-            </label>
-          ))}
-        </div>
-      </GlassCard>
-
-      {/* English is always the anchor column; localized versions extend to the
-          right and scroll as a single comparison row. This lets QA catch text
-          overflow before localized narration/video rendering begins. */}
-      <GlassCard style={{ padding: 12, marginTop: 14 }}>
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 800,
-            color: TEXT_1,
-            marginBottom: 9,
-          }}
-        >
-          ALL LANGUAGE THUMBNAILS · CLICK ONE TO EDIT
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridAutoFlow: "column",
-            gridAutoColumns: aspectRatio === "16:9" ? 300 : 190,
-            gap: 10,
-            overflowX: "auto",
-            paddingBottom: 7,
-          }}
-        >
-          {previewLayouts.map(({ language, elements: previewElements }) => (
+            {availableLanguages.map((language) => (
+              <option key={language} value={language}>
+                {language}
+                {bundle?.variants.find(
+                  (variant) => CODE_TO_LANG_NAME[variant.language] === language,
+                )?.approved
+                  ? " · Approved"
+                  : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {bundle && !showAi && (
+          <div className={workspace.compactActions}>
             <button
-              key={language}
               type="button"
-              onClick={() => switchLanguage(language)}
-              style={{
-                padding: 7,
-                borderRadius: 9,
-                border:
-                  activeLang === language
-                    ? "2px solid var(--v2-accent)"
-                    : "1px solid rgba(255,255,255,.12)",
-                background: "rgba(0,0,0,.22)",
-                cursor: "pointer",
-                textAlign: "left",
-              }}
+              disabled={
+                reviewingExactSelectedImage ||
+                savingApproval ||
+                savingDraft ||
+                !activeVariant?.id
+              }
+              onClick={() => void saveDrafts()}
+              style={panelBtn(false)}
             >
-              <div
-                style={{
-                  color: language === "English" ? "var(--v2-accent)" : TEXT_1,
-                  fontSize: 10,
-                  fontWeight: 850,
-                  marginBottom: 6,
-                }}
-              >
-                {language === "English"
-                  ? "ENGLISH · MASTER"
-                  : language.toUpperCase()}
-              </div>
-              <ThumbnailPreview
-                elements={previewElements}
-                portrait={aspectRatio === "9:16"}
-              />
+              {savingDraft ? "Saving…" : "Save draft"}
             </button>
-          ))}
-        </div>
-      </GlassCard>
-
-      {/* Main layout */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(300px, 380px) 1fr",
-          gap: 14,
-          alignItems: "start",
-        }}
-      >
-        {/* ── Left: asset library + layers ── */}
-        <GlassCard
-          style={{
-            padding: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            height: 660,
-          }}
-        >
-          {/* Category tabs */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
-              gap: 3,
-              padding: 3,
-              borderRadius: 8,
-              background: "rgba(0,0,0,0.3)",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-          >
-            {(
-              [
-                "PRESETS",
-                "CUSTOM",
-                "PERSONAS",
-                "LOGOS",
-                "SYMBOLS",
-                "BGS",
-                "LAYERS",
-              ] as const
-            ).map((tab) => {
-              const on = activeTab === tab;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActiveTab(tab)}
-                  style={{
-                    padding: "6px 2px",
-                    borderRadius: 5,
-                    border: "none",
-                    background: on
-                      ? "rgba(var(--v2-accent-rgb), 0.16)"
-                      : "transparent",
-                    color: on ? "var(--v2-accent)" : TEXT_2,
-                    fontSize: 8.5,
-                    fontWeight: 800,
-                    letterSpacing: "0.03em",
-                    cursor: "pointer",
-                  }}
-                >
-                  {tab}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Custom upload panel */}
-          {activeTab === "CUSTOM" && (
-            <div
+            <button
+              type="button"
+              disabled={savingApproval || savingDraft || !activeVariant?.id}
+              onClick={() =>
+                void (reviewingExactSelectedImage
+                  ? approveSelectedImage(false)
+                  : saveApproved(false))
+              }
               style={{
-                padding: 10,
-                borderRadius: 8,
-                background: "rgba(0,0,0,0.22)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
+                ...panelBtn(true),
+                background: "var(--v2-accent)",
+                color: "var(--v2-on-accent)",
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 800,
-                    letterSpacing: "0.04em",
-                    color: TEXT_1,
-                  }}
-                >
-                  CUSTOM BRAND UPLOAD
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAddTextElement}
-                  style={panelBtn(false)}
-                >
-                  + Add Text
-                </button>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <label
-                  style={{
-                    ...panelBtn(false),
-                    textAlign: "center",
-                    display: "inline-flex",
-                    justifyContent: "center",
-                    gap: 4,
-                  }}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 14 }}
-                  >
-                    upload
-                  </span>
-                  Face
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleUploadCustomAsset(e, "PERSONAS")}
-                  />
-                </label>
-                <label
-                  style={{
-                    ...panelBtn(false),
-                    textAlign: "center",
-                    display: "inline-flex",
-                    justifyContent: "center",
-                    gap: 4,
-                  }}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 14 }}
-                  >
-                    upload
-                  </span>
-                  Symbol
-                  <input
-                    type="file"
-                    accept="image/png,image/svg+xml,image/webp"
-                    style={{ display: "none" }}
-                    onChange={(e) => void handleUploadCustomAsset(e, "SYMBOLS")}
-                  />
-                </label>
-                <label
-                  style={{
-                    ...panelBtn(false),
-                    textAlign: "center",
-                    display: "inline-flex",
-                    justifyContent: "center",
-                    gap: 4,
-                  }}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 14 }}
-                  >
-                    upload
-                  </span>
-                  Background
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    style={{ display: "none" }}
-                    onChange={(e) => void handleUploadCustomAsset(e, "BGS")}
-                  />
-                </label>
-                <label
-                  style={{
-                    ...panelBtn(false),
-                    textAlign: "center",
-                    display: "inline-flex",
-                    justifyContent: "center",
-                    gap: 4,
-                  }}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 14 }}
-                  >
-                    upload
-                  </span>
-                  Logo
-                  <input
-                    type="file"
-                    accept="image/png,image/svg+xml,image/webp"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleUploadCustomAsset(e, "LOGOS")}
-                  />
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* Search box */}
-          {activeTab !== "LAYERS" && activeTab !== "PRESETS" && (
-            <div style={{ position: "relative" }}>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter assets…"
-                style={inputStyle}
-              />
-              <span
-                className="material-symbols-outlined"
-                style={{
-                  position: "absolute",
-                  right: 8,
-                  top: 7,
-                  fontSize: 16,
-                  color: TEXT_2,
-                  pointerEvents: "none",
-                }}
-              >
-                search
-              </span>
-            </div>
-          )}
-
-          {/* Content area */}
-          <div style={{ flex: 1, overflowY: "auto", paddingRight: 2 }}>
-            {activeTab === "PRESETS" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                <div
-                  style={{
-                    padding: "8px 9px",
-                    borderRadius: 7,
-                    background: "rgba(var(--v2-accent-rgb),.08)",
-                    color: TEXT_2,
-                    fontSize: 10.5,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  Approved archetype geometry, rebuilt as editable layers. Apply
-                  one, then fine-tune the person, copy and logo on the canvas.
-                </div>
-                {REFERENCE_LAYOUTS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => applyReferenceLayout(preset)}
-                    style={{
-                      padding: 8,
-                      borderRadius: 9,
-                      border: "1px solid rgba(255,255,255,.12)",
-                      background: "rgba(255,255,255,.035)",
-                      color: TEXT_1,
-                      cursor: "pointer",
-                      textAlign: "left",
-                    }}
-                  >
-                    <ThumbnailPreview
-                      elements={applyPresetPatches(elements, preset)}
-                      portrait={aspectRatio === "9:16"}
-                    />
-                    <div
-                      style={{ marginTop: 7, fontSize: 11, fontWeight: 850 }}
-                    >
-                      {preset.name}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 2,
-                        fontSize: 9.5,
-                        color: "var(--v2-accent)",
-                      }}
-                    >
-                      Based on {preset.references}
-                    </div>
-                    <div style={{ marginTop: 3, fontSize: 9.5, color: TEXT_2 }}>
-                      {preset.description}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Custom references */}
-            {activeTab === "CUSTOM" &&
-              (customAssets.length === 0 ? (
-                <div
-                  style={{
-                    textAlign: "center",
-                    padding: "40px 12px",
-                    color: TEXT_2,
-                    fontSize: 11.5,
-                  }}
-                >
-                  <p
-                    style={{
-                      fontWeight: 700,
-                      color: TEXT_1,
-                      margin: "0 0 4px",
-                    }}
-                  >
-                    No custom references uploaded.
-                  </p>
-                  <p style={{ margin: 0 }}>
-                    Upload persona faces or transparent logo PNGs above.
-                  </p>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: 8,
-                  }}
-                >
-                  {customAssets.map((asset) => (
-                    <div key={asset.id} style={{ position: "relative" }}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleAddAsset(
-                            asset.category === "BGS"
-                              ? "BACKGROUND"
-                              : asset.category === "PERSONAS"
-                                ? "PERSON"
-                                : asset.category === "SYMBOLS"
-                                  ? "SYMBOL"
-                                  : "LOGO",
-                            asset.url,
-                          )
-                        }
-                        style={{
-                          width: "100%",
-                          aspectRatio: "1 / 1",
-                          borderRadius: 8,
-                          background: "rgba(255,255,255,0.05)",
-                          border: "1px solid rgba(255,255,255,0.12)",
-                          padding: 4,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={asset.url}
-                          alt={asset.name}
-                          style={{
-                            maxHeight: "100%",
-                            maxWidth: "100%",
-                            objectFit: "contain",
-                          }}
-                        />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteCustomAsset(asset.id)}
-                        title="Delete asset"
-                        style={{
-                          position: "absolute",
-                          top: 3,
-                          right: 3,
-                          padding: 2,
-                          borderRadius: 4,
-                          border: "none",
-                          background: "rgba(0,0,0,0.75)",
-                          color: "#fff",
-                          cursor: "pointer",
-                          display: "inline-flex",
-                        }}
-                      >
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: 13 }}
-                        >
-                          delete
-                        </span>
-                      </button>
-                    </div>
-                  ))}
-                  {assetHasMore && (
-                    <button
-                      type="button"
-                      disabled={loadingAssets}
-                      onClick={() => void loadMoreAssets()}
-                      style={{
-                        ...panelBtn(false),
-                        gridColumn: "1 / -1",
-                        justifyContent: "center",
-                      }}
-                    >
-                      {loadingAssets ? "Loading…" : "Load more shared assets"}
-                    </button>
-                  )}
-                </div>
-              ))}
-
-            {/* Personas — grouped by language with a flag header. Search
-                filters host names across every language group. */}
-            {activeTab === "PERSONAS" && (
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 14 }}
-              >
-                {PERSONA_LANG_ORDER.map((lang) => {
-                  const hosts = (DEFAULT_PERSONAS[lang] ?? []).filter(
-                    (p) =>
-                      !searchQuery ||
-                      p.name
-                        .toLowerCase()
-                        .includes(searchQuery.toLowerCase()) ||
-                      lang.toLowerCase().includes(searchQuery.toLowerCase()),
-                  );
-                  if (hosts.length === 0) return null;
-                  return (
-                    <div
-                      key={lang}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          fontSize: 10.5,
-                          fontWeight: 800,
-                          letterSpacing: "0.03em",
-                          color: TEXT_1,
-                          borderBottom: "1px solid rgba(255,255,255,0.08)",
-                          paddingBottom: 4,
-                        }}
-                      >
-                        <FlagIcon code={LANG_NAME_TO_CODE[lang] ?? ""} />
-                        <span>{lang}</span>
-                        <span style={{ color: TEXT_2, fontWeight: 700 }}>
-                          ({hosts.length})
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(3, 1fr)",
-                          gap: 8,
-                        }}
-                      >
-                        {hosts.map((p, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            title={p.name}
-                            onClick={() => {
-                              selectPersona(lang, p.url);
-                            }}
-                            style={{
-                              aspectRatio: "1 / 1",
-                              borderRadius: 8,
-                              background: "rgba(255,255,255,0.05)",
-                              border: "1px solid rgba(255,255,255,0.12)",
-                              padding: 4,
-                              cursor: "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={p.url}
-                              alt={p.name}
-                              style={{
-                                maxHeight: "100%",
-                                maxWidth: "100%",
-                                objectFit: "contain",
-                              }}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Logos */}
-            {activeTab === "LOGOS" && (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(3, 1fr)",
-                  gap: 8,
-                }}
-              >
-                {filteredLogos.map((name, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() =>
-                      handleAddAsset("LOGO", `/app_logos_png/${name}`)
-                    }
-                    style={{
-                      aspectRatio: "1 / 1",
-                      borderRadius: 8,
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      padding: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 3,
-                    }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/app_logos_png/${name}`}
-                      alt={name}
-                      style={{ width: 30, height: 30, objectFit: "contain" }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 8,
-                        color: TEXT_2,
-                        width: "100%",
-                        textAlign: "center",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {name.replace(/\.png$/i, "").replace(/[-_]/g, " ")}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Symbols */}
-            {activeTab === "SYMBOLS" && (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(3, 1fr)",
-                  gap: 8,
-                }}
-              >
-                {filteredSymbols.map((sym, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() =>
-                      handleAddAsset(
-                        "SYMBOL",
-                        `/bulk_symbols_110_colored/${sym}`,
-                      )
-                    }
-                    style={{
-                      aspectRatio: "1 / 1",
-                      borderRadius: 8,
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      padding: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 3,
-                    }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/bulk_symbols_110_colored/${sym}`}
-                      alt={sym}
-                      style={{ width: 30, height: 30, objectFit: "contain" }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 8,
-                        color: TEXT_2,
-                        width: "100%",
-                        textAlign: "center",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {sym.replace(/\.png$/i, "").replace(/[-_]/g, " ")}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Backgrounds — image thumbnails + CSS gradient swatches */}
-            {activeTab === "BGS" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {DEFAULT_BGS.filter(
-                  (bg) =>
-                    !searchQuery ||
-                    bg.name.toLowerCase().includes(searchQuery.toLowerCase()),
-                ).map((bg, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => applyBackground(bg)}
-                    style={{
-                      position: "relative",
-                      aspectRatio: "16 / 9",
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      cursor: "pointer",
-                      padding: 0,
-                      // Gradient swatch renders directly on the button.
-                      background: bg.css || "rgba(255,255,255,0.05)",
-                    }}
-                  >
-                    {bg.url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={bg.url}
-                        alt={bg.name}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    )}
-                    <span
-                      style={{
-                        position: "absolute",
-                        bottom: 4,
-                        left: 6,
-                        fontSize: 9.5,
-                        fontWeight: 700,
-                        color: "#fff",
-                        background: "rgba(0,0,0,0.6)",
-                        padding: "2px 6px",
-                        borderRadius: 4,
-                      }}
-                    >
-                      {bg.name}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Layer tree */}
-            {activeTab === "LAYERS" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 800,
-                    letterSpacing: "0.04em",
-                    color: TEXT_2,
-                    padding: "0 2px",
-                  }}
-                >
-                  ACTIVE LAYERS ({elements.length})
-                </div>
-                {elements.map((el) => {
-                  const on = selectedId === el.id;
-                  return (
-                    <div
-                      key={el.id}
-                      onClick={() => setSelectedId(el.id)}
-                      style={{
-                        padding: 8,
-                        borderRadius: 8,
-                        border: on
-                          ? "1px solid var(--v2-accent)"
-                          : "1px solid rgba(255,255,255,0.1)",
-                        background: on
-                          ? "rgba(var(--v2-accent-rgb), 0.12)"
-                          : "rgba(255,255,255,0.03)",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          overflow: "hidden",
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 8,
-                            fontWeight: 800,
-                            padding: "1px 4px",
-                            borderRadius: 3,
-                            background: "rgba(255,255,255,0.08)",
-                            color: TEXT_2,
-                          }}
-                        >
-                          {el.type}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 11,
-                            color: TEXT_1,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {el.text || el.url?.split("/").pop() || el.id}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 2,
-                        }}
-                      >
-                        {(
-                          [
-                            {
-                              icon: "arrow_upward",
-                              fn: () => handleMoveLayer(el.id, "up"),
-                              title: "Up",
-                            },
-                            {
-                              icon: "arrow_downward",
-                              fn: () => handleMoveLayer(el.id, "down"),
-                              title: "Down",
-                            },
-                            {
-                              icon: "content_copy",
-                              fn: () => handleDuplicate(el),
-                              title: "Duplicate",
-                            },
-                            {
-                              icon: "delete",
-                              fn: () => handleDeleteLayer(el.id),
-                              title: "Delete",
-                            },
-                          ] as const
-                        ).map((a) => (
-                          <button
-                            key={a.icon}
-                            type="button"
-                            title={a.title}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              a.fn();
-                            }}
-                            style={{
-                              padding: 2,
-                              border: "none",
-                              background: "transparent",
-                              color: a.icon === "delete" ? "#ff9c9c" : TEXT_2,
-                              cursor: "pointer",
-                              display: "inline-flex",
-                            }}
-                          >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: 14 }}
-                            >
-                              {a.icon}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </GlassCard>
-
-        {/* ── Right: canvas + inspector ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <GlassCard
-            style={{
-              padding: 16,
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "center",
-              overflow: "auto",
-              minHeight: 500,
-            }}
-          >
-            {/* Scaling wrapper — reserves the on-screen (scaled) footprint so the
-                unscaled canvas below can be captured at full resolution. */}
-            <div
-              style={{
-                width: canvasWidth * displayScale,
-                height: canvasHeight * displayScale,
-              }}
+              {savingApproval
+                ? "Approving…"
+                : reviewingExactSelectedImage
+                  ? `Approve exact ${activeLang} image`
+                  : `Approve ${activeLang} replacement`}
+            </button>
+            <button
+              type="button"
+              disabled={
+                savingApproval || bundle.variants.some((variant) => !variant.id)
+              }
+              onClick={() =>
+                void (reviewingExactSelectedImage
+                  ? approveSelectedImage(true)
+                  : saveApproved(true))
+              }
+              style={panelBtn(false)}
             >
-              <div
-                ref={canvasRef}
+              {reviewingExactSelectedImage
+                ? "Approve rendered images"
+                : "Approve replacement pack"}
+            </button>
+          </div>
+        )}
+      </header>
+      <div className={workspace.utilities}>
+        <details className={workspace.reference}>
+          <summary>Reference video</summary>
+          <div className={workspace.referenceBody}>
+            {activeVariant?.videoUrl ? (
+              <video
+                key={activeVariant.id}
+                controls
+                preload="none"
+                src={activeVariant.videoUrl}
                 style={{
-                  width: canvasWidth,
-                  height: canvasHeight,
-                  transform: `scale(${displayScale})`,
-                  transformOrigin: "top left",
+                  display: "block",
+                  width: "100%",
+                  maxHeight: 330,
                   background: "#000",
                   borderRadius: 6,
-                  // The canvas is the export crop. Keep the live preview clipped
-                  // as well, so a host dragged half outside visibly disappears
-                  // at the exact same boundary used by the PNG export.
-                  overflow: "hidden",
-                  position: "relative",
-                  userSelect: "none",
                 }}
+              />
+            ) : (
+              <p>
+                The localized video is not ready. You can prepare its thumbnail
+                now.
+              </p>
+            )}
+            <p>{activeVariant?.title ?? title}</p>
+          </div>
+        </details>
+        <details>
+          <summary>Export & format</summary>
+          <div className={workspace.exportOptions}>
+            <button
+              type="button"
+              disabled={isExporting || isBatchExporting}
+              onClick={handleExportPNG}
+              style={panelBtn(false)}
+            >
+              {isExporting ? "Exporting…" : "Download PNG"}
+            </button>
+            <button
+              type="button"
+              disabled={
+                isBatchExporting ||
+                isExporting ||
+                Boolean(bundle && !bundle.ready)
+              }
+              onClick={handleBatchExportZip}
+              style={panelBtn(false)}
+            >
+              {isBatchExporting ? "Packaging…" : "Download language ZIP"}
+            </button>
+            <label>
+              Format{" "}
+              <select
+                aria-label="Thumbnail format"
+                value={aspectRatio}
+                onChange={(event) =>
+                  setAspectRatio(event.target.value as "16:9" | "9:16")
+                }
               >
-                {elements.map((el) => {
-                  const isSelected = selectedId === el.id;
-
-                  if (el.type === "BACKGROUND") {
-                    if (el.css) {
-                      return (
-                        <div
-                          key={el.id}
-                          style={{
-                            position: "absolute",
-                            inset: 0,
-                            width: "100%",
-                            height: "100%",
-                            background: el.css,
-                            pointerEvents: "none",
-                            zIndex: el.zIndex,
-                          }}
-                        />
-                      );
-                    }
-                    if (el.url) {
-                      return (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          key={el.id}
-                          src={el.url}
-                          alt="Background"
-                          style={{
-                            position: "absolute",
-                            inset: 0,
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                            pointerEvents: "none",
-                            zIndex: el.zIndex,
-                          }}
-                        />
-                      );
-                    }
-                    return null;
-                  }
-
-                  return (
-                    <Rnd
-                      key={el.id}
-                      position={{ x: el.x, y: el.y }}
-                      size={{ width: el.width, height: el.height }}
-                      onDragStop={(_e, d) =>
-                        patchElement(el.id, { x: d.x, y: d.y })
-                      }
-                      onResizeStop={(_e, _dir, ref, _delta, position) =>
-                        patchElement(el.id, {
-                          width: parseInt(ref.style.width, 10),
-                          height: parseInt(ref.style.height, 10),
-                          x: position.x,
-                          y: position.y,
-                        })
-                      }
-                      style={{
-                        zIndex: el.zIndex,
-                        outline: isSelected
-                          ? "2px solid var(--v2-accent)"
-                          : "none",
-                      }}
-                      onClick={() => setSelectedId(el.id)}
-                    >
-                      {isSelected && (
-                        <button
-                          type="button"
-                          aria-label="Rotate layer"
-                          title="Drag to rotate"
-                          onPointerDown={(event) => startRotation(event, el)}
-                          style={{
-                            position: "absolute",
-                            left: "50%",
-                            top: -30,
-                            transform: "translateX(-50%)",
-                            width: 24,
-                            height: 24,
-                            borderRadius: "50%",
-                            border: "1px solid var(--v2-accent)",
-                            background: "#17171c",
-                            color: "var(--v2-accent)",
-                            zIndex: 20,
-                            cursor: "grab",
-                            display: "grid",
-                            placeItems: "center",
-                            padding: 0,
-                          }}
-                        >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: 16 }}
-                          >
-                            rotate_right
-                          </span>
-                        </button>
-                      )}
-                      {el.type === "TEXT" ? (
-                        <div
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "flex-start",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.03em",
-                            fontWeight:
-                              (el.fontWeight as React.CSSProperties["fontWeight"]) ||
-                              "bold",
-                            fontFamily: el.fontFamily || THUMBNAIL_FONT,
-                            fontSize: `${el.fontSize || 64}px`,
-                            color: el.color || "#ffffff",
-                            WebkitTextStroke: `${el.strokeWidth ?? 8}px ${el.strokeColor || "#000000"}`,
-                            paintOrder: "stroke fill",
-                            fontStyle: el.fontStyle || "italic",
-                            lineHeight: 1,
-                            overflow: "hidden",
-                            whiteSpace: "nowrap",
-                            backgroundColor: el.bgColor || "transparent",
-                            borderRadius: el.borderRadius || "0",
-                            padding: el.padding || "0",
-                            boxSizing: "border-box",
-                            userSelect: "none",
-                            transform: el.rotation
-                              ? `rotate(${el.rotation}deg)`
-                              : undefined,
-                          }}
-                        >
-                          {el.text}
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            backgroundColor: el.bgColor || "transparent",
-                            borderRadius: el.borderRadius || "0",
-                            padding: el.padding || "0",
-                            transform: el.rotation
-                              ? `rotate(${el.rotation}deg)`
-                              : undefined,
-                          }}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={el.url}
-                            alt="Asset"
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "contain",
-                              pointerEvents: "none",
-                            }}
-                          />
-                        </div>
-                      )}
-                    </Rnd>
+                <option value="16:9">16:9</option>
+                <option value="9:16" disabled={Boolean(jobId)}>
+                  9:16 Shorts
+                </option>
+              </select>
+            </label>
+          </div>
+        </details>
+        {bundle?.variants.some((variant) => !variant.id) && (
+          <button
+            type="button"
+            disabled={preparingDrafts}
+            style={panelBtn(false)}
+            onClick={async () => {
+              setPreparingDrafts(true);
+              try {
+                const response = await fetch(
+                  `/api/production/jobs/${bundle.rootId}/thumbnail-drafts`,
+                  { method: "POST" },
+                );
+                const result = await response.json();
+                if (!response.ok)
+                  throw new Error(result.error ?? "Could not prepare drafts");
+                const refreshed = await fetch(
+                  `/api/production/jobs/${bundle.rootId}/thumbnail-bundle`,
+                );
+                if (!refreshed.ok)
+                  throw new Error(
+                    "Drafts saved; reload the editor to refresh.",
                   );
-                })}
+                setBundle(await refreshed.json());
+                toast.success(
+                  "Language drafts ready. Headlines are prepared by the worker; you can also enter them manually.",
+                );
+              } catch (error) {
+                toast.error(
+                  error instanceof Error ? error.message : String(error),
+                );
+              } finally {
+                setPreparingDrafts(false);
+              }
+            }}
+          >
+            {preparingDrafts ? "Preparing…" : "Prepare missing language drafts"}
+          </button>
+        )}
+        <span className={workspace.saveState}>
+          {activeVariant?.savedApproved && !activeVariant.approved
+            ? "Replacement draft · approved image retained"
+            : activeVariant?.approved
+              ? `${activeLang} saved and approved`
+              : "Draft · not yet approved"}
+          {dirtyCopyLanguages.current.size
+            ? ` · Unsaved: ${[...dirtyCopyLanguages.current].join(", ")}`
+            : ""}
+        </span>
+      </div>
+      {activeEditorModes.procedural && activeEditorModes.ai && (
+        <div
+          role="group"
+          aria-label="Thumbnail creation mode"
+          style={{ display: "flex", gap: 8 }}
+        >
+          <button
+            type="button"
+            className="v2-btn"
+            aria-pressed={!showAi}
+            onClick={() => setShowAi(false)}
+          >
+            Procedural editor
+          </button>
+          <button
+            type="button"
+            className="v2-btn"
+            aria-pressed={showAi}
+            onClick={() => setShowAi(true)}
+          >
+            AI thumbnails
+          </button>
+        </div>
+      )}
+      {showAi &&
+        (activeVariant?.id ? (
+          <TutorialAiPanel
+            key={activeVariant.id}
+            jobId={activeVariant.id}
+            top={copyLines(variantCopy[activeLang])[0] ?? ""}
+            bottom={copyLines(variantCopy[activeLang])
+              .slice(1)
+              .filter(Boolean)
+              .join(" ")}
+            hasUnsavedEdits={dirtyCopyLanguages.current.size > 0}
+          />
+        ) : (
+          <p>
+            Prepare this language draft first to use its assigned channel and
+            branding.
+          </p>
+        ))}
+      {!showAi && (
+        <>
+          {!reviewingExactSelectedImage && (
+            <div
+              className={workspace.scope}
+              role="group"
+              aria-label="Layout and artwork edit scope"
+            >
+              <strong>Apply edits to</strong>
+              <div className={workspace.scopeOptions}>
+                {[
+                  { value: false, label: "Shared layout" },
+                  { value: true, label: `${activeLang} only` },
+                ].map((option) => (
+                  <label key={option.label}>
+                    <input
+                      type="radio"
+                      name="thumbnail-edit-scope"
+                      checked={
+                        Boolean(localeOverrides[activeLang]) === option.value
+                      }
+                      onChange={() => {
+                        setLocaleOverrides((previous) => ({
+                          ...previous,
+                          [activeLang]: option.value,
+                        }));
+                        markLayoutsDirty([activeLang]);
+                      }}
+                    />
+                    {option.label}
+                  </label>
+                ))}
               </div>
+              <details>
+                <summary>What changes?</summary>
+                <p>
+                  {localeOverrides[activeLang]
+                    ? `Edits stay in ${activeLang}, protected from future shared edits.`
+                    : "Layout and artwork edits carry to other unapproved languages using the shared layout."}{" "}
+                  Headlines and assigned hosts remain local. Other approved
+                  images and locale overrides are preserved.
+                </p>
+              </details>
             </div>
-          </GlassCard>
-
-          {/* Property inspector */}
-          {selectedElement && (
+          )}
+          {/* Main layout */}
+          <div
+            className={workspace.main}
+            data-reviewing-exact={
+              reviewingExactSelectedImage ? "true" : "false"
+            }
+          >
+            {/* ── Left: asset library + layers ── */}
             <GlassCard
+              className={workspace.library}
               style={{
                 padding: 12,
                 display: "flex",
                 flexDirection: "column",
                 gap: 10,
+                height: "max(420px, calc(100dvh - 250px))",
               }}
             >
+              {/* Category tabs */}
               <div
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  justifyContent: "space-between",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                   gap: 8,
+                  padding: 3,
+                  borderRadius: 8,
+                  background: "var(--v2-surface-2)",
+                  border: "1px solid var(--v2-border-2)",
                 }}
               >
+                {(
+                  [
+                    "PRESETS",
+                    "CUSTOM",
+                    "PERSONAS",
+                    "LOGOS",
+                    "SYMBOLS",
+                    "SHAPES",
+                    "BGS",
+                    "LAYERS",
+                  ] as const
+                ).map((tab) => {
+                  const on = activeTab === tab;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setActiveTab(tab)}
+                      style={{
+                        padding: "6px 2px",
+                        borderRadius: 5,
+                        border: "none",
+                        background: on
+                          ? "rgba(var(--v2-accent-rgb), 0.16)"
+                          : "transparent",
+                        color: on ? "var(--v2-accent)" : TEXT_2,
+                        fontSize: 12,
+                        minHeight: 36,
+                        fontWeight: 600,
+                        letterSpacing: 0,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {
+                        {
+                          PRESETS: "Layouts",
+                          CUSTOM: "Uploads",
+                          PERSONAS: "Characters",
+                          LOGOS: "Logos",
+                          SYMBOLS: "Symbols",
+                          SHAPES: "Shapes",
+                          BGS: "Backgrounds",
+                          LAYERS: "Layers",
+                        }[tab]
+                      }
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom upload panel */}
+              {activeTab === "CUSTOM" && (
                 <div
                   style={{
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "var(--v2-surface-2)",
+                    border: "1px solid var(--v2-border-2)",
                     display: "flex",
-                    alignItems: "center",
+                    flexDirection: "column",
                     gap: 8,
-                    flex: 1,
-                    minWidth: 200,
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      fontSize: 9,
-                      fontWeight: 800,
-                      padding: "3px 6px",
-                      borderRadius: 4,
-                      background: "rgba(255,255,255,0.08)",
-                      color: TEXT_2,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
                     }}
                   >
-                    {selectedElement.type}
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 800,
+                        letterSpacing: "0.04em",
+                        color: TEXT_1,
+                      }}
+                    >
+                      CUSTOM BRAND UPLOAD
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAddTextElement}
+                      style={panelBtn(false)}
+                    >
+                      + Add Text
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                    }}
+                  >
+                    <label
+                      style={{
+                        ...panelBtn(false),
+                        textAlign: "center",
+                        display: "inline-flex",
+                        justifyContent: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <span
+                        className="material-symbols-outlined"
+                        style={{ fontSize: 14 }}
+                      >
+                        upload
+                      </span>
+                      Face
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        style={{ display: "none" }}
+                        onChange={(e) => handleUploadCustomAsset(e, "PERSONAS")}
+                      />
+                    </label>
+                    <label
+                      style={{
+                        ...panelBtn(false),
+                        textAlign: "center",
+                        display: "inline-flex",
+                        justifyContent: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <span
+                        className="material-symbols-outlined"
+                        style={{ fontSize: 14 }}
+                      >
+                        upload
+                      </span>
+                      Symbol
+                      <input
+                        type="file"
+                        accept="image/png,image/svg+xml,image/webp"
+                        style={{ display: "none" }}
+                        onChange={(e) =>
+                          void handleUploadCustomAsset(e, "SYMBOLS")
+                        }
+                      />
+                    </label>
+                    <label
+                      style={{
+                        ...panelBtn(false),
+                        textAlign: "center",
+                        display: "inline-flex",
+                        justifyContent: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <span
+                        className="material-symbols-outlined"
+                        style={{ fontSize: 14 }}
+                      >
+                        upload
+                      </span>
+                      Background
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        style={{ display: "none" }}
+                        onChange={(e) => void handleUploadCustomAsset(e, "BGS")}
+                      />
+                    </label>
+                    <label
+                      style={{
+                        ...panelBtn(false),
+                        textAlign: "center",
+                        display: "inline-flex",
+                        justifyContent: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <span
+                        className="material-symbols-outlined"
+                        style={{ fontSize: 14 }}
+                      >
+                        upload
+                      </span>
+                      Logo
+                      <input
+                        type="file"
+                        accept="image/png,image/svg+xml,image/webp"
+                        style={{ display: "none" }}
+                        onChange={(e) => handleUploadCustomAsset(e, "LOGOS")}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Search box */}
+              {activeTab === "CUSTOM" && (
+                <label style={{ color: TEXT_2, fontSize: 12 }}>
+                  Software name for logo uploads
+                  <input
+                    aria-label="Software name for logo uploads"
+                    value={logoName}
+                    onChange={(event) => setLogoName(event.target.value)}
+                    placeholder="e.g. Notion (otherwise filename is used)"
+                    style={inputStyle}
+                  />
+                  <span>
+                    Exact software names are matched to tutorial titles. New
+                    logos update automatic draft layers; approved images and
+                    overrides stay unchanged.
                   </span>
-                  {selectedElement.type === "TEXT" && (
+                </label>
+              )}
+              {jobId &&
+                elements.some(
+                  (layer) =>
+                    layer.type === "LOGO" && layer.autoLogo && !layer.url,
+                ) && (
+                  <p role="status" style={{ color: TEXT_2, fontSize: 12 }}>
+                    No matching software logo yet. Upload a named logo in
+                    Custom, select one from Logos, or remove the empty logo
+                    layer if this tutorial needs no logo.
+                  </p>
+                )}
+              {activeTab !== "LAYERS" &&
+                activeTab !== "PRESETS" &&
+                activeTab !== "SHAPES" && (
+                  <div style={{ position: "relative" }}>
                     <input
                       type="text"
-                      value={selectedElement.text || ""}
-                      onChange={(e) =>
-                        patchElement(selectedElement.id, {
-                          text: e.target.value,
-                        })
-                      }
-                      style={{ ...inputStyle, flex: 1, fontWeight: 700 }}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Filter assets…"
+                      style={inputStyle}
                     />
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                    <span
+                      className="material-symbols-outlined"
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: 7,
+                        fontSize: 16,
+                        color: TEXT_2,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      search
+                    </span>
+                  </div>
+                )}
+
+              {/* Content area */}
+              <div style={{ flex: 1, overflowY: "auto", paddingRight: 2 }}>
+                {activeTab === "PRESETS" && (
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 9 }}
+                  >
+                    <details>
+                      <summary style={{ fontSize: 12 }}>About layouts</summary>
+                      <p style={{ fontSize: 12, color: TEXT_2 }}>
+                        Choose a layout, then adjust its editable person, copy
+                        and logo layers.
+                      </p>
+                    </details>
+                    {REFERENCE_LAYOUTS.map((preset) => (
+                      <div key={preset.id}>
+                        <button
+                          type="button"
+                          onClick={() => applyReferenceLayout(preset)}
+                          style={{
+                            padding: 8,
+                            borderRadius: 9,
+                            border: "1px solid var(--v2-border-2)",
+                            background: "var(--v2-surface-2)",
+                            color: TEXT_1,
+                            cursor: "pointer",
+                            textAlign: "left",
+                            width: "100%",
+                          }}
+                        >
+                          <ThumbnailPreview
+                            elements={applyPresetPatches(elements, preset)}
+                            portrait={aspectRatio === "9:16"}
+                          />
+                          <div
+                            style={{
+                              marginTop: 5,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            {preset.name}
+                          </div>
+                        </button>
+                        <details>
+                          <summary style={{ fontSize: 12, padding: "3px 0" }}>
+                            Layout details
+                          </summary>
+                          <p
+                            style={{
+                              fontSize: 12,
+                              color: TEXT_2,
+                              margin: "4px 0",
+                            }}
+                          >
+                            {preset.description} Reference: {preset.references}.
+                          </p>
+                        </details>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {activeTab === "SHAPES" && (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        color: TEXT_2,
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Add a real editable layer. Drag, resize, recolour, rotate,
+                      shadow or send it behind the host from Layers.
+                    </p>
+                    <button
+                      type="button"
+                      style={panelBtn(false)}
+                      onClick={() => addShape("circle")}
+                    >
+                      <span className="material-symbols-outlined">circle</span>{" "}
+                      Circle
+                    </button>
+                    <button
+                      type="button"
+                      style={panelBtn(false)}
+                      onClick={() => addShape("rounded")}
+                    >
+                      <span className="material-symbols-outlined">
+                        rounded_corner
+                      </span>{" "}
+                      Rounded box
+                    </button>
+                    <button
+                      type="button"
+                      style={panelBtn(false)}
+                      onClick={() => addShape("rectangle")}
+                    >
+                      <span className="material-symbols-outlined">
+                        rectangle
+                      </span>{" "}
+                      Square-corner box
+                    </button>
+                  </div>
+                )}
+
+                {activeTab === "BGS" && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                      marginBottom: 10,
+                    }}
+                  >
+                    {DEFAULT_BGS.filter((background) => background.css).map(
+                      (background) => (
+                        <button
+                          key={background.name}
+                          type="button"
+                          onClick={() => void applyBackground(background)}
+                          style={{
+                            ...panelBtn(false),
+                            minHeight: 64,
+                            background: background.css,
+                            color:
+                              background.backgroundTone === "dark"
+                                ? "#ffffff"
+                                : "#111827",
+                            border: "1px solid var(--v2-border-2)",
+                          }}
+                        >
+                          {background.name}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                )}
+
+                {(
+                  ["CUSTOM", "LOGOS", "SYMBOLS", "BGS", "PERSONAS"] as string[]
+                ).includes(activeTab) && (
+                  <AssetCollection
+                    assets={catalogAssets}
+                    category={activeTab}
+                    preferences={assetPreferences}
+                    currentBackground={
+                      elements.find((layer) => layer.type === "BACKGROUND")?.url
+                    }
+                    onPreference={updateAssetPreference}
+                    onSelect={(asset) => {
+                      if (asset.language)
+                        selectPersona(asset.language, asset.url);
+                      else
+                        handleAddAsset(
+                          asset.category === "BGS"
+                            ? "BACKGROUND"
+                            : asset.category === "PERSONAS"
+                              ? "PERSON"
+                              : asset.category === "LOGOS"
+                                ? "LOGO"
+                                : "SYMBOL",
+                          asset.url,
+                        );
+                    }}
+                  />
+                )}
+                {assetHasMore && (
                   <button
                     type="button"
-                    onClick={() => handleDuplicate(selectedElement)}
                     style={panelBtn(false)}
+                    disabled={loadingAssets}
+                    onClick={() => void loadMoreAssets()}
                   >
-                    Duplicate
+                    {loadingAssets ? "Loading…" : "Load more uploaded assets"}
                   </button>
+                )}
+
+                {/* Layer tree */}
+                {activeTab === "LAYERS" && (
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 6 }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 800,
+                        letterSpacing: "0.04em",
+                        color: TEXT_2,
+                        padding: "0 2px",
+                      }}
+                    >
+                      ACTIVE LAYERS ({elements.length})
+                    </div>
+                    {elements.map((el) => {
+                      const on = selectedId === el.id;
+                      return (
+                        <div
+                          key={el.id}
+                          draggable={el.type !== "BACKGROUND"}
+                          onDragStart={(event) =>
+                            event.dataTransfer.setData(
+                              "application/x-thumbnail-layer",
+                              el.id,
+                            )
+                          }
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            const moving = event.dataTransfer.getData(
+                              "application/x-thumbnail-layer",
+                            );
+                            editLayout((previous) =>
+                              moveLayerBefore(previous, moving, el.id),
+                            );
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Select or drag ${el.type.toLowerCase()} layer ${el.text || el.id}`}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedId(el.id);
+                            }
+                          }}
+                          onClick={() => setSelectedId(el.id)}
+                          style={{
+                            padding: 8,
+                            borderRadius: 8,
+                            border: on
+                              ? "1px solid var(--v2-accent)"
+                              : "1px solid var(--v2-border-2)",
+                            background: on
+                              ? "rgba(var(--v2-accent-rgb), 0.12)"
+                              : "var(--v2-surface-2)",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 6,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 8,
+                                fontWeight: 800,
+                                padding: "1px 4px",
+                                borderRadius: 3,
+                                background: "var(--v2-surface-2)",
+                                color: TEXT_2,
+                              }}
+                            >
+                              {el.type}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 13,
+                                color: TEXT_1,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {el.text || el.url?.split("/").pop() || el.id}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 2,
+                            }}
+                          >
+                            {(
+                              [
+                                {
+                                  icon: "arrow_upward",
+                                  fn: () => handleMoveLayer(el.id, "up"),
+                                  title: "Up",
+                                },
+                                {
+                                  icon: "arrow_downward",
+                                  fn: () => handleMoveLayer(el.id, "down"),
+                                  title: "Down",
+                                },
+                                {
+                                  icon: "content_copy",
+                                  fn: () => handleDuplicate(el),
+                                  title: "Duplicate",
+                                },
+                                {
+                                  icon: "delete",
+                                  fn: () => handleDeleteLayer(el.id),
+                                  title: "Delete",
+                                },
+                              ] as const
+                            ).map((a) => (
+                              <button
+                                key={a.icon}
+                                type="button"
+                                title={a.title}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  a.fn();
+                                }}
+                                style={{
+                                  padding: 2,
+                                  border: "none",
+                                  background: "transparent",
+                                  color:
+                                    a.icon === "delete"
+                                      ? "var(--v2-error-soft)"
+                                      : TEXT_2,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                }}
+                              >
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{ fontSize: 14 }}
+                                >
+                                  {a.icon}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </GlassCard>
+
+            {/* ── Right: canvas + inspector ── */}
+            <div className={workspace.canvasColumn}>
+              <div className={workspace.canvasToolbar}>
+                {reviewingExactSelectedImage ? (
                   <button
                     type="button"
-                    onClick={() => handleDeleteLayer(selectedElement.id)}
-                    style={{ ...panelBtn(false), color: "#ff9c9c" }}
+                    style={panelBtn(false)}
+                    onClick={beginEditableReplacement}
                   >
-                    Remove
+                    Create editable replacement
                   </button>
+                ) : (
+                  <button
+                    type="button"
+                    style={panelBtn(false)}
+                    onClick={() => {
+                      setActiveTab("SHAPES");
+                      addShape("rounded");
+                    }}
+                  >
+                    + Shape
+                  </button>
+                )}
+                <label>
+                  Layer{" "}
+                  <select
+                    aria-label="Select canvas layer"
+                    value={selectedId ?? ""}
+                    onChange={(event) =>
+                      setSelectedId(event.target.value || null)
+                    }
+                  >
+                    <option value="">Choose layer…</option>
+                    {elements.map((element) => (
+                      <option key={element.id} value={element.id}>
+                        {element.type.toLowerCase()} ·{" "}
+                        {element.text || element.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Zoom{" "}
+                  <select
+                    aria-label="Canvas zoom"
+                    value={canvasZoom}
+                    onChange={(event) =>
+                      setCanvasZoom(event.target.value as "fit" | "100")
+                    }
+                  >
+                    <option value="fit">Fit workspace</option>
+                    <option value="100">100%</option>
+                  </select>
+                </label>
+              </div>
+              <div ref={canvasSurfaceRef} className={workspace.canvasSurface}>
+                {/* Scaling wrapper — reserves the on-screen (scaled) footprint so the
+                unscaled canvas below can be captured at full resolution. */}
+                <div
+                  style={{
+                    width: canvasWidth * displayScale,
+                    height: canvasHeight * displayScale,
+                  }}
+                >
+                  <div
+                    ref={canvasRef}
+                    style={{
+                      width: canvasWidth,
+                      height: canvasHeight,
+                      transform: `scale(${displayScale})`,
+                      transformOrigin: "top left",
+                      background: "#000",
+                      borderRadius: 6,
+                      // The canvas is the export crop. Keep the live preview clipped
+                      // as well, so a host dragged half outside visibly disappears
+                      // at the exact same boundary used by the PNG export.
+                      overflow: "hidden",
+                      position: "relative",
+                      userSelect: "none",
+                    }}
+                  >
+                    {reviewingExactSelectedImage &&
+                    activeVariant?.thumbnailId ? (
+                      <ThumbnailPreviewImage
+                        src={`/api/thumbnails/image/${activeVariant.thumbnailId}`}
+                        alt={`Exact selected ${activeLang} thumbnail`}
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                      />
+                    ) : (
+                      elements.map((el) => {
+                        const isSelected = selectedId === el.id;
+
+                        if (el.type === "BACKGROUND") {
+                          if (el.css) {
+                            return (
+                              <div
+                                key={el.id}
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  height: "100%",
+                                  background: el.css,
+                                  pointerEvents: "none",
+                                  zIndex: el.zIndex,
+                                }}
+                              />
+                            );
+                          }
+                          if (el.url) {
+                            return (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                key={el.id}
+                                src={el.url}
+                                alt="Background"
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                  pointerEvents: "none",
+                                  zIndex: el.zIndex,
+                                }}
+                              />
+                            );
+                          }
+                          return null;
+                        }
+
+                        return (
+                          <Rnd
+                            scale={displayScale}
+                            key={el.id}
+                            position={{ x: el.x, y: el.y }}
+                            size={{ width: el.width, height: el.height }}
+                            cancel="button,input,select"
+                            disableDragging={
+                              savingApproval || isExporting || isBatchExporting
+                            }
+                            onDragStop={(_e, d) =>
+                              patchElement(el.id, { x: d.x, y: d.y })
+                            }
+                            onResizeStop={(_e, _dir, ref, _delta, position) =>
+                              patchElement(el.id, {
+                                width: parseInt(ref.style.width, 10),
+                                height: parseInt(ref.style.height, 10),
+                                x: position.x,
+                                y: position.y,
+                              })
+                            }
+                            style={{
+                              zIndex: el.zIndex,
+                              outline: isSelected
+                                ? "2px solid var(--v2-accent)"
+                                : "none",
+                            }}
+                            onClick={() => setSelectedId(el.id)}
+                          >
+                            {isSelected && (
+                              <button
+                                type="button"
+                                aria-label="Rotate layer"
+                                title="Drag to rotate"
+                                onPointerDown={(event) =>
+                                  startRotation(event, el)
+                                }
+                                onClick={(event) => event.stopPropagation()}
+                                style={{
+                                  position: "absolute",
+                                  left: "50%",
+                                  top: 4,
+                                  transform: "translateX(-50%)",
+                                  width: 24,
+                                  height: 24,
+                                  borderRadius: "50%",
+                                  border: "1px solid var(--v2-accent)",
+                                  background: "var(--v2-surface-1)",
+                                  color: "var(--v2-accent)",
+                                  zIndex: 20,
+                                  cursor: "grab",
+                                  display: "grid",
+                                  placeItems: "center",
+                                  padding: 0,
+                                }}
+                              >
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{ fontSize: 16 }}
+                                >
+                                  rotate_right
+                                </span>
+                              </button>
+                            )}
+                            {el.type === "TEXT" ? (
+                              <FittedHeadline
+                                element={el}
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  transform: el.rotation
+                                    ? `rotate(${el.rotation}deg)`
+                                    : undefined,
+                                }}
+                              />
+                            ) : (
+                              <div
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: el.bgColor || "transparent",
+                                  borderRadius: el.borderRadius || "0",
+                                  padding: el.padding || "0",
+                                  boxSizing: "border-box",
+                                  boxShadow:
+                                    el.type === "SHAPE"
+                                      ? layerShadowCss(el)
+                                      : undefined,
+                                  transform: el.rotation
+                                    ? `rotate(${el.rotation}deg)`
+                                    : undefined,
+                                }}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                {el.type === "SHAPE" ? null : !el.url ||
+                                  failedAssetUrls.has(el.url) ? (
+                                  <button
+                                    type="button"
+                                    data-missing-asset={el.id}
+                                    aria-label={
+                                      el.type === "LOGO"
+                                        ? "Missing logo — choose a logo before approving"
+                                        : "Choose missing image"
+                                    }
+                                    onClick={() => {
+                                      setSelectedId(el.id);
+                                      setActiveTab(
+                                        el.type === "LOGO" ? "LOGOS" : "CUSTOM",
+                                      );
+                                    }}
+                                    style={{
+                                      width: "100%",
+                                      height: "100%",
+                                      border: "4px solid #dc2626",
+                                      borderRadius: 18,
+                                      background: "#dc2626",
+                                      color: "#ffffff",
+                                      fontSize: 24,
+                                      fontWeight: 900,
+                                      letterSpacing: ".04em",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    {el.type === "LOGO" ? "LOGO?" : "IMAGE?"}
+                                  </button>
+                                ) : (
+                                  <BoundedArtwork
+                                    url={el.url}
+                                    alt={el.type.toLowerCase()}
+                                    width={
+                                      el.width -
+                                      2 * (parseFloat(el.padding ?? "0") || 0)
+                                    }
+                                    height={
+                                      el.height -
+                                      2 * (parseFloat(el.padding ?? "0") || 0)
+                                    }
+                                    scale={el.imageScale ?? 1}
+                                    tight={el.tightBounds}
+                                    mirrorX={el.mirrorX}
+                                    mirrorY={el.mirrorY}
+                                    shadow={layerShadowCss(el)}
+                                    onError={() =>
+                                      setFailedAssetUrls((previous) =>
+                                        new Set(previous).add(el.url!),
+                                      )
+                                    }
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </Rnd>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {selectedElement.type === "TEXT" && (
-                <div
+              {!reviewingExactSelectedImage && (
+                <>
+                  <div className={workspace.copyGrid}>
+                    {orderedTextLayers(elements).map((element, index) => {
+                      const line = textLineKey(element.id)!;
+                      return (
+                        <label
+                          key={line}
+                          style={{ fontSize: 13, color: TEXT_2 }}
+                        >
+                          {activeLang} · Headline {index + 1}
+                          <input
+                            aria-label={`Active ${activeLang} headline ${index + 1}`}
+                            value={
+                              variantCopy[activeLang]?.[line] ??
+                              element.text ??
+                              ""
+                            }
+                            maxLength={48}
+                            onFocus={() => setSelectedId(element.id)}
+                            onChange={(event) =>
+                              editHeadline(activeLang, line, event.target.value)
+                            }
+                            style={inputStyle}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {validateProceduralHeadlines(elements) && (
+                    <p
+                      role="status"
+                      style={{ color: "var(--v2-text-2)", fontSize: 13 }}
+                    >
+                      {validateProceduralHeadlines(elements)} You can save a
+                      draft while correcting it.
+                    </p>
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <p
+                      role="status"
+                      style={{ margin: 0, fontSize: 12, color: TEXT_2 }}
+                    >
+                      {
+                        copyLines(variantCopy[activeLang]).flatMap(copyWords)
+                          .length
+                      }{" "}
+                      / {MAX_THUMBNAIL_WORDS} words · every headline maximises
+                      inside its own safe hitbox
+                    </p>
+                    <div
+                      role="group"
+                      aria-label="Headline line count"
+                      style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+                    >
+                      {([1, 2, 3, 4] as const).map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          aria-pressed={
+                            orderedTextLayers(elements).length === count
+                          }
+                          style={panelBtn(
+                            orderedTextLayers(elements).length === count,
+                          )}
+                          onClick={() => arrangeHeadline(count)}
+                        >
+                          {count} {count === 1 ? "line" : "lines"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {activeVariant?.copyError && (
+                    <div
+                      role="alert"
+                      style={{ fontSize: 13, color: "var(--v2-error-soft)" }}
+                    >
+                      Headline generation failed: {activeVariant.copyError}.
+                      Enter the lines above or{" "}
+                      <button
+                        type="button"
+                        style={panelBtn(false)}
+                        disabled={retryingCopy}
+                        onClick={() => void retryHeadline()}
+                      >
+                        {retryingCopy ? "Queueing…" : "Retry headline"}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+              {reviewingExactSelectedImage && (
+                <p role="status" style={{ fontSize: 13, color: TEXT_2 }}>
+                  You are reviewing the exact quality-checked rendered image.
+                  Choose “Create editable replacement” only when this image
+                  needs a manual change; the selected image stays intact until a
+                  replacement is explicitly approved.
+                </p>
+              )}
+            </div>
+            <aside
+              className={workspace.inspector}
+              aria-label="Selected layer properties"
+            >
+              <h2>Layer properties</h2>
+              {!selectedElement && (
+                <p>
+                  Select a layer on the canvas or in Layers to edit its
+                  appearance and position.
+                </p>
+              )}
+              {/* Property inspector */}
+              {selectedElement && (
+                <GlassCard
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                    padding: 12,
+                    display: "flex",
+                    flexDirection: "column",
                     gap: 10,
-                    paddingTop: 10,
-                    borderTop: "1px solid rgba(255,255,255,0.1)",
                   }}
                 >
-                  {/* Font family */}
-                  <label
-                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
                   >
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: TEXT_2,
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      FONT
-                    </span>
-                    <select
-                      value={selectedElement.fontFamily || THUMBNAIL_FONT}
-                      onChange={(e) =>
+                    <label style={{ fontSize: 13 }}>
+                      Layer fill{" "}
+                      <input
+                        aria-label="Layer fill color"
+                        type="color"
+                        value={
+                          selectedElement.bgColor?.startsWith("#")
+                            ? selectedElement.bgColor
+                            : "#ffffff"
+                        }
+                        onChange={(event) =>
+                          patchElement(selectedElement.id, {
+                            bgColor: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      style={panelBtn(false)}
+                      onClick={() =>
                         patchElement(selectedElement.id, {
-                          fontFamily: e.target.value,
+                          bgColor: "transparent",
                         })
                       }
-                      style={inputStyle}
                     >
-                      {FONT_OPTIONS.map((f) => (
-                        <option key={f.value} value={f.value}>
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {/* Font size */}
-                  <label
-                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
-                  >
-                    <span
+                      No fill
+                    </button>
+                    <label style={{ fontSize: 13 }}>
+                      Corner radius{" "}
+                      <input
+                        aria-label="Layer corner radius"
+                        type="number"
+                        min={0}
+                        max={400}
+                        value={
+                          Number.parseFloat(
+                            selectedElement.borderRadius || "0",
+                          ) || 0
+                        }
+                        onChange={(event) =>
+                          patchElement(selectedElement.id, {
+                            borderRadius: `${Math.max(0, Number(event.target.value) || 0)}px`,
+                          })
+                        }
+                        style={{ ...inputStyle, width: 90 }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectedElement.shadow !== false &&
+                          (selectedElement.type === "TEXT" ||
+                            Boolean(selectedElement.shadow))
+                        }
+                        onChange={(event) =>
+                          patchElement(selectedElement.id, {
+                            shadow: event.target.checked,
+                          })
+                        }
+                      />{" "}
+                      Shadow
+                    </label>
+                    {(selectedElement.shadow ||
+                      (selectedElement.type === "TEXT" &&
+                        selectedElement.shadow !== false)) && (
+                      <details>
+                        <summary>Soft shadow settings</summary>
+                        <label>
+                          Blur{" "}
+                          <input
+                            aria-label="Shadow blur"
+                            type="number"
+                            min={0}
+                            max={40}
+                            value={selectedElement.shadowBlur ?? 12}
+                            onChange={(event) =>
+                              patchElement(selectedElement.id, {
+                                shadowBlur: Math.max(
+                                  0,
+                                  Math.min(40, Number(event.target.value) || 0),
+                                ),
+                              })
+                            }
+                            style={inputStyle}
+                          />
+                        </label>
+                        <label>
+                          Opacity{" "}
+                          <input
+                            aria-label="Shadow opacity"
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={selectedElement.shadowOpacity ?? 0.45}
+                            onChange={(event) =>
+                              patchElement(selectedElement.id, {
+                                shadowOpacity: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Vertical offset{" "}
+                          <input
+                            aria-label="Shadow vertical offset"
+                            type="number"
+                            min={-30}
+                            max={30}
+                            value={selectedElement.shadowOffsetY ?? 5}
+                            onChange={(event) =>
+                              patchElement(selectedElement.id, {
+                                shadowOffsetY: Math.max(
+                                  -30,
+                                  Math.min(30, Number(event.target.value) || 0),
+                                ),
+                              })
+                            }
+                            style={inputStyle}
+                          />
+                        </label>
+                      </details>
+                    )}
+                    {selectedElement.type === "TEXT" && (
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedElement.autoColor)}
+                          onChange={async (event) => {
+                            const autoColor = event.target.checked;
+                            const id = selectedElement.id;
+                            const request = ++styleRequest.current;
+                            const bg = elements.find(
+                              (layer) => layer.type === "BACKGROUND",
+                            );
+                            const color = autoColor
+                              ? await sampleBackgroundColor(bg?.url, bg?.css)
+                              : null;
+                            if (
+                              request !== styleRequest.current ||
+                              currentEditorLanguage.current !== activeLang
+                            )
+                              return;
+                            patchElement(id, {
+                              autoColor,
+                              ...(color
+                                ? {
+                                    color,
+                                    strokeColor: "#000000",
+                                    strokeWidth: 5,
+                                  }
+                                : {}),
+                            });
+                          }}
+                        />{" "}
+                        Auto color: white on dark, yellow on light
+                      </label>
+                    )}
+                    <label style={{ fontSize: 13 }}>
+                      Rotation °{" "}
+                      <input
+                        aria-label="Layer rotation degrees"
+                        type="number"
+                        min={-180}
+                        max={180}
+                        value={selectedElement.rotation ?? 0}
+                        onChange={(event) =>
+                          patchElement(selectedElement.id, {
+                            rotation: Math.max(
+                              -180,
+                              Math.min(180, Number(event.target.value) || 0),
+                            ),
+                          })
+                        }
+                        style={{ ...inputStyle, width: 90 }}
+                      />
+                    </label>
+                    {selectedElement.type === "BACKGROUND" && (
+                      <label>
+                        Background tone
+                        <select
+                          aria-label="Background light or dark metadata"
+                          value={selectedElement.backgroundTone ?? "auto"}
+                          onChange={(event) => {
+                            const backgroundTone = event.target.value as
+                              "light" | "dark" | "auto";
+                            void applyBackground({
+                              name: "Current background",
+                              url: selectedElement.url,
+                              css: selectedElement.css,
+                              backgroundTone,
+                            });
+                          }}
+                          style={inputStyle}
+                        >
+                          <option value="auto">
+                            Not classified · sample image
+                          </option>
+                          <option value="light">Light · yellow copy</option>
+                          <option value="dark">Dark · white copy</option>
+                        </select>
+                      </label>
+                    )}
+                    {["PERSON", "LOGO", "SYMBOL", "UPLOAD"].includes(
+                      selectedElement.type,
+                    ) && (
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedElement.tightBounds)}
+                          onChange={(event) =>
+                            patchElement(selectedElement.id, {
+                              tightBounds: event.target.checked,
+                            })
+                          }
+                        />
+                        Tight artwork bounds (remove transparent margins)
+                      </label>
+                    )}
+                    {selectedElement.type === "SYMBOL" && (
+                      <div
+                        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+                      >
+                        <button
+                          type="button"
+                          aria-pressed={Boolean(selectedElement.mirrorX)}
+                          onClick={() =>
+                            patchElement(selectedElement.id, {
+                              mirrorX: !selectedElement.mirrorX,
+                            })
+                          }
+                          style={panelBtn(Boolean(selectedElement.mirrorX))}
+                        >
+                          Mirror horizontally
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={Boolean(selectedElement.mirrorY)}
+                          onClick={() =>
+                            patchElement(selectedElement.id, {
+                              mirrorY: !selectedElement.mirrorY,
+                            })
+                          }
+                          style={panelBtn(Boolean(selectedElement.mirrorY))}
+                        >
+                          Mirror vertically
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => editLayout(pointArrowAtLogo)}
+                          style={panelBtn(false)}
+                        >
+                          Point at logo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {selectedElement.type === "LOGO" && (
+                    <div
                       style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: TEXT_2,
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      SIZE: {selectedElement.fontSize || 64}px
-                    </span>
-                    <input
-                      type="range"
-                      min={24}
-                      max={120}
-                      value={selectedElement.fontSize || 64}
-                      onChange={(e) =>
-                        patchElement(selectedElement.id, {
-                          fontSize: parseInt(e.target.value, 10),
-                        })
-                      }
-                      style={{ width: "100%", accentColor: "var(--v2-accent)" }}
-                    />
-                  </label>
-
-                  {/* Fill color */}
-                  <label
-                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: TEXT_2,
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      TEXT COLOR
-                    </span>
-                    <input
-                      type="color"
-                      value={selectedElement.color || "#ffffff"}
-                      onChange={(e) =>
-                        patchElement(selectedElement.id, {
-                          color: e.target.value,
-                        })
-                      }
-                      style={{
-                        width: "100%",
-                        height: 30,
+                        display: "grid",
+                        gap: 10,
+                        padding: 10,
+                        border: "1px solid var(--v2-border-1)",
                         borderRadius: 6,
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        background: "rgba(0,0,0,0.28)",
+                      }}
+                    >
+                      <label style={{ display: "grid", gap: 5, fontSize: 13 }}>
+                        Logo artwork size ·{" "}
+                        {Math.round((selectedElement.imageScale ?? 1) * 100)}%
+                        <input
+                          aria-label="Logo artwork size"
+                          type="range"
+                          min={50}
+                          max={180}
+                          step={5}
+                          value={(selectedElement.imageScale ?? 1) * 100}
+                          onChange={(event) =>
+                            patchElement(selectedElement.id, {
+                              imageScale: Number(event.target.value) / 100,
+                            })
+                          }
+                        />
+                      </label>
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          minHeight: 40,
+                          fontSize: 13,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            selectedElement.bgColor === "#ffffff" &&
+                            selectedElement.borderRadius === "50%"
+                          }
+                          onChange={(event) =>
+                            patchElement(
+                              selectedElement.id,
+                              event.target.checked
+                                ? {
+                                    bgColor: "#ffffff",
+                                    borderRadius: "50%",
+                                    padding: "14px",
+                                  }
+                                : {
+                                    bgColor: "transparent",
+                                    borderRadius: "0",
+                                    padding: "0",
+                                  },
+                            )
+                          }
+                        />{" "}
+                        White circle behind logo
+                      </label>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {(["x", "y", "width", "height"] as const).map((field) => (
+                      <label
+                        key={field}
+                        style={{
+                          flex: "1 1 100px",
+                          fontSize: 13,
+                          color: TEXT_2,
+                        }}
+                      >
+                        {field === "x"
+                          ? "Horizontal position"
+                          : field === "y"
+                            ? "Vertical position"
+                            : field === "width"
+                              ? "Width"
+                              : "Height"}
+                        <input
+                          aria-label={`Layer ${field}`}
+                          type="number"
+                          value={Math.round(selectedElement[field])}
+                          min={
+                            field === "width" || field === "height"
+                              ? 1
+                              : undefined
+                          }
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (
+                              Number.isFinite(value) &&
+                              (!(field === "width" || field === "height") ||
+                                value > 0)
+                            )
+                              patchElement(selectedElement.id, {
+                                [field]: value,
+                              });
+                          }}
+                          style={inputStyle}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 800,
+                          padding: "3px 6px",
+                          borderRadius: 4,
+                          background: "var(--v2-surface-2)",
+                          color: TEXT_2,
+                        }}
+                      >
+                        {selectedElement.type}
+                      </span>
+                      {selectedElement.type === "TEXT" && (
+                        <input
+                          type="text"
+                          value={selectedElement.text || ""}
+                          onChange={(e) =>
+                            patchElement(selectedElement.id, {
+                              text: e.target.value,
+                            })
+                          }
+                          style={{ ...inputStyle, flex: 1, fontWeight: 700 }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicate(selectedElement)}
+                        style={panelBtn(false)}
+                      >
+                        Duplicate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLayer(selectedElement.id)}
+                        style={{
+                          ...panelBtn(false),
+                          color: "var(--v2-error-soft)",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+
+                  {selectedElement.type === "TEXT" && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(150px, 1fr))",
+                        gap: 10,
+                        paddingTop: 10,
+                        borderTop: "1px solid var(--v2-border-2)",
+                      }}
+                    >
+                      {/* Font family */}
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 3,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            color: TEXT_2,
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          FONT
+                        </span>
+                        <select
+                          value={selectedElement.fontFamily || THUMBNAIL_FONT}
+                          onChange={(e) =>
+                            patchElement(selectedElement.id, {
+                              fontFamily: e.target.value,
+                            })
+                          }
+                          style={inputStyle}
+                        >
+                          {FONT_OPTIONS.map((f) => (
+                            <option key={f.value} value={f.value}>
+                              {f.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {/* Font size */}
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 3,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            color: TEXT_2,
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          MAX SIZE: {selectedElement.fontSize || 64}px
+                        </span>
+                        <span
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            minHeight: 32,
+                            fontSize: 12,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedElement.autoFit !== false}
+                            onChange={(event) =>
+                              patchElement(selectedElement.id, {
+                                autoFit: event.target.checked,
+                              })
+                            }
+                          />
+                          Maximise automatically
+                        </span>
+                        <input
+                          type="range"
+                          min={24}
+                          max={220}
+                          value={selectedElement.fontSize || 64}
+                          onChange={(e) =>
+                            patchElement(selectedElement.id, {
+                              fontSize: parseInt(e.target.value, 10),
+                              autoFit: false,
+                            })
+                          }
+                          style={{
+                            width: "100%",
+                            accentColor: "var(--v2-accent)",
+                          }}
+                        />
+                      </label>
+
+                      {/* Fill color */}
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 3,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            color: TEXT_2,
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          TEXT COLOR
+                        </span>
+                        <input
+                          type="color"
+                          value={selectedElement.color || "#ffffff"}
+                          onChange={(e) =>
+                            patchElement(selectedElement.id, {
+                              color: e.target.value,
+                              autoColor: false,
+                            })
+                          }
+                          style={{
+                            width: "100%",
+                            height: 30,
+                            borderRadius: 6,
+                            border: "1px solid var(--v2-border-2)",
+                            background: "var(--v2-surface-2)",
+                            cursor: "pointer",
+                          }}
+                        />
+                      </label>
+
+                      {/* Stroke width */}
+                      <label
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 3,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            color: TEXT_2,
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          STROKE: {selectedElement.strokeWidth ?? 8}px
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={20}
+                          value={selectedElement.strokeWidth ?? 8}
+                          onChange={(e) =>
+                            patchElement(selectedElement.id, {
+                              strokeWidth: parseInt(e.target.value, 10),
+                            })
+                          }
+                          style={{
+                            width: "100%",
+                            accentColor: "var(--v2-accent)",
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+                </GlassCard>
+              )}
+            </aside>
+          </div>
+          {/* English is always the anchor column; localized versions extend to the
+          right and scroll as a single comparison row. This lets QA catch text
+          overflow before localized narration/video rendering begins. */}
+          <details open className={workspace.secondary}>
+            <summary>Compare all language thumbnails</summary>
+            <GlassCard className={workspace.previews} style={{ padding: 16 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: TEXT_1,
+                  marginBottom: 9,
+                }}
+              >
+                ALL LANGUAGE THUMBNAILS · CLICK ONE TO EDIT
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridAutoFlow: "column",
+                  gridAutoColumns: aspectRatio === "16:9" ? 220 : 124,
+                  gap: 10,
+                  overflowX: "auto",
+                  paddingBottom: 7,
+                }}
+              >
+                {previewLayouts.map(
+                  ({
+                    language,
+                    elements: previewElements,
+                    selectedThumbnailId,
+                    selectedThumbnailApproved,
+                  }) => (
+                    <button
+                      key={language}
+                      type="button"
+                      aria-label={`Edit ${language} thumbnail`}
+                      onClick={() => switchLanguage(language)}
+                      style={{
+                        padding: 7,
+                        borderRadius: 9,
+                        border:
+                          activeLang === language
+                            ? "2px solid var(--v2-accent)"
+                            : "1px solid var(--v2-border-2)",
+                        background: "var(--v2-surface-2)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      <div
+                        style={{
+                          color:
+                            language === "English"
+                              ? "var(--v2-accent)"
+                              : TEXT_1,
+                          fontSize: 13,
+                          fontWeight: 850,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {language === "English"
+                          ? "ENGLISH · MASTER"
+                          : language.toUpperCase()}
+                      </div>
+                      {selectedThumbnailId ? (
+                        // A selected rendered image is always the review truth,
+                        // including before approval. Never preview a reconstruction.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <>
+                          <ThumbnailPreviewImage
+                            src={`/api/thumbnails/image/${selectedThumbnailId}`}
+                            alt={`Selected ${language} thumbnail`}
+                            style={{
+                              width: "100%",
+                              aspectRatio: "16 / 9",
+                              objectFit: "contain",
+                              display: "block",
+                            }}
+                          />
+                          <span
+                            style={{
+                              display: "block",
+                              marginTop: 4,
+                              fontSize: 11,
+                              color: selectedThumbnailApproved
+                                ? "var(--v2-success)"
+                                : TEXT_2,
+                            }}
+                          >
+                            {selectedThumbnailApproved
+                              ? "Approved"
+                              : "Awaiting approval"}
+                          </span>
+                        </>
+                      ) : (
+                        <ThumbnailPreview
+                          elements={previewElements}
+                          portrait={aspectRatio === "9:16"}
+                        />
+                      )}
+                    </button>
+                  ),
+                )}
+              </div>
+            </GlassCard>
+          </details>
+          <details open className={workspace.secondary}>
+            <summary>Edit all language headlines</summary>
+            <GlassCard className={workspace.copy} style={{ padding: 16 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: TEXT_1,
+                  marginBottom: 8,
+                }}
+              >
+                LOCALIZED 1–4-LINE THUMBNAIL COPY
+              </div>
+              <div className={workspace.copyGrid}>
+                {availableLanguages.map((lang) => (
+                  <label
+                    key={lang}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "26px 1fr",
+                      gap: 6,
+                      alignItems: "center",
+                      padding: 5,
+                      borderRadius: 7,
+                      border:
+                        activeLang === lang
+                          ? "1px solid var(--v2-accent)"
+                          : "1px solid transparent",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      title={`Edit ${lang}`}
+                      onClick={() => switchLanguage(lang)}
+                      style={{
+                        border: 0,
+                        background: "transparent",
+                        padding: 0,
                         cursor: "pointer",
                       }}
-                    />
-                  </label>
-
-                  {/* Stroke width */}
-                  <label
-                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: TEXT_2,
-                        letterSpacing: "0.04em",
-                      }}
                     >
-                      STROKE: {selectedElement.strokeWidth ?? 8}px
-                    </span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={20}
-                      value={selectedElement.strokeWidth ?? 8}
-                      onChange={(e) =>
-                        patchElement(selectedElement.id, {
-                          strokeWidth: parseInt(e.target.value, 10),
-                        })
-                      }
-                      style={{ width: "100%", accentColor: "var(--v2-accent)" }}
-                    />
+                      <FlagIcon code={LANG_NAME_TO_CODE[lang] ?? "en"} />
+                    </button>
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {TEXT_LINE_KEYS.slice(
+                        0,
+                        Math.max(
+                          1,
+                          orderedTextLayers(
+                            layoutsRef.current.English ?? elements,
+                          ).length,
+                        ),
+                      ).map((line, index) => (
+                        <input
+                          key={line}
+                          value={variantCopy[lang]?.[line] ?? ""}
+                          onChange={(event) =>
+                            editHeadline(lang, line, event.target.value)
+                          }
+                          maxLength={48}
+                          onFocus={() => switchLanguage(lang)}
+                          aria-label={`${lang} thumbnail headline ${index + 1}`}
+                          title={`${lang} headline ${index + 1}`}
+                          style={inputStyle}
+                        />
+                      ))}
+                    </div>
                   </label>
-                </div>
-              )}
-              <label
-                style={{ display: "flex", flexDirection: "column", gap: 3 }}
-              >
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 800,
-                    color: TEXT_2,
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  ROTATION: {selectedElement.rotation ?? 0}°
-                </span>
-                <input
-                  type="range"
-                  min={-180}
-                  max={180}
-                  value={selectedElement.rotation ?? 0}
-                  onChange={(event) =>
-                    patchElement(selectedElement.id, {
-                      rotation: Number(event.target.value),
-                    })
-                  }
-                  style={{ width: "100%", accentColor: "var(--v2-accent)" }}
-                />
-              </label>
+                ))}
+              </div>
             </GlassCard>
-          )}
-        </div>
-      </div>
+          </details>
+        </>
+      )}
     </div>
   );
 }

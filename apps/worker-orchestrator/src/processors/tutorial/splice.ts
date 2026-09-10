@@ -15,6 +15,8 @@ import {
   updateTutorialJob,
   listTutorialJobsByParent,
   getTutorialSettings,
+  tutorialJobs,
+  eq,
 } from "@repo/db";
 import {
   probeMedia,
@@ -33,6 +35,10 @@ import {
   ctaForLanguage,
 } from "../../utils/tutorial/new-video-treatment.js";
 import { buildLikeSubscribeOutroArgs } from "../../utils/tutorial/like-subscribe-outro.js";
+import { assertLocalizationCurrent } from "../../utils/tutorial/localization-fence.js";
+import { withTutorialWorkerInputs } from "../../utils/tutorial/media-inputs.js";
+import { ensureTutorialOutputQa } from "../../utils/tutorial/output-qa.js";
+import { sql } from "drizzle-orm";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,7 +66,7 @@ export function createTutorialSpliceProcessor(
   },
 ) {
   return async (job: Job<TutorialSplicePayload>) => {
-    const { jobId } = TutorialSplicePayloadSchema.parse(job.data);
+    const { jobId, sourceRevision, thumbnailId } = TutorialSplicePayloadSchema.parse(job.data);
 
     console.log(
       JSON.stringify({
@@ -76,6 +82,9 @@ export function createTutorialSpliceProcessor(
     }
 
     try {
+      if (tutorialJob.status === "CANCELLED") throw new Error("Cancelled tutorial cannot be spliced.");
+      if (tutorialJob.status === "COMPLETED") { await ensureTutorialOutputQa(db, jobId, LOCAL_MEDIA_ROOT); return; }
+      if (tutorialJob.source_job_id) await assertLocalizationCurrent(db, { sourceJobId: tutorialJob.source_job_id, childId: jobId, sourceRevision, thumbnailId });
       await updateTutorialJob(db, jobId, {
         status: "SPLICING",
         progress: 90,
@@ -91,6 +100,7 @@ export function createTutorialSpliceProcessor(
         throw new Error(`Tutorial job ${jobId} has no audio_path`);
       }
 
+      await withTutorialWorkerInputs({ jobId, sourceJobId: tutorialJob.source_job_id, recordingPath, audioPath: ttsAudioPath }, async () => {
       // Probe both files + detect TTS start offset in the OBS recording.
       //
       // Primary: audio cross-correlation. The OBS recording captures the TTS
@@ -285,12 +295,22 @@ export function createTutorialSpliceProcessor(
       }
       // ── End like & subscribe outro ──────────────────────────────────────
 
-      await updateTutorialJob(db, jobId, {
+      await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM tutorial_jobs WHERE id = ${tutorialJob.source_job_id ?? jobId}::uuid FOR UPDATE`);
+      if (tutorialJob.source_job_id) await assertLocalizationCurrent(tx, { sourceJobId: tutorialJob.source_job_id, childId: jobId, sourceRevision, thumbnailId });
+      const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, jobId));
+      if (!current || current.status === "CANCELLED" || current.recording_path !== tutorialJob.recording_path || current.audio_path !== tutorialJob.audio_path) throw new Error("Splice inputs changed. Stale output was not accepted.");
+      await tx.update(tutorialJobs).set({
         final_path: outputPath,
         recording_duration_s: String(recordingDurationS),
         status: "COMPLETED",
         completed_at: new Date(),
+        output_qa_status: null,
+        output_qa_detail: { summary: "Automated output checks pending", checks: [] },
+        output_qa_checked_at: null,
         progress: 100,
+        updated_at: new Date(),
+      }).where(eq(tutorialJobs.id, jobId));
       });
 
       console.log(
@@ -303,6 +323,7 @@ export function createTutorialSpliceProcessor(
       );
 
       // ── Auto thumbnail (non-blocking) ───────────────────────────────────
+      await ensureTutorialOutputQa(db, jobId, LOCAL_MEDIA_ROOT);
       // Only for user-facing videos: single-segment jobs (no parent). Child
       // segments of a SIX_MIN_STITCH job are intermediate — the parent gets
       // its thumbnail from the stitch processor instead.
@@ -342,31 +363,9 @@ export function createTutorialSpliceProcessor(
                 created: manualThumbnail.created,
               }),
             );
-          } else {
-            const excerpt = firstNSentences(tutorialJob.script_text ?? "", 5);
-            // The SOFTWARE this tutorial is about. Without it the brief compiler
-            // has no product to brand and the thumbnail never names the tool —
-            // zero of 112 tutorial briefs carried one before this. Null when the
-            // title does not identify a product; the field is then omitted and
-            // the existing title-derived fallback applies unchanged.
-            const logoSubject = deriveLogoSubject(tutorialJob.title);
-            await queues.thumbnail.add(
-              "thumbnail",
-              {
-                subjectKind: "tutorial_job",
-                subjectId: jobId,
-                format: "TUTORIAL_STUDIO",
-                channelId: thumbnailContext.channelId,
-                title: tutorialJob.title,
-                topic: tutorialJob.title,
-                scriptExcerpt: excerpt,
-                ...(logoSubject !== null ? { logoSubject } : {}),
-                language: thumbnailContext.language,
-                thumbnailTextTop: thumbnailContext.thumbnailTextTop,
-                thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
-              },
-              { jobId: `thumbnail-${jobId}`, attempts: 2 },
-            );
+          } else if (!tutorialJob.source_job_id && tutorialJob.language === "en") {
+            const { enqueueAutomaticEnglishThumbnails } = await import("../../services/automatic-english-thumbnails.js");
+            await enqueueAutomaticEnglishThumbnails(db, queues.thumbnail, jobId);
           }
         } catch (thumbErr) {
           console.error(
@@ -413,6 +412,7 @@ export function createTutorialSpliceProcessor(
         }
       }
       // ── End SIX_MIN_STITCH sibling check ────────────────────────────────
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
 
@@ -437,6 +437,8 @@ export function createTutorialSpliceProcessor(
 
       if (finalAttempt) {
         try {
+          const current = await getTutorialJobById(db, jobId);
+          if (current?.status === "CANCELLED" || current?.status === "COMPLETED") throw err;
           await updateTutorialJob(db, jobId, {
             status: "FAILED_SPLICE",
             error_stage: "splice",

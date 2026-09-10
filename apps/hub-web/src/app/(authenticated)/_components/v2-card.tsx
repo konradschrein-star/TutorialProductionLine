@@ -29,16 +29,21 @@ export function V2Card({
   return (
     <div
       className={cn(
-        "backdrop-blur-xl border rounded-lg",
+        "border rounded-lg",
         "bg-[var(--v2-surface-1)] border-[var(--v2-border-1)]",
         !noPadding && "p-6",
         isInteractive && "cursor-pointer transition-all duration-200",
         (isInteractive || hover) &&
-          "hover:border-[var(--v2-border-2)] hover:shadow-lg hover:shadow-black/20",
+          "hover:border-[var(--v2-border-2)]",
         className,
       )}
       style={style}
       onClick={onClick}
+      onKeyDown={isInteractive ? (event) => {
+        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault(); onClick?.();
+        }
+      } : undefined}
       role={isInteractive ? "button" : undefined}
       tabIndex={isInteractive ? 0 : undefined}
     >

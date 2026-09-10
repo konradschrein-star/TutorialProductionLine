@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { condenseHeadline, stripBrand } from "../headline.js";
+import { compactHeadlineBlocks, condenseHeadline, proceduralHeadlineBlocks, stripBrand } from "../headline.js";
 import { deriveHeadline } from "../brief.js";
 
 /**
@@ -124,6 +124,23 @@ describe("condenseHeadline — mechanics", () => {
 });
 
 describe("stripBrand", () => {
+  it("keeps one- and two-word procedural copy in one dominant banner", () => {
+    expect(proceduralHeadlineBlocks("Fix Drive", { maxWords: 4 })).toEqual(["Fix Drive"]);
+    expect(proceduralHeadlineBlocks("DocuSign Radio & Dropdown", { maxWords: 4, logoSubject: "DocuSign Templates" })).toEqual(["Radio Dropdown"]);
+  });
+
+  it("removes a product even when the inferred subject includes a template qualifier", () => {
+    expect(stripBrand("DocuSign Radio & Dropdown", "DocuSign Templates")).toBe("Radio & Dropdown");
+  });
+
+  it("removes a connector instead of leaving a dangling glyph", () => {
+    expect(compactHeadlineBlocks("DocuSign Radio & Dropdown", { maxWords: 4, blocks: 2, logoSubject: "DocuSign Templates" })).toEqual(["Radio", "Dropdown"]);
+  });
+
+  it("balances hitboxes by visual copy length so each line can grow", () => {
+    expect(compactHeadlineBlocks("Auto-Save Signed PDFs", { maxWords: 4, blocks: 2 })).toEqual(["Auto-Save", "Signed PDFs"]);
+  });
+
   it("takes the product qualifier with the name — no stray 'Online'", () => {
     expect(
       stripBrand(

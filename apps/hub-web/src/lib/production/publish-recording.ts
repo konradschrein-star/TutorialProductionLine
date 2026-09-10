@@ -166,6 +166,9 @@ export async function publishRecording(
     recording_path: filePath,
     recorded_at: new Date(),
     status: "AWAITING_UPLOAD",
+    va_review_status: null,
+    va_reviewed_at: null,
+    va_reviewed_by: null,
   });
 
   const { enqueued, note } = await enqueueSpliceIdempotent(job.id);

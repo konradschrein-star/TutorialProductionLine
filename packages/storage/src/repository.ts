@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   storageArtifacts,
+  storageArtifactVersions,
   type DrizzleClient,
   type NewStorageArtifact,
   type StorageArtifact,
@@ -135,11 +136,12 @@ export async function recordProgress(
   db: DrizzleClient,
   id: string,
   data: { resumable_session_uri: string; bytes_uploaded: number },
+  sourceSha256?: string,
 ): Promise<void> {
   await db
     .update(storageArtifacts)
     .set({ ...data, updated_at: new Date() })
-    .where(eq(storageArtifacts.id, id));
+    .where(and(eq(storageArtifacts.id, id), sourceSha256 ? eq(storageArtifacts.checksum_sha256, sourceSha256) : undefined));
 }
 
 export async function markUploaded(
@@ -158,7 +160,10 @@ export async function markUploaded(
   },
 ): Promise<void> {
   const { verified, ...rest } = data;
-  await db
+  await db.transaction(async (tx) => {
+  const [current] = await tx.select().from(storageArtifacts).where(eq(storageArtifacts.id, id)).for("update");
+  if (!current || (current.checksum_sha256 && current.checksum_sha256 !== data.checksum_sha256)) throw new Error("Storage source revision changed before Drive pointer commit; prior objects retained");
+  const [updated] = await tx
     .update(storageArtifacts)
     .set({
       ...rest,
@@ -171,7 +176,21 @@ export async function markUploaded(
       error_message: null,
       updated_at: new Date(),
     })
-    .where(eq(storageArtifacts.id, id));
+    .where(eq(storageArtifacts.id, id)).returning();
+  if (updated?.drive_file_id) await tx.insert(storageArtifactVersions).values({ artifact_id: updated.id, drive_file_id: updated.drive_file_id, vps_path: updated.vps_path, bytes: updated.bytes, checksum_sha256: updated.checksum_sha256, drive_md5: updated.drive_md5, verified_at: updated.verified_at }).onConflictDoNothing();
+  });
+}
+
+/** Persist old identity before any local-path or current-pointer replacement. */
+export async function archiveArtifactVersion(db: DrizzleClient, row: StorageArtifact): Promise<void> {
+  if (!row.drive_file_id) return;
+  await db.insert(storageArtifactVersions).values({ artifact_id: row.id, drive_file_id: row.drive_file_id, vps_path: row.vps_path, bytes: row.bytes, checksum_sha256: row.checksum_sha256, drive_md5: row.drive_md5, verified_at: row.verified_at }).onConflictDoNothing();
+}
+
+export async function recordSourceRevision(db: DrizzleClient, id: string, source: { vps_path: string; bytes: number; checksum_sha256: string; preserveSession: boolean }) {
+  await db.update(storageArtifacts).set({ vps_path: source.vps_path, bytes: source.bytes, checksum_sha256: source.checksum_sha256, verified_at: null,
+    ...(source.preserveSession ? {} : { resumable_session_uri: null, bytes_uploaded: 0 }), updated_at: new Date(),
+  }).where(eq(storageArtifacts.id, id));
 }
 
 /**

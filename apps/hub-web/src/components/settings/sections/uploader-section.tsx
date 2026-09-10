@@ -66,7 +66,7 @@ export function UploaderSection({
     <SectionFormWrapper
       sectionId="uploader"
       title="YouTube uploader"
-      description="Configure the separate distribution worker. Saving this panel never starts an upload."
+      description="Configure the separate distribution worker. Keep manual release enabled to hold queued uploads when switching to live mode."
       icon="publish"
       wiring="live"
       wiringDetail="The uploader reads this configuration through the authenticated runtime-config endpoint. Dry-run is the safe default."
@@ -151,7 +151,7 @@ export function UploaderSection({
       </SettingRow>
       <SettingRow
         label="Upload method"
-        hint="Official API is preferred; browser-assisted mode must remain operator-visible"
+        hint="The existing custom uploader owns channel account sessions. Saving here does not connect a YouTube account."
         htmlFor="uploader-transport"
         controlWidth={230}
       >
@@ -167,12 +167,14 @@ export function UploaderSection({
             }))
           }
         >
-          <option value="youtube_data_api">YouTube Data API</option>
-          <option value="browser_assisted">Browser-assisted</option>
+          <option value="custom_uploader">Custom tutorial uploader</option>
+          <option value="youtube_data_api">Legacy API integration (explicitly configured only)</option>
+          <option value="browser_assisted">Custom browser-assisted integration</option>
         </select>
       </SettingRow>
       <SettingRow
         label="Default visibility"
+        hint="Ordinary uploads default to unlisted. Scheduled publication uses private visibility until its reserved publish time."
         htmlFor="uploader-visibility"
         controlWidth={180}
       >
@@ -191,12 +193,14 @@ export function UploaderSection({
         >
           <option value="private">Private</option>
           <option value="unlisted">Unlisted</option>
-          <option value="scheduled">Scheduled</option>
+          <option value="scheduled">Public at the weekly plan's scheduled time</option>
         </select>
       </SettingRow>
+      <p style={{color:'var(--v2-text-2)'}}>The channel weekly plan owns publication times, capacity and timezone. Upload pacing below is a safety limit, not a second publication calendar. <a href="/tutorial-studio?tab=calendar">Open weekly plan</a></p>
+      <details><summary>Advanced connection & safety limits</summary>
       <SettingRow
-        label="Timezone"
-        hint="IANA name used for schedules"
+        label="Legacy fallback timezone"
+        hint="Only for integrations without a channel weekly plan; never overrides a reserved publication time"
         htmlFor="uploader-timezone"
         controlWidth={220}
       >
@@ -210,8 +214,8 @@ export function UploaderSection({
         />
       </SettingRow>
       <SettingRow
-        label="Schedule lead"
-        hint="Minimum minutes between job release and publish time"
+        label="Legacy schedule lead (minutes)"
+        hint="Fallback safety buffer; not the interval between scheduled videos"
         htmlFor="uploader-lead"
         controlWidth={110}
       >
@@ -343,9 +347,10 @@ export function UploaderSection({
           }
         />
       </SettingRow>
+      </details>
       <SettingRow
         label="Manual release"
-        hint="Require an operator to release each prepared job"
+        hint="Keep on to hold new claims, including existing queued jobs. Turning this off can release eligible queued work; it is not a per-video release button."
         htmlFor="uploader-release"
         controlWidth={70}
       >

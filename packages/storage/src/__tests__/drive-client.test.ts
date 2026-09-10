@@ -125,6 +125,26 @@ describe("DriveClient folders", () => {
   });
 });
 
+describe("DriveClient immutable revision lookup", () => {
+  it("finds a requested source digest without selecting an older revision", async () => {
+    const drive = new FakeDrive();
+    const c = client(drive);
+    for (const sourceSha256 of ["a".repeat(64), "b".repeat(64)]) {
+      await c.uploadSmallFile({ filename: "thumbnail.jpg", parentId: "folder", mimeType: "image/jpeg", content: Buffer.from(sourceSha256), jobId: "job", kind: "thumbnail", sourceSha256 });
+    }
+    const exact = await c.findExistingArtifact("job", "thumbnail", "b".repeat(64));
+    expect(exact.ok && exact.value?.id).toBeTruthy();
+    const ambiguous = await c.findExistingArtifact("job", "thumbnail");
+    expect(ambiguous.ok).toBe(false);
+    if (!ambiguous.ok) expect(ambiguous.error.message).toContain("exact-ID reconciliation");
+  });
+
+  it.each([{ incompleteSearch: true }, { nextPageToken: "more" }, { files: [{ id: "one" }, { id: "two" }] }])("fails closed for incomplete or ambiguous listings %j", async (body) => {
+    const c = new DriveClient(fakeDriveConfig(), { fetch: async (input) => new Response(JSON.stringify(input.toString().includes("oauth2.googleapis.com") ? { access_token: "token", expires_in: 3600 } : body), { status: 200 }) });
+    expect((await c.findExistingArtifact("job", "thumbnail")).ok).toBe(false);
+  });
+});
+
 describe("DriveClient bounded reads", () => {
   function readClient(content: Buffer): DriveClient {
     let now = 0;

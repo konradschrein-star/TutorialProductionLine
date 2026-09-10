@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { resolve, extname, join } from "node:path";
+import { createReadStream, statSync } from "node:fs";
+import { extname } from "node:path";
+import { Readable } from "node:stream";
 import { getSession } from "@/lib/auth/session";
+import { resolveMediaKey, UnsafeMediaPathError } from "@/lib/media-path";
 
 export const dynamic = "force-dynamic";
 
@@ -56,16 +58,12 @@ export async function GET(
     );
   }
 
-  const rootAbs = resolve(mediaRoot);
-  const targetAbs = resolve(join(rootAbs, ...key));
-  if (!targetAbs.startsWith(rootAbs + "/") && targetAbs !== rootAbs) {
-    return NextResponse.json(
-      { error: "path traversal blocked" },
-      { status: 403 },
-    );
-  }
-  if (!existsSync(targetAbs)) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
+  let targetAbs: string;
+  try { targetAbs = await resolveMediaKey(mediaRoot, key); }
+  catch (error) {
+    if (error instanceof UnsafeMediaPathError) return NextResponse.json({ error: "path traversal blocked" }, { status: 403 });
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return NextResponse.json({ error: "not found" }, { status: 404 });
+    throw error;
   }
   const stats = statSync(targetAbs);
   if (!stats.isFile()) {
@@ -99,7 +97,7 @@ export async function GET(
       });
     }
     const stream = createReadStream(targetAbs, { start, end });
-    return new NextResponse(stream as unknown as ReadableStream, {
+    return new NextResponse(Readable.toWeb(stream) as ReadableStream, {
       status: 206,
       headers: {
         "Content-Type": contentType,
@@ -112,7 +110,7 @@ export async function GET(
   }
 
   const stream = createReadStream(targetAbs);
-  return new NextResponse(stream as unknown as ReadableStream, {
+  return new NextResponse(Readable.toWeb(stream) as ReadableStream, {
     status: 200,
     headers: {
       "Content-Type": contentType,

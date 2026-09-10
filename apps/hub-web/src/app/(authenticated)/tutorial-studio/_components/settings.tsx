@@ -9,6 +9,8 @@ import {
   updateTutorialSettingsAction,
 } from "@/app/actions/tutorial";
 import type { TutorialPromptPreset, TutorialSettingsRow } from "@repo/db";
+import { ChannelGroups } from "@/components/settings/channel-groups";
+import { ThumbnailAssetBulkUpload } from "@/components/settings/thumbnail-asset-bulk-upload";
 
 import { TUTORIAL_PROVIDERS } from "@repo/contracts";
 import { voiceControlsFor } from "./voice-controls";
@@ -492,6 +494,23 @@ function RecordingDefaults({ settings }: { settings: TutorialSettingsRow }) {
   );
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/me/tutorial-preferences", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Personal recording preferences unavailable");
+        return response.json();
+      })
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setHotkey(data.recordHotkey ?? "F8");
+          setSpeed(Number(data.playbackSpeed ?? 1));
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
   // "Click to set, then press a key" capture. While listening, the next
   // keydown becomes the hotkey. We store it in the SAME format Studio compares
   // against (studio.tsx onKey: `const code = e.code === "Space" ? "Space" : e.key`)
@@ -519,13 +538,16 @@ function RecordingDefaults({ settings }: { settings: TutorialSettingsRow }) {
   async function handleSave() {
     setSaving(true);
     try {
-      const result = await updateTutorialSettingsAction({
-        record_hotkey: hotkey,
-        default_playback_speed: speed,
+      const response = await fetch("/api/me/tutorial-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordHotkey: hotkey, playbackSpeed: speed }),
       });
-      if (result.success) {
+      if (response.ok) {
+        window.localStorage.setItem("tutorial-default-speed", String(speed));
         toast.success("Recording defaults saved.");
       } else {
+        const result = await response.json().catch(() => ({}));
         toast.error(result.error ?? "Failed to save.");
       }
     } finally {
@@ -1095,6 +1117,7 @@ export function ProductionSettings({
   canManage,
   canEditWorkflow,
 }: SettingsProps) {
+  const [section, setSection] = useState<"personal" | "channels" | "assets" | "prompts" | "providers">("personal");
   if (!canEditWorkflow) {
     return (
       <GlassCard style={{ padding: 40, textAlign: "center" }}>
@@ -1106,100 +1129,47 @@ export function ProductionSettings({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Provider API keys are no longer entered per-VA. They live in the ONE
-          secrets area (Settings → Credentials, admin only). VAs never handle
-          keys — and the pointer to the admin page is hidden from them, since
-          they cannot open it anyway. */}
-      {canManage && (
-        <GlassCard style={{ padding: 24 }}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: "var(--v2-text-1)",
-              marginBottom: 8,
-            }}
-          >
-            Provider API Keys
-          </div>
-          <p style={{ fontSize: 12, color: "var(--v2-text-2)", margin: 0 }}>
-            API keys are managed centrally by an administrator in{" "}
-            <a href="/settings" style={{ color: "var(--v2-accent)" }}>
-              Settings → Credentials
-            </a>
-            . Assistants no longer enter or see keys here.
-          </p>
-        </GlassCard>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <nav aria-label="Workflow settings sections" style={{ display: "flex", gap: 6, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 20, padding: 8, border: "1px solid var(--v2-border-2)", borderRadius: 10, background: "var(--v2-surface-1)" }}>
+        {([
+          ["personal", "My VA settings", "person"],
+          ...(canManage ? [["channels", "Channels & languages", "hub"], ["assets", "Thumbnail system", "dashboard_customize"], ["prompts", "Prompts & voice", "tune"], ["providers", "APIs & delivery", "key"]] : []),
+        ] as Array<[typeof section, string, string]>).map(([id, label, icon]) => <button key={id} type="button" className="v2-btn" aria-pressed={section === id} onClick={() => setSection(id)} style={{ minHeight: 44, background: section === id ? "rgba(var(--v2-accent-rgb),.14)" : "transparent", borderColor: section === id ? "var(--v2-accent)" : "var(--v2-border-2)" }}><span className="material-symbols-outlined" aria-hidden="true">{icon}</span>{label}</button>)}
+      </nav>
 
-      {/* Standard Translation Languages */}
-      <GlassCard style={{ padding: 24 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--v2-text-1)",
-            marginBottom: 16,
-          }}
-        >
-          Standard Translation Languages
-        </div>
-        <StandardTranslationLanguagesSettings />
-      </GlassCard>
-
-      {/* Prompt Library */}
-      <GlassCard style={{ padding: 24 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--v2-text-1)",
-            marginBottom: 16,
-          }}
-        >
-          Prompt Library
-        </div>
-        <PromptLibrary presets={presets} />
-      </GlassCard>
-
-      {/* Recording Defaults */}
-      <GlassCard style={{ padding: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--v2-text-1)", marginBottom: 16 }}>Thumbnail Generation</div>
-        <ThumbnailGenerationMode settings={settings} />
-        <ThumbnailRotationSettings settings={settings} />
-        <PersonaRotationSettings settings={settings} />
-      </GlassCard>
-
-      {/* Recording Defaults */}
-      <GlassCard style={{ padding: 24 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--v2-text-1)",
-            marginBottom: 16,
-          }}
-        >
-          Recording Defaults
-        </div>
+      {section === "personal" && <GlassCard style={{ padding: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>My VA settings</h2>
+        <p style={{ color: "var(--v2-text-2)", margin: "6px 0 18px" }}>These preferences belong only to your account. They do not change another assistant’s recording workspace.</p>
         <RecordingDefaults settings={settings} />
-      </GlassCard>
+      </GlassCard>}
 
-      {/* Default Voice Settings */}
-      <GlassCard style={{ padding: 24 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--v2-text-1)",
-            marginBottom: 16,
-          }}
-        >
-          Default Voice Settings
-        </div>
-        <DefaultVoiceSettings settings={settings} />
-      </GlassCard>
+      {canManage && section === "channels" && <GlassCard style={{ padding: 20 }}><ChannelGroups /></GlassCard>}
+
+      {canManage && section === "assets" && <>
+        <GlassCard style={{ padding: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Thumbnail system</h2>
+          <p style={{ color: "var(--v2-text-2)" }}>Choose each channel’s workflow, layouts, backgrounds and host references under Channels & languages. The controls below are workspace fallbacks.</p>
+          <ThumbnailRotationSettings settings={settings} />
+          <PersonaRotationSettings settings={settings} />
+        </GlassCard>
+        <GlassCard style={{ padding: 24 }}><ThumbnailAssetBulkUpload /></GlassCard>
+        <GlassCard style={{ padding: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <a className="v2-btn" href="/thumbnails?tab=archetypes">Manage procedural layouts</a>
+          <a className="v2-btn" href="/thumbnails?tab=library">Manage logos, symbols and backgrounds</a>
+          <a className="v2-btn" href="/characters">Manage avatars and reference poses</a>
+        </GlassCard>
+      </>}
+
+      {canManage && section === "prompts" && <>
+        <GlassCard style={{ padding: 24 }}><h2 style={{ margin: "0 0 16px", fontSize: 18 }}>Prompt library</h2><PromptLibrary presets={presets} /></GlassCard>
+        <GlassCard style={{ padding: 24 }}><h2 style={{ margin: "0 0 16px", fontSize: 18 }}>Workspace voice fallback</h2><DefaultVoiceSettings settings={settings} /></GlassCard>
+      </>}
+
+      {canManage && section === "providers" && <GlassCard style={{ padding: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>APIs, Drive and uploader</h2>
+        <p style={{ color: "var(--v2-text-2)" }}>Secrets stay in the administrator-only vault. Channel destinations and publication plans remain separate so changing an API key cannot reroute a channel.</p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><a className="v2-btn" href="/settings#connections">Open credentials and storage</a><a className="v2-btn" href="/tutorial-studio?tab=calendar">Open weekly publication plan</a><a className="v2-btn" href="/system-health">Test providers</a></div>
+      </GlassCard>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import {
   THUMBNAIL_PACK_LANGUAGES,
   assessThumbnailPack,
   assessThumbnailPackJob,
+  assessThumbnailDraft,
   type ThumbnailPackJob,
 } from "../thumbnail-pack";
 
@@ -22,6 +23,17 @@ function complete(language: string): ThumbnailPackJob {
 }
 
 describe("thumbnail publication pack", () => {
+  it("allows thumbnail editing during video processing without upload metadata", () => {
+    const draft = { ...complete("de"), status: "SPLICING", finalPath: null, description: null, tags: null };
+    expect(assessThumbnailDraft(draft).ready).toBe(true);
+    expect(assessThumbnailPackJob(draft).ready).toBe(false);
+    const jobs = THUMBNAIL_PACK_LANGUAGES.map((language) => ({ ...draft, jobId: `job-${language}`, language }));
+    expect(assessThumbnailPack(jobs, "editing").ready).toBe(true);
+    expect(assessThumbnailPack(jobs).ready).toBe(false);
+  });
+  it("still blocks missing localized copy in editing mode", () => {
+    expect(assessThumbnailDraft({ ...complete("fr"), thumbnailTextTop: " " }).ready).toBe(false);
+  });
   it("uses exactly English plus the four automatic translations", () => {
     expect(THUMBNAIL_PACK_LANGUAGES).toEqual(["en", "de", "fr", "it", "sv"]);
     expect(new Set(THUMBNAIL_PACK_LANGUAGES).size).toBe(5);
@@ -34,10 +46,7 @@ describe("thumbnail publication pack", () => {
       thumbnailTextBottom: " ",
     });
     expect(result.ready).toBe(false);
-    expect(result.reasons).toEqual([
-      "localized description missing",
-      "thumbnail bottom line missing",
-    ]);
+    expect(result.reasons).toEqual(["localized description missing"]);
   });
 
   it("does not accept fewer than five variants", () => {

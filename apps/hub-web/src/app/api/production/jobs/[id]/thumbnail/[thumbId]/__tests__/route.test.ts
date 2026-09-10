@@ -1,0 +1,16 @@
+import { beforeEach, expect, it, vi } from "vitest";
+const mocks=vi.hoisted(()=>({session:vi.fn(),permission:vi.fn(),job:vi.fn(),thumbnail:vi.fn(),media:vi.fn(),read:vi.fn()}));
+vi.mock("@/lib/auth/session",()=>({getSession:mocks.session}));
+vi.mock("@/lib/auth/rbac",()=>({hasPermission:mocks.permission}));
+vi.mock("@/lib/db",()=>({db:{}}));
+vi.mock("@repo/db",()=>({getTutorialJobById:mocks.job}));
+vi.mock("@/lib/repositories/thumbnail-studio-repository",()=>({getThumbnail:mocks.thumbnail}));
+vi.mock("@/lib/tutorial/media-access",()=>({withTutorialAsset:mocks.media}));
+vi.mock("node:fs/promises",()=>({readFile:mocks.read}));
+const {GET}=await import("../route");
+const get=()=>GET(new Request("http://localhost") as never,{params:Promise.resolve({id:"job",thumbId:"thumb"})});
+beforeEach(()=>{vi.clearAllMocks();mocks.session.mockResolvedValue({userId:"va",role:"TUTORIAL_VA"});mocks.permission.mockImplementation((_session,p)=>p==="view:production");mocks.job.mockResolvedValue({created_by:"va"});mocks.thumbnail.mockResolvedValue({subject_kind:"tutorial_job",subject_id:"job",output_path:"/media/thumb.jpg"});mocks.media.mockImplementation(async(input,consume)=>consume(input.path));mocks.read.mockResolvedValue(Buffer.from("thumbnail"));});
+it("hydrates and consumes the exact owned thumbnail under its lease",async()=>{const response=await get();expect(response.status).toBe(200);expect(await response.text()).toBe("thumbnail");expect(mocks.media).toHaveBeenCalledWith({jobId:"job",kind:"thumbnail",path:"/media/thumb.jpg"},expect.any(Function));});
+it("does not look up an archive or image for another VA",async()=>{mocks.job.mockResolvedValue({created_by:"other"});expect((await get()).status).toBe(403);expect(mocks.thumbnail).not.toHaveBeenCalled();expect(mocks.media).not.toHaveBeenCalled();});
+it("rejects mismatched polymorphic subject before hydration",async()=>{mocks.thumbnail.mockResolvedValue({subject_kind:"content_job",subject_id:"job",output_path:"/media/thumb.jpg"});expect((await get()).status).toBe(404);expect(mocks.media).not.toHaveBeenCalled();});
+it("returns a safe unavailable error without leaking archive paths or IDs",async()=>{mocks.media.mockRejectedValue(new Error("private-path private-drive-id"));const response=await get();expect(response.status).toBe(404);expect(await response.text()).not.toContain("private-");expect(mocks.read).not.toHaveBeenCalled();});

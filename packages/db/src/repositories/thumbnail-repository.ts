@@ -9,6 +9,8 @@ import {
   inArray,
 } from "drizzle-orm";
 import type { DrizzleClient } from "../client.js";
+import { tutorialChannelProfile, type TutorialChannelProfile } from "@repo/contracts";
+import { channels } from "../schema/channels.js";
 import {
   thumbnailArchetypes,
   channelThumbnailArchetypes,
@@ -556,6 +558,21 @@ export async function getChannelThumbnailProfile(
     .where(eq(channelThumbnailProfiles.channel_id, channelId))
     .limit(1);
   return row;
+}
+
+/** Channel-owned tutorial thumbnail workflow and prompt overrides. Keeping the
+ * lookup in the repository boundary lets workers use the same profile contract
+ * without reaching through a mocked Drizzle client in engine tests. */
+export async function getTutorialChannelProfile(
+  db: DrizzleClient,
+  channelId: string,
+): Promise<TutorialChannelProfile> {
+  const [row] = await db
+    .select({ metadata: channels.metadata })
+    .from(channels)
+    .where(eq(channels.id, channelId))
+    .limit(1);
+  return tutorialChannelProfile(row?.metadata);
 }
 
 export async function upsertChannelThumbnailProfile(

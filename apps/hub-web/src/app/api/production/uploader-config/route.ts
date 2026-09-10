@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSecret } from "@repo/db";
 import { getUploaderSettings } from "@/lib/uploader/settings";
+import { UPLOADER_DISCOVERY_HOLD } from "@/lib/uploader/discovery-safety";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,7 +33,9 @@ export async function GET(request: NextRequest) {
     version: 1,
     fetchedAt: new Date().toISOString(),
     safety: {
-      mayExecute: settings.enabled && settings.executionMode === "live",
+      mayExecute: false,
+      inspectionOnly: true,
+      reason: UPLOADER_DISCOVERY_HOLD,
       dryRun: settings.executionMode === "dry_run",
       requireManualRelease: settings.requireManualRelease,
     },

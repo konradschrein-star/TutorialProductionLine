@@ -2,32 +2,18 @@
 
 import { useState } from "react";
 import { GlassCard } from "@/app/(authenticated)/_components/glass-card";
-
-type Check = {
-  id: string;
-  label: string;
-  ready: boolean;
-  detail: string;
-  href: string;
-};
+import { setupProbeTargets, setupSummary, type SetupCheck } from "./setup-checks";
 type Probe = { ok: boolean; detail: string; latencyMs?: number };
 
-export function SetupReadinessCard({ checks }: { checks: Check[] }) {
+export function SetupReadinessCard({ checks }: { checks: SetupCheck[] }) {
   const [probes, setProbes] = useState<Record<string, Probe>>({});
   const [running, setRunning] = useState(false);
-  const ready = checks.filter((c) => c.ready).length;
+  const summary = setupSummary(checks);
 
   async function runChecks() {
     setRunning(true);
     setProbes({});
-    for (const target of [
-      "db",
-      "redis",
-      "script",
-      "tts",
-      "drive",
-      "uploader",
-    ]) {
+    for (const target of setupProbeTargets(checks)) {
       try {
         const response = await fetch("/api/health/test", {
           method: "POST",
@@ -38,7 +24,7 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
         setProbes((p) => ({
           ...p,
           [target]: {
-            ok: Boolean(result.ok),
+            ok: response.ok && result.ok === true,
             detail: result.detail ?? result.error ?? `HTTP ${response.status}`,
             latencyMs: result.latencyMs,
           },
@@ -71,23 +57,23 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
           <div
             style={{ fontSize: 13, fontWeight: 800, color: "var(--v2-text-1)" }}
           >
-            Handoff checklist
+            Workspace setup
           </div>
           <div
             style={{ marginTop: 3, fontSize: 10.5, color: "var(--v2-text-2)" }}
           >
-            Everything your friend should be able to maintain from this console.
+            Saved configuration is not a live production test. Optional connections can be added later.
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <span
             style={{
               fontSize: 11,
-              color: ready === checks.length ? "#7fd99a" : "#e6b34a",
+              color: "var(--v2-text-1)",
               fontWeight: 800,
             }}
           >
-            {ready}/{checks.length} configured
+            {summary.configured}/{summary.total} core settings configured
           </span>
           <button
             onClick={runChecks}
@@ -102,7 +88,7 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
               fontWeight: 700,
             }}
           >
-            {running ? "Checking…" : "Test all connections"}
+            {running ? "Checking…" : "Test enabled connections"}
           </button>
         </div>
       </div>
@@ -128,8 +114,9 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
           >
             <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
               <span
+                aria-hidden="true"
                 style={{
-                  color: check.ready ? "#7fd99a" : "#e6b34a",
+                  color: "var(--v2-text-2)",
                   fontSize: 12,
                 }}
               >
@@ -142,7 +129,7 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
                   fontWeight: 700,
                 }}
               >
-                {check.label}
+                {check.label}{check.optional ? " · Optional" : ""}
               </span>
             </div>
             <div
@@ -152,13 +139,14 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
                 margin: "4px 0 0 19px",
               }}
             >
-              {check.detail}
+              {check.ready ? "Configured. " : check.optional ? "Setup deferred. " : "Needs setup. "}{check.detail}
             </div>
           </a>
         ))}
       </div>
       {Object.keys(probes).length > 0 && (
         <div
+          role="status"
           style={{
             marginTop: 12,
             borderTop: "1px solid rgba(255,255,255,.07)",
@@ -171,7 +159,6 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
           {Object.entries(probes).map(([name, result]) => (
             <span
               key={name}
-              title={result.detail}
               style={{
                 fontSize: 10,
                 padding: "4px 7px",
@@ -182,7 +169,7 @@ export function SetupReadinessCard({ checks }: { checks: Check[] }) {
                   : "rgba(230,120,120,.1)",
               }}
             >
-              {name}: {result.ok ? "OK" : "failed"}
+              {name}: {result.ok ? "OK" : "failed"} — {result.detail}
               {result.latencyMs != null ? ` · ${result.latencyMs}ms` : ""}
             </span>
           ))}

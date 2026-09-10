@@ -79,7 +79,7 @@ describe("retention sweep", () => {
     await expect(stat(finalPath)).resolves.toBeDefined();
   });
 
-  it("deletes only the kinds Drive has confirmed", async () => {
+  it("blocks eviction even when the legacy Drive flag is set", async () => {
     const finalPath = await makeFile("job2/final.mp4");
     const rawPath = await makeFile("job2/raw.mp4");
     // Drive confirmed the final video but NOT the raw recording.
@@ -97,9 +97,11 @@ describe("retention sweep", () => {
 
     const r = await runRetentionSweepOnce(db, { mediaRoot, dryRun: false });
 
-    expect(r.deleted).toBe(1);
+    expect(r.deleted).toBe(0);
+    expect(r.proposedFiles).toBe(1);
+    expect(r.blockedUnsafeEviction).toBe(true);
     expect(r.skippedUnconfirmed).toBe(1);
-    await expect(stat(finalPath)).rejects.toThrow(); // gone
+    await expect(stat(finalPath)).resolves.toBeDefined(); // kept until verified restore exists
     await expect(stat(rawPath)).resolves.toBeDefined(); // kept
   });
 
@@ -120,8 +122,10 @@ describe("retention sweep", () => {
     const r = await runRetentionSweepOnce(db, { mediaRoot, dryRun: true });
 
     expect(r.dryRun).toBe(true);
-    expect(r.deleted).toBe(1);
-    expect(r.bytesFreed).toBe(2048);
+    expect(r.deleted).toBe(0);
+    expect(r.bytesFreed).toBe(0);
+    expect(r.proposedFiles).toBe(1);
+    expect(r.proposedBytes).toBe(2048);
     await expect(stat(finalPath)).resolves.toBeDefined();
   });
 

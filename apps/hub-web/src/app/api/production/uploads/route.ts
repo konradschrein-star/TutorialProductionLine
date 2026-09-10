@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   and,
   desc,
   eq,
+  ilike,
   inArray,
   isNotNull,
   isNull,
@@ -19,8 +21,12 @@ import {
   storageArtifacts,
   thumbnails,
   tutorialUploadDispatches,
+  tutorialSourceRevision,
+  tutorialJobEvents,
 } from "@/lib/db";
 import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
+import { verifyPublicationApproval } from "@/lib/tutorial/verify-publication-approval";
+import { mayAccessDelivery, uploaderChannelIds } from "@/lib/tutorial/delivery-access";
 import {
   DispatchGateError,
   validateDispatchCandidate,
@@ -40,6 +46,7 @@ export interface UploaderDispatchView {
 }
 
 export interface TranslationDeliveryItem {
+  finalReviewRecorded: boolean;
   id: string;
   sourceJobId: string;
   language: string;
@@ -73,6 +80,7 @@ export interface TranslationDeliveryItem {
 }
 
 export interface VideoDeliveryRow {
+  finalReviewRecorded: boolean;
   id: string;
   title: string;
   keywordRef: string | null;
@@ -130,12 +138,21 @@ export interface UploadCalendarDay {
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "view:production")) {
+  if (!session || (!hasPermission(session, "view:production") && !hasPermission(session, "upload:youtube-video"))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const canDispatch = hasPermission(session, "upload:youtube-video");
+  const privileged = session.role === "ADMIN" || session.role === "MANAGER" || hasPermission(session, "manage:tutorial-settings");
+  const query = new URL(request.url).searchParams;
+  const parsedQuery = z.object({ q: z.string().trim().max(200).default(""), filter: z.enum(["ALL", "PENDING", "UPLOADED"]).default("ALL"), beforeAt: z.string().datetime().optional(), beforeId: z.string().uuid().optional() }).refine((value) => Boolean(value.beforeAt) === Boolean(value.beforeId), "Both cursor fields are required").safeParse(Object.fromEntries(query));
+  if (!parsedQuery.success) return NextResponse.json({ error: "Invalid search, filter or pagination cursor." }, { status: 400 });
+  const { q, filter, beforeAt, beforeId } = parsedQuery.data;
+  const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+  const sortTime = sql`coalesce(${tutorialJobs.completed_at}, ${tutorialJobs.created_at})`;
 
   try {
+    const assignedChannelIds = session.role === "UPLOADER_VA" ? await uploaderChannelIds(session.userId) : [];
+    const visibilityScope = privileged ? undefined : session.role === "UPLOADER_VA" ? (assignedChannelIds.length ? inArray(tutorialJobs.channel_id, assignedChannelIds) : sql`false`) : eq(tutorialJobs.created_by, session.userId);
     // Keep the calendar independent from the 60-row operational table below.
     // At five channels per hour that table only covers a few days, while the
     // calendar needs enough history to make missed channel-days visible.
@@ -172,6 +189,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       .where(
         and(
           sql`${calendarTimestamp} >= ${calendarSince.toISOString()}::timestamptz`,
+          visibilityScope,
           or(
             eq(tutorialJobs.is_uploaded, true),
             inArray(tutorialJobs.uploader_status, ["scheduled", "uploaded"]),
@@ -196,8 +214,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     }));
 
     // 1. Fetch completed primary tutorial jobs (originals)
-    const parents = await db
+    const fetchedParents = await db
       .select({
+        cursorTime: sql<string>`to_char(${sortTime} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         id: tutorialJobs.id,
         title: tutorialJobs.title,
         keywordRef: tutorialJobs.keyword_ref,
@@ -231,6 +250,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         deliveredToDrive: tutorialJobs.delivered_to_drive,
         outputQaStatus: tutorialJobs.output_qa_status,
         outputQaDetail: tutorialJobs.output_qa_detail,
+        reviewStatus: tutorialJobs.va_review_status,
+        hasApproval: sql<boolean>`${tutorialJobs.publication_approval} is not null`,
       })
       .from(tutorialJobs)
       .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
@@ -239,17 +260,25 @@ export async function GET(request: Request): Promise<NextResponse> {
         and(
           eq(tutorialJobs.status, "COMPLETED"),
           isNull(tutorialJobs.source_job_id),
+          eq(tutorialJobs.va_review_status, "approved"),
+          isNotNull(tutorialJobs.publication_approval),
+          visibilityScope,
+          filter === "ALL" ? undefined : eq(tutorialJobs.is_uploaded, filter === "UPLOADED"),
+          q ? or(ilike(tutorialJobs.title, pattern), ilike(tutorialJobs.keyword_ref, pattern), ilike(users.name, pattern), ilike(users.email, pattern), sql`exists (select 1 from tutorial_jobs locale_search where locale_search.source_job_id = ${tutorialJobs.id} and locale_search.title ilike ${pattern})`) : undefined,
+          beforeAt && beforeId ? sql`(${sortTime}, ${tutorialJobs.id}) < (${beforeAt}::timestamptz, ${beforeId}::uuid)` : undefined,
         ),
       )
       .orderBy(
-        sql`${tutorialJobs.completed_at} DESC NULLS LAST`,
-        desc(tutorialJobs.created_at),
+        sql`${sortTime} DESC`,
+        desc(tutorialJobs.id),
       )
       // Rendering 300 expandable rows (plus every translation) made a single
       // click re-render thousands of controls and lock up modest VA laptops.
-      // The newest 60 is the operational queue; search/paging can be server
-      // driven later without returning the whole archive to the browser.
-      .limit(60);
+      // Search/filter happen before the bounded page, including locale titles.
+      .limit(61);
+    const parents = fetchedParents.slice(0, 60);
+    const last = parents.at(-1);
+    const nextCursor = fetchedParents.length > 60 && last ? { beforeAt: last.cursorTime, beforeId: last.id } : null;
 
     const parentIds = parents.map((p) => p.id);
 
@@ -284,6 +313,7 @@ export async function GET(request: Request): Promise<NextResponse> {
               deliveredToDrive: tutorialJobs.delivered_to_drive,
               outputQaStatus: tutorialJobs.output_qa_status,
               outputQaDetail: tutorialJobs.output_qa_detail,
+              hasApproval: sql<boolean>`${tutorialJobs.publication_approval} is not null`,
             })
             .from(tutorialJobs)
             .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
@@ -291,6 +321,7 @@ export async function GET(request: Request): Promise<NextResponse> {
               and(
                 isNotNull(tutorialJobs.source_job_id),
                 inArray(tutorialJobs.source_job_id, parentIds),
+                visibilityScope,
               ),
             )
         : [];
@@ -484,6 +515,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         ? thumbRows.find((row) => row.id === selection.thumbnail!.id)
         : undefined;
       translationsMap.get(c.sourceJobId)!.push({
+        finalReviewRecorded: Boolean(c.hasApproval && parents.some(p => p.id === c.sourceJobId && p.reviewStatus === "approved" && p.hasApproval)),
         id: c.id,
         sourceJobId: c.sourceJobId,
         language: c.language ?? "Translated",
@@ -547,6 +579,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         : undefined;
       return {
         id: p.id,
+        finalReviewRecorded: p.reviewStatus === "approved" && Boolean(p.hasApproval),
         title: p.title,
         keywordRef: p.keywordRef,
         ktUrl: p.ktUrl,
@@ -570,7 +603,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         completedAt: p.completedAt ? p.completedAt.toISOString() : null,
         createdAt: p.createdAt.toISOString(),
         uploader: dispatchMap.get(p.id) ?? null,
-        translations: translationsMap.get(p.id) ?? [],
+        translations: (translationsMap.get(p.id) ?? []).filter(item => item.finalReviewRecorded),
         description: p.description,
         tags: p.tags,
         deliveredToDrive: p.deliveredToDrive,
@@ -615,7 +648,11 @@ export async function GET(request: Request): Promise<NextResponse> {
       totalUploaded,
       totalPending,
       canDispatch,
+      canViewPlan: hasPermission(session, "view:production"),
+      canInspectUploader: session.role === "ADMIN",
       uploadCalendar,
+      nextCursor,
+      countScope: "page",
     });
   } catch (error) {
     console.error("Failed to load uploads delivery overview:", error);
@@ -639,26 +676,24 @@ export async function PATCH(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const body = (await request.json()) as {
-      jobId?: string;
-      isUploaded?: boolean;
-      youtubeUrl?: string;
-    };
-
-    const jobId = body.jobId;
-    if (!jobId) {
-      return NextResponse.json({ error: "jobId is required" }, { status: 400 });
-    }
-
-    const isUploaded = Boolean(body.isUploaded);
+    const parsed = z.object({ jobId: z.string().uuid(), isUploaded: z.boolean(), youtubeUrl: z.string().max(500).optional() }).strict().safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return NextResponse.json({ error: "Expected a tutorial ID, boolean status and optional YouTube URL." }, { status: 400 });
+    const { jobId, isUploaded } = parsed.data;
     const uploader = session.email ?? session.userId ?? "manual_uploader";
-
-    const [blockingDispatch] = await db
+    return db.transaction(async (tx) => {
+    const [initial] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, jobId)).limit(1);
+    const privileged = session.role === "ADMIN" || session.role === "MANAGER" || hasPermission(session, "manage:tutorial-settings");
+    if (!initial) return NextResponse.json({ error: "Tutorial not found" }, { status: 404 });
+    if (!privileged && !await mayAccessDelivery(session, initial)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const [source] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initial.source_job_id ?? initial.id)).for("update");
+    const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, jobId)).for("update");
+    if (!source || !current || (!privileged && !await mayAccessDelivery(session, current))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const [blockingDispatch] = await tx
       .select({ id: tutorialUploadDispatches.id })
       .from(tutorialUploadDispatches)
       .where(eq(tutorialUploadDispatches.tutorial_job_id, jobId))
       .limit(1);
-    if (blockingDispatch) {
+    if (blockingDispatch || current.upload_verified_at || current.uploader_job_id) {
       return NextResponse.json(
         {
           error:
@@ -668,25 +703,45 @@ export async function PATCH(request: Request): Promise<NextResponse> {
       );
     }
 
-    await db
+    let youtubeUrl: string | null = null;
+    if (isUploaded) {
+      try {
+        const url = new URL(parsed.data.youtubeUrl ?? "");
+        const videoId = url.hostname === "youtu.be" ? url.pathname.slice(1) : ["youtube.com", "www.youtube.com"].includes(url.hostname) && url.pathname === "/watch" ? url.searchParams.get("v") : null;
+        if (url.protocol !== "https:" || !videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error();
+        youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      } catch { return NextResponse.json({ error: "Provide the HTTPS YouTube watch/share link for the uploaded video." }, { status: 400 }); }
+      if (source.va_review_status !== "approved") return NextResponse.json({ error: "Final review is required before manual delivery." }, { status: 409 });
+      try {
+        await verifyPublicationApproval(tx, source, tutorialSourceRevision(source));
+        if (current.id !== source.id) await verifyPublicationApproval(tx, current, tutorialSourceRevision(source));
+      } catch { return NextResponse.json({ error: "Current assets need final review before manual delivery can be recorded." }, { status: 409 }); }
+    } else if (current.uploader_status && current.uploader_status !== "reported_uploaded") {
+      return NextResponse.json({ error: "Only an unverified manual report can be withdrawn here. Reconcile external uploader state separately." }, { status: 409 });
+    }
+    await tx
       .update(tutorialJobs)
       .set({
         is_uploaded: isUploaded,
-        uploader_status: isUploaded ? "uploaded" : "waiting_to_be_uploaded",
-        youtube_visibility: isUploaded ? "public" : null,
+        uploader_status: isUploaded ? "reported_uploaded" : null,
+        youtube_visibility: null,
         uploaded_at: isUploaded ? new Date() : null,
-        youtube_published_at: isUploaded ? new Date() : null,
+        youtube_published_at: null,
         upload_verified_at: null,
         uploaded_by: isUploaded ? uploader : null,
-        youtube_upload_url: body.youtubeUrl ?? null,
+        youtube_upload_url: youtubeUrl,
       })
       .where(eq(tutorialJobs.id, jobId));
 
+    await tx.insert(tutorialJobEvents).values({ tutorial_job_id: jobId, actor_id: session.userId, event_type: isUploaded ? "manual_upload_reported" : "manual_upload_report_withdrawn", payload: { verified: false, youtubeUrl, approvalRevision: (current.publication_approval as { revision?: string } | null)?.revision ?? null } });
     return NextResponse.json({
       success: true,
       jobId,
       isUploaded,
       uploadedBy: isUploaded ? uploader : null,
+      verified: false,
+      publicationConfirmed: false,
+    });
     });
   } catch (error) {
     console.error("Failed to update upload status:", error);

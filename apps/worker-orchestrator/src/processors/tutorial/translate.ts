@@ -12,8 +12,11 @@ import {
   TutorialTranslatePayloadSchema,
   TUTORIAL_PROVIDERS,
   normalizeTutorialLanguage,
+  resolveTutorialChannelTargets,
+  tutorialChannelProfile,
 } from "@repo/contracts";
 import type { DrizzleClient, ChannelVoice, TutorialJob } from "@repo/db";
+import { deriveLogoSubject } from "@repo/domain";
 import {
   getTutorialJobById,
   updateTutorialJob,
@@ -22,8 +25,11 @@ import {
   getTutorialSettings,
   getChannelVoice,
   getVoiceForLanguage,
+  getTTSVoiceByDatabaseId,
   tutorialJobs,
   channels,
+  thumbnails,
+  tutorialSourceRevision,
   eq,
   and,
 } from "@repo/db";
@@ -37,7 +43,11 @@ import {
 import { withTTSSlot } from "../../utils/tts-gateway.js";
 import { ai33TTSCircuitBreaker } from "../../utils/ai33-circuit-breaker.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
-import { selectTranslationChannel } from "../../utils/tutorial/thumbnail-context.js";
+import { resolveConfiguredTutorialVoice } from "../../utils/tutorial/configured-voice-default.js";
+import { parseThumbnailCopy, thumbnailCopyPrompt } from "../../utils/tutorial/thumbnail-copy.js";
+import { assertLocalizationCurrent } from "../../utils/tutorial/localization-fence.js";
+import { withTutorialWorkerInputs } from "../../utils/tutorial/media-inputs.js";
+import { sql } from "drizzle-orm";
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
@@ -301,6 +311,7 @@ async function synthesizeTranslatedTts(
     scriptText: string;
     ttsProvider: string;
     ttsVoice: string;
+    language: string;
     voiceSettings: Record<string, unknown> | null;
     channelId: string | null;
   },
@@ -355,7 +366,13 @@ async function synthesizeTranslatedTts(
       continue;
     }
 
-    const voice = resolveVoiceForProvider(
+    const configuredVoice = await resolveConfiguredTutorialVoice({
+      providerId, jobProvider: ttsProvider, jobVoice: ttsVoice,
+      settingsDefaultVoice: tutorialSettingsRow.default_tts_voice,
+      language: args.language, channelVoice, env: process.env,
+      findVoiceRow: id => getTTSVoiceByDatabaseId(db, id),
+    });
+    const voice = configuredVoice ?? resolveVoiceForProvider(
       providerId,
       ttsVoice,
       channelVoice,
@@ -468,7 +485,7 @@ export function createTutorialTranslateProcessor(
   },
 ) {
   return async (job: Job<TutorialTranslatePayload>) => {
-    const { sourceJobId, targetLanguage } =
+    const { sourceJobId, targetLanguage, sourceRevision, thumbnailId, purpose } =
       TutorialTranslatePayloadSchema.parse(job.data);
     const languageName = LANGUAGE_NAMES[targetLanguage] ?? targetLanguage;
 
@@ -498,6 +515,35 @@ export function createTutorialTranslateProcessor(
           `Source tutorial job ${sourceJobId} must be an explicit English original`,
         );
       }
+      if (purpose === "thumbnail-copy") {
+        const children = await db.select().from(tutorialJobs).where(eq(tutorialJobs.source_job_id, source.id));
+        const matches = targetLanguage === "en" ? [source] : children.filter((row) => normalizeTutorialLanguage(row.language) === targetLanguage);
+        if (matches.length !== 1) throw new Error("Prepare a unique locale draft before generating its headline.");
+        const draft = matches[0]!;
+        childId = draft.id;
+        if ((targetLanguage !== "en" && draft.status !== "AWAITING_THUMBNAILS") || draft.status === "CANCELLED" || draft.va_review_status === "rework_requested" || draft.thumbnail_text_top?.trim()) return;
+        const slot = resolveSecretProvider("llm", source.script_provider);
+        const keys = slot ? await presentKeys(db, envNamesForSlot(slot)) : [];
+        const [draftChannel] = draft.channel_id
+          ? await db.select({ metadata: channels.metadata }).from(channels).where(eq(channels.id, draft.channel_id)).limit(1)
+          : [];
+        const copyOverride = tutorialChannelProfile(draftChannel?.metadata).promptOverrides.thumbnailText.trim();
+        const copy = parseThumbnailCopy(await generateScript({ provider: source.script_provider,
+          model: source.script_model ?? undefined, apiKey: keys[0] ?? "", timeoutMs: 60_000, maxTokens: 1500,
+          prompt: thumbnailCopyPrompt(source.title, source.thumbnail_text_top, source.thumbnail_text_bottom, languageName) +
+            (copyOverride ? `\n\nCHANNEL-SPECIFIC THUMBNAIL COPY INSTRUCTIONS:\n${copyOverride}` : ""),
+        }), deriveLogoSubject(source.title));
+        await db.transaction(async (tx) => {
+          await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, source.id)).for("update");
+          const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, draft.id));
+          // An operator's concurrent edits or approval always win.
+          if (!current || (targetLanguage !== "en" && current.status !== "AWAITING_THUMBNAILS") || current.status === "CANCELLED" || current.va_review_status === "rework_requested" || current.thumbnail_text_top?.trim() || current.thumbnail_text_bottom?.trim()) return;
+          const selected = await tx.select({ id: thumbnails.id }).from(thumbnails).where(and(eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, draft.id), eq(thumbnails.is_selected, true))).limit(1);
+          if (selected.length) return;
+          await tx.update(tutorialJobs).set({ thumbnail_text_top: copy.top, thumbnail_text_bottom: copy.bottom, error_stage: null, error_message: null }).where(eq(tutorialJobs.id, draft.id));
+        });
+        return;
+      }
       if (source.status !== "COMPLETED") {
         throw new Error(
           `Source tutorial job ${sourceJobId} is ${source.status}, not COMPLETED — cannot translate`,
@@ -514,17 +560,23 @@ export function createTutorialTranslateProcessor(
         );
       }
 
+      // Hydrate and verify the exact source revision before any localization
+      // work. The mapping gate below still runs before LLM/TTS quota is spent,
+      // while a missing local/Drive input retains the media-specific recovery
+      // error operators need to resolve.
+      await withTutorialWorkerInputs({ jobId: source.id, recordingPath: source.recording_path }, async () => {
+
       // Resolve the target brand before spending translation/TTS quota. There
       // is no safe fallback to the English source channel: that would select
       // the English host, profile, Drive folder, and uploader destination.
       const targetChannels = await db
-        .select({ id: channels.id, language: channels.language })
+        .select({ id: channels.id, language: channels.language, isPrimary: channels.is_primary, enabled: channels.accepts_tutorials, metadata: channels.metadata })
         .from(channels)
         .where(eq(channels.accepts_tutorials, true));
-      const targetChannel = selectTranslationChannel(
-        targetLanguage,
-        targetChannels,
-      );
+      const topology = resolveTutorialChannelTargets(source.channel_id, targetChannels);
+      if (topology.blocked.some((item) => item.language === targetLanguage)) {
+        throw new Error(`Translation channel for ${targetLanguage} is ambiguous; keep exactly one enabled destination in the source channel group`);
+      }
 
       // Idempotency: a BullMQ retry re-runs this whole processor. Reuse an
       // existing child for (source, language) so a retry never creates a
@@ -543,11 +595,20 @@ export function createTutorialTranslateProcessor(
         );
       }
       const existingChild = existingChildren[0];
+      childId = existingChild?.id ?? null;
+      const targetMatches = topology.targets.filter((target) => target.language === targetLanguage);
+      if (targetMatches.length !== 1) {
+        throw new Error(`Translation channel for ${targetLanguage} is not explicitly enabled under source channel ${source.channel_id ?? "missing"}`);
+      }
+      const targetChannel = targetMatches[0]!;
+      if (existingChild?.channel_id && existingChild.channel_id !== targetChannel.channelId) {
+        throw new Error(`Existing ${targetLanguage} draft is assigned to ${existingChild.channel_id}, not the configured destination ${targetChannel.channelId}`);
+      }
 
       if (existingChild && existingChild.status === "COMPLETED") {
-        if (existingChild.channel_id !== targetChannel.id) {
+        if (existingChild.channel_id !== targetChannel.channelId) {
           throw new Error(
-            `Completed translation ${existingChild.id} is assigned to the wrong channel; expected ${targetChannel.id}`,
+            `Completed translation ${existingChild.id} is assigned to the wrong channel; expected ${targetChannel.channelId}`,
           );
         }
         console.log(
@@ -561,6 +622,21 @@ export function createTutorialTranslateProcessor(
         );
         return;
       }
+
+      // Queue payloads are not approval authority. Even direct scripts and
+      // retried jobs must pass the thumbnail-first gate before spending quota.
+      {
+        if (!existingChild) throw new Error("Prepare and approve the locale thumbnail draft before localization.");
+        if (!sourceRevision || tutorialSourceRevision(source) !== sourceRevision) throw new Error("The source recording changed. Retry localization from the current approved thumbnail pack.");
+        const approved = await db.select().from(thumbnails).where(and(
+          eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, existingChild.id), eq(thumbnails.is_selected, true),
+        ));
+        const matching = approved.filter((row) => normalizeTutorialLanguage(row.language) === targetLanguage);
+        if (matching.length !== 1 || matching[0]!.id !== thumbnailId || matching[0]!.channel_id !== targetChannel.channelId || matching[0]!.status !== "completed" || !matching[0]!.output_path || !["acceptable", "strong"].includes(matching[0]!.review_verdict)) {
+          throw new Error("Approve the selected locale thumbnail before localization.");
+        }
+      }
+      if (childId) await updateTutorialJob(db, childId, { status: "GENERATING_SCRIPT", progress: 5, error_message: null });
 
       // Resolve the LLM key exactly as generate.ts does (per-VA keys abolished).
       const llmSecretProvider = resolveSecretProvider(
@@ -581,7 +657,11 @@ export function createTutorialTranslateProcessor(
         maxTokens: TRANSLATE_MAX_TOKENS,
         prompt:
           `Translate the following software-tutorial narration into ${languageName}. ` +
-          `Output ONLY the spoken words, no notes, no markdown.\n\n${source.script_text}`,
+          `Output ONLY the spoken words, no notes, no markdown.` +
+          (targetChannel.profile.promptOverrides.translation.trim()
+            ? `\n\nCHANNEL-SPECIFIC TRANSLATION INSTRUCTIONS:\n${targetChannel.profile.promptOverrides.translation.trim()}`
+            : "") +
+          `\n\n${source.script_text}`,
       });
       const { text: translatedScript } = sanitizeScriptText(rawTranslated);
       if (!translatedScript.trim()) {
@@ -602,7 +682,11 @@ export function createTutorialTranslateProcessor(
           maxTokens: 500,
           prompt:
             `Translate this software-tutorial video title into ${languageName}. ` +
-            `Output ONLY the translated title, nothing else.\n\n${source.title}`,
+            `Output ONLY the translated title, nothing else.` +
+            (targetChannel.profile.promptOverrides.translation.trim()
+              ? `\n\nCHANNEL-SPECIFIC TRANSLATION INSTRUCTIONS:\n${targetChannel.profile.promptOverrides.translation.trim()}`
+              : "") +
+            `\n\n${source.title}`,
         });
         const cleaned = rawTitle
           .trim()
@@ -629,6 +713,8 @@ export function createTutorialTranslateProcessor(
         apiKey: llmApiKey,
         model: source.script_model ?? undefined,
         language: languageName,
+        metadataInstructions: targetChannel.profile.promptOverrides.metadata,
+        thumbnailTextInstructions: targetChannel.profile.promptOverrides.thumbnailText,
       });
 
       // 3b) Resolve a NATIVE per-language voice. If the friend configured a
@@ -639,11 +725,13 @@ export function createTutorialTranslateProcessor(
       let ttsProvider = source.tts_provider;
       let ttsVoice = source.tts_voice;
       const langVoice = await getVoiceForLanguage(db, targetLanguage);
+      let nativeVoiceSelected = false;
       if (langVoice) {
         const mappedProvider = normalizeTtsProviderId(langVoice.provider);
         if (mappedProvider) {
           ttsProvider = mappedProvider;
           ttsVoice = langVoice.voice_id;
+          nativeVoiceSelected = true;
           console.log(
             JSON.stringify({
               level: "info",
@@ -662,6 +750,23 @@ export function createTutorialTranslateProcessor(
       //     uploader target the right brand. Ambiguous/missing routing already
       //     failed above; the English source channel is never a fallback.
       // 4) Create or reuse the CHILD job (reuses the SOURCE recording).
+      const currentSource = await getTutorialJobById(db, sourceJobId);
+      if (sourceRevision && (!currentSource || tutorialSourceRevision(currentSource) !== sourceRevision || currentSource.status !== "COMPLETED")) {
+        throw new Error("Source changed during translation. Discarding the stale result; retry from the current recording.");
+      }
+
+      // An inherited English source voice is not an explicit German choice.
+      // Keep native selections, then target-channel binding, then exact EN/DE
+      // configured row defaults. Never reinterpret DEFAULT_* as provider IDs.
+      if (!nativeVoiceSelected) {
+        const configured = await resolveConfiguredTutorialVoice({
+          providerId: ttsProvider, jobProvider: ttsProvider, jobVoice: "",
+          settingsDefaultVoice: "", language: targetLanguage,
+          channelVoice: await getChannelVoice(db, targetChannel.channelId), env: process.env,
+          findVoiceRow: id => getTTSVoiceByDatabaseId(db, id),
+        });
+        if (configured) ttsVoice = configured;
+      }
       if (existingChild) {
         childId = existingChild.id;
         await updateTutorialJob(db, childId, {
@@ -670,14 +775,15 @@ export function createTutorialTranslateProcessor(
           script_done_at: new Date(),
           description: uploadMeta.description,
           tags: uploadMeta.tags,
-          thumbnail_text_top: uploadMeta.thumbnailTextTop,
-          thumbnail_text_bottom: uploadMeta.thumbnailTextBottom,
+          thumbnail_text_top: existingChild.thumbnail_text_top ?? uploadMeta.thumbnailTextTop,
+          thumbnail_text_bottom: existingChild.thumbnail_text_bottom ?? uploadMeta.thumbnailTextBottom,
           tts_provider: ttsProvider,
           tts_voice: ttsVoice,
-          channel_id: targetChannel.id,
+          channel_id: targetChannel.channelId,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
+          localization_source_revision: sourceRevision ?? null,
           progress: 50,
         });
       } else {
@@ -699,10 +805,11 @@ export function createTutorialTranslateProcessor(
           tts_provider: ttsProvider,
           tts_voice: ttsVoice,
           voice_settings: source.voice_settings ?? undefined,
-          channel_id: targetChannel.id,
+          channel_id: targetChannel.channelId,
           recording_path: source.recording_path,
           recorded_at: new Date(),
           status: "GENERATING_AUDIO",
+          localization_source_revision: sourceRevision ?? null,
           progress: 50,
         });
         childId = child.id;
@@ -719,20 +826,25 @@ export function createTutorialTranslateProcessor(
       );
 
       // 5) Re-synthesise TTS in the target language.
+      await assertLocalizationCurrent(db, { sourceJobId, childId, sourceRevision, thumbnailId });
       const { audioPath, providerUsed, audioDurationS } =
         await synthesizeTranslatedTts(db, {
           childId,
           scriptText: translatedScript,
           ttsProvider,
           ttsVoice,
+          language: targetLanguage,
           voiceSettings: source.voice_settings ?? null,
-          channelId: targetChannel.id,
+          channelId: targetChannel.channelId,
         });
 
       // 6) Mark the child ready for splice (AWAITING_UPLOAD is the state
       //    publishRecording lands non-LONG_FORM jobs in before enqueueing
       //    splice — the entry state the splice processor expects).
-      await updateTutorialJob(db, childId, {
+      await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM tutorial_jobs WHERE id = ${sourceJobId}::uuid FOR UPDATE`);
+      await assertLocalizationCurrent(tx, { sourceJobId, childId: childId!, sourceRevision, thumbnailId });
+      await tx.update(tutorialJobs).set({
         audio_path: audioPath,
         audio_done_at: new Date(),
         tts_provider_used: providerUsed,
@@ -741,12 +853,14 @@ export function createTutorialTranslateProcessor(
           : {}),
         status: "AWAITING_UPLOAD",
         progress: 90,
+        updated_at: new Date(),
+      }).where(eq(tutorialJobs.id, childId!));
       });
 
       // 7) Hand off to the existing splice lane (idempotent BullMQ job id).
       await queues.tutorialSplice.add(
         "tutorial-splice",
-        { jobId: childId },
+        { jobId: childId, sourceRevision, thumbnailId },
         { jobId: `tutorial-splice-${childId}`, attempts: 2 },
       );
 
@@ -760,6 +874,7 @@ export function createTutorialTranslateProcessor(
           tts_provider_used: providerUsed,
         }),
       );
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const finalAttempt = isFinalAttempt(job);
@@ -783,9 +898,11 @@ export function createTutorialTranslateProcessor(
       // exists — mirrors generate.ts. Never fabricate an output.
       if (finalAttempt && childId) {
         try {
+          const current = await getTutorialJobById(db, childId);
+          if (current?.status === "CANCELLED" || current?.status === "COMPLETED") throw err;
           await updateTutorialJob(db, childId, {
-            status: "FAILED_AUDIO",
-            error_stage: "translate",
+            ...(purpose === "thumbnail-copy" ? {} : { status: "FAILED_AUDIO" as const }),
+            error_stage: purpose === "thumbnail-copy" ? "thumbnail_copy" : "translate",
             error_message: errorMessage.slice(0, 500),
             error_detail: JSON.stringify({
               stage: "translate",

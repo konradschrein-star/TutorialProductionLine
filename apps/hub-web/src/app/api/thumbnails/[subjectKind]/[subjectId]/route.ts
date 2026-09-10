@@ -6,6 +6,7 @@ import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-re
 import { db, tutorialJobs } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { normalizeTutorialLanguage } from "@repo/contracts";
+import { mayAccessDelivery } from "@/lib/tutorial/delivery-access";
 
 /**
  * GET /api/thumbnails/[subjectKind]/[subjectId]
@@ -45,13 +46,17 @@ export async function GET(
     return NextResponse.json({ error: "Invalid subjectKind" }, { status: 400 });
   }
 
-  const rows = await listThumbnailsForSubject(subjectKind, subjectId);
-  if (subjectKind !== "tutorial_job") return NextResponse.json(rows);
+  if (subjectKind !== "tutorial_job") {
+    if (!hasPermission(session, "view:settings")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json(await listThumbnailsForSubject(subjectKind, subjectId));
+  }
 
   const [job] = await db
     .select({
       language: tutorialJobs.language,
       channelId: tutorialJobs.channel_id,
+      created_by: tutorialJobs.created_by,
+      channel_id: tutorialJobs.channel_id,
     })
     .from(tutorialJobs)
     .where(eq(tutorialJobs.id, subjectId))
@@ -62,6 +67,8 @@ export async function GET(
       { status: 404 },
     );
   }
+  if (!await mayAccessDelivery(session, job)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const rows = await listThumbnailsForSubject(subjectKind, subjectId);
   const language = normalizeTutorialLanguage(job.language);
   if (!language || !job.channelId) {
     return NextResponse.json(

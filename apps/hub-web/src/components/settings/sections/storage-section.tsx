@@ -45,7 +45,7 @@ export function StorageSection({
     <SectionFormWrapper
       sectionId="storage"
       title="Storage"
-      description="Asset retention and max upload size (in bytes, shown as GB)."
+      description="Keep source files safe until the exact revision has a verified Drive copy. YouTube delivery and Drive preservation are separate checks."
       icon="hard_drive"
       wiring="live"
       wiringDetail="Persists to system_settings.storage. maxUploadBytes is enforced by upload routes (throws with the actual size + the limit). Disk figures are read live from the artifact root."
@@ -76,8 +76,8 @@ export function StorageSection({
       </div>
 
       <SettingRow
-        label="Retention"
-        hint="Days before generated assets are eligible for cleanup"
+        label="Fallback retention (days)"
+        hint="Age threshold only, not permission to delete. Tutorial cleanup must also have verified publication and exact Drive proof; changing this does not clean files now."
         htmlFor="retentionDays"
         controlWidth={110}
       >
@@ -97,8 +97,8 @@ export function StorageSection({
       </SettingRow>
 
       <SettingRow
-        label="Max upload size"
-        hint="Gigabytes per uploaded file (long videos exceed 10 GB)"
+        label="Maximum incoming file (GiB)"
+        hint="1 GiB = 1,073,741,824 bytes. This limits files submitted to Studio, not the number of YouTube uploads."
         htmlFor="maxUploadGb"
         controlWidth={110}
       >
@@ -156,8 +156,8 @@ export function StorageSection({
         />
       </SettingRow>
       <SettingRow
-        label="Drive root"
-        hint="Top-level production folder"
+        label="Other formats' Drive root"
+        hint="Legacy shared-format folder name. Tutorial archives use the separate tutorials folder below; this does not relocate existing files."
         htmlFor="driveRootFolderName"
         controlWidth={200}
       >
@@ -170,8 +170,8 @@ export function StorageSection({
         />
       </SettingRow>
       <SettingRow
-        label="Tutorial bundles"
-        hint="Folder below the Drive root"
+        label="Tutorial archive folder name"
+        hint="Separate top-level tutorial tree, not a folder inside the other formats' root. Existing verified folder IDs remain unchanged; an installation-specific move needs a reviewed migration."
         htmlFor="driveTutorialsFolderName"
         controlWidth={200}
       >

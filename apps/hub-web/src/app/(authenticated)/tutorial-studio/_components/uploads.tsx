@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { GlassCard, V2Button, V2Input } from "../../_components";
+import { GlassCard, V2Button } from "../../_components";
+import { DispatchControl } from "./dispatch-control";
+import { ChannelSchedules } from "./channel-schedules";
+import { PublicationPlan } from "./publication-plan";
+import { UploaderAssignments } from "./uploader-assignments";
+import { ChannelDeliveryPolicy } from "./channel-delivery-policy";
+import { summarizeDelivery, uploadStateLabel } from "@/lib/uploader/delivery-status";
 
 interface UploaderDispatchView {
   id: string;
@@ -16,6 +22,7 @@ interface UploaderDispatchView {
 }
 
 interface TranslationDeliveryItem {
+  finalReviewRecorded: boolean;
   id: string;
   sourceJobId: string;
   language: string;
@@ -49,6 +56,7 @@ interface TranslationDeliveryItem {
 }
 
 interface VideoDeliveryRow {
+  finalReviewRecorded: boolean;
   id: string;
   title: string;
   keywordRef: string | null;
@@ -139,27 +147,6 @@ const LANGUAGE_FLAGS: Record<string, string> = {
   sv: "🇸🇪",
 };
 
-function uploadStateLabel(item: {
-  uploaderStatus: string | null;
-  youtubeVisibility: string | null;
-  scheduledFor: string | null;
-  isUploaded: boolean;
-}): string {
-  if (item.uploaderStatus === "scheduled" && item.scheduledFor) {
-    return `Scheduled ${new Date(item.scheduledFor).toLocaleString()}`;
-  }
-  if (item.uploaderStatus === "uploading") return "Uploading";
-  if (item.uploaderStatus === "waiting_to_be_uploaded")
-    return "Waiting for uploader";
-  if (item.uploaderStatus === "failed") return "Uploader failed";
-  if (item.uploaderStatus === "uploaded" || item.isUploaded) {
-    return item.youtubeVisibility === "public"
-      ? "Public · verified"
-      : "Uploaded";
-  }
-  return "Not queued";
-}
-
 function videoIdFromUrl(value: string | null): string | null {
   if (!value) return null;
   try {
@@ -200,9 +187,9 @@ function VideoPlatformLinks({
     gap: 4,
     padding: compact ? "4px 7px" : "5px 9px",
     borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.15)",
-    background: "rgba(255,255,255,0.055)",
-    color: "#fff",
+    border: "1px solid var(--v2-border-1)",
+    background: "var(--v2-surface-2)",
+    color: "var(--v2-text-1)",
     fontSize: compact ? 10 : 11,
     fontWeight: 700,
     textDecoration: "none",
@@ -338,7 +325,7 @@ function UploadCalendar({
         }}
       >
         <div>
-          <div style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>
+          <div style={{ color: "var(--v2-text-1)", fontSize: 13, fontWeight: 800 }}>
             Upload calendar
           </div>
           <div
@@ -359,9 +346,9 @@ function UploadCalendar({
               width: 28,
               height: 28,
               borderRadius: 6,
-              border: "1px solid rgba(255,255,255,0.14)",
-              background: "rgba(255,255,255,0.05)",
-              color: previousDisabled ? "rgba(255,255,255,0.25)" : "#fff",
+              border: "1px solid var(--v2-border-1)",
+              background: "var(--v2-surface-2)",
+              color: previousDisabled ? "var(--v2-text-3)" : "var(--v2-text-1)",
               cursor: previousDisabled ? "not-allowed" : "pointer",
             }}
           >
@@ -371,7 +358,7 @@ function UploadCalendar({
             style={{
               minWidth: 122,
               textAlign: "center",
-              color: "#fff",
+              color: "var(--v2-text-1)",
               fontSize: 12,
               fontWeight: 800,
             }}
@@ -390,9 +377,9 @@ function UploadCalendar({
               width: 28,
               height: 28,
               borderRadius: 6,
-              border: "1px solid rgba(255,255,255,0.14)",
-              background: "rgba(255,255,255,0.05)",
-              color: nextDisabled ? "rgba(255,255,255,0.25)" : "#fff",
+              border: "1px solid var(--v2-border-1)",
+              background: "var(--v2-surface-2)",
+              color: nextDisabled ? "var(--v2-text-3)" : "var(--v2-text-1)",
               cursor: nextDisabled ? "not-allowed" : "pointer",
             }}
           >
@@ -476,10 +463,10 @@ function UploadCalendar({
                   borderRadius: 7,
                   border: isToday
                     ? "1px solid rgba(170,255,0,0.65)"
-                    : "1px solid rgba(255,255,255,0.08)",
+                    : "1px solid var(--v2-border-1)",
                   background: dayEntries.length
-                    ? "rgba(255,255,255,0.045)"
-                    : "rgba(255,255,255,0.018)",
+                    ? "var(--v2-surface-2)"
+                    : "var(--v2-surface-2)",
                 }}
               >
                 <div
@@ -530,7 +517,7 @@ function UploadCalendar({
                       >
                         {entry.language.toUpperCase()}
                       </span>
-                      <strong style={{ marginLeft: "auto", color: "#fff" }}>
+                      <strong style={{ marginLeft: "auto", color: "var(--v2-text-1)" }}>
                         {entry.count}
                       </strong>
                     </div>
@@ -548,7 +535,6 @@ function UploadCalendar({
 function ThumbnailPreview({
   jobId,
   thumbnailId,
-  kind,
   approved,
 }: {
   jobId: string;
@@ -607,8 +593,7 @@ function ThumbnailPreview({
           textTransform: "uppercase",
         }}
       >
-        {kind}
-        {approved ? " · approved" : ""}
+        {approved ? "Approved" : thumbnailId ? "Needs review" : "Missing"}
       </span>
     </a>
   );
@@ -627,15 +612,15 @@ function MetadataBlock({
         marginTop: 8,
         padding: 9,
         borderRadius: 7,
-        background: "rgba(0,0,0,.24)",
+        background: "var(--v2-surface-2)",
         fontSize: 11,
         color: "var(--v2-text-2)",
         whiteSpace: "pre-wrap",
       }}
     >
-      <strong style={{ color: "#fff" }}>Description</strong>
+      <strong style={{ color: "var(--v2-text-1)" }}>Description</strong>
       <div style={{ marginTop: 4 }}>{description || "Not generated"}</div>
-      <strong style={{ color: "#fff", display: "block", marginTop: 7 }}>
+      <strong style={{ color: "var(--v2-text-1)", display: "block", marginTop: 7 }}>
         Tags
       </strong>
       <div>{tags?.length ? tags.join(", ") : "Not generated"}</div>
@@ -643,11 +628,60 @@ function MetadataBlock({
   );
 }
 
+type ApprovedDeliveryManifest = {
+  approvalRevision: string;
+  tutorialId: string;
+  video: { url: string };
+  thumbnail: { url: string };
+};
+
+function clickDownload(url: string, filename?: string) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  if (filename) anchor.download = filename;
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function DeliveryDownloads({ jobId }: { jobId: string }) {
+  const [busy, setBusy] = useState<"video" | "thumbnail" | "all" | null>(null);
+  const download = async (kind: "video" | "thumbnail" | "all") => {
+    if (busy) return;
+    setBusy(kind);
+    try {
+      const response = await fetch(`/api/production/jobs/${jobId}/manual-delivery`);
+      const manifest = (await response.json()) as ApprovedDeliveryManifest & { error?: string };
+      if (!response.ok) throw new Error(manifest.error ?? "Approved delivery files are unavailable");
+      if (kind === "video" || kind === "all") clickDownload(manifest.video.url);
+      if (kind === "thumbnail" || kind === "all") clickDownload(manifest.thumbnail.url);
+      if (kind === "all") {
+        const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }));
+        clickDownload(blobUrl, `tutorial-${jobId}-metadata.json`);
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+      }
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Download failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const style = { minHeight: 32, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--v2-border-1)", background: "var(--v2-surface-2)", color: "var(--v2-text-1)", fontSize: 11, fontWeight: 700, cursor: busy ? "wait" : "pointer" } as const;
+  return <div role="group" aria-label="Approved delivery downloads" style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+    <button type="button" style={style} disabled={Boolean(busy)} onClick={() => void download("video")}>{busy === "video" ? "Preparing…" : "Video"}</button>
+    <button type="button" style={style} disabled={Boolean(busy)} onClick={() => void download("thumbnail")}>{busy === "thumbnail" ? "Preparing…" : "Thumbnail"}</button>
+    <button type="button" style={style} disabled={Boolean(busy)} onClick={() => void download("all")}>{busy === "all" ? "Preparing…" : "All 3 files"}</button>
+  </div>;
+}
+
 const FAILED_UPLOADER_STATES = new Set([
   "publish_failed",
   "failed",
   "uncertain",
   "rejected",
+  "generic_uncertain",
+  "generic_failed",
 ]);
 
 function UploaderDispatchControl({
@@ -688,14 +722,14 @@ function UploaderDispatchControl({
             cursor: disabled || busy ? "not-allowed" : "pointer",
             border: "1px solid rgba(96,165,250,0.45)",
             background: "rgba(59,130,246,0.16)",
-            color: disabled || busy ? "rgba(147,197,253,0.45)" : "#93c5fd",
+            color: disabled || busy ? "var(--v2-text-3)" : "var(--v2-text-1)",
             opacity: busy ? 0.65 : 1,
           }}
         >
           {busy ? "Queueing..." : "Queue uploader"}
         </button>
         {disabledReason && (
-          <div style={{ marginTop: 4, color: "#fca5a5", fontSize: 9 }}>
+          <div style={{ marginTop: 4, color: "var(--v2-error)", fontSize: 9 }}>
             {disabledReason}
           </div>
         )}
@@ -704,15 +738,16 @@ function UploaderDispatchControl({
   }
 
   const failed = FAILED_UPLOADER_STATES.has(dispatch.state);
-  const succeeded = dispatch.state === "succeeded";
-  const color = failed ? "#fca5a5" : succeeded ? "#4ade80" : "#facc15";
+  const succeeded = dispatch.state === "succeeded" || dispatch.state === "generic_published";
+  const color = failed ? "var(--v2-error)" : "var(--v2-text-1)";
   const background = failed
     ? "rgba(239,68,68,0.14)"
     : succeeded
       ? "rgba(34,197,94,0.14)"
       : "rgba(234,179,8,0.14)";
-  const statusLabel = dispatch.state.replaceAll("_", " ");
-  const detail = dispatch.errorMessage ?? dispatch.latestMessage ?? undefined;
+  const statusLabel = ({ generic_queued: "Awaiting scheduled connector", generic_dispatched: "Dispatched — awaiting evidence", generic_uploading: "Uploading", generic_uploaded: "Uploaded — not public", generic_scheduled: "Externally scheduled", generic_published: "Verified published", generic_uncertain: "Uncertain — reconcile, do not retry", generic_failed: "Failed — reconciliation required", requested: "Queued in Studio", publishing: "Preparing handoff", published: "Handed off to uploader", succeeded: "Upload verified", uncertain: "Uncertain — reconcile before retry" } as Record<string, string>)[dispatch.state] ?? dispatch.state.replaceAll("_", " ");
+  const stalled = ["generic_dispatched", "generic_uploading"].includes(dispatch.state) && Date.now() - Date.parse(dispatch.updatedAt) > 30 * 60_000;
+  const detail = stalled ? "No recent connector evidence. Outcome is uncertain; reconcile this request rather than creating a second upload." : dispatch.errorMessage ?? dispatch.latestMessage ?? undefined;
 
   return (
     <div
@@ -723,7 +758,7 @@ function UploaderDispatchControl({
         gap: 6,
         padding: "5px 9px",
         borderRadius: 6,
-        border: `1px solid ${color}55`,
+        border: "1px solid var(--v2-border-2)",
         background,
         color,
         fontSize: 10,
@@ -734,48 +769,66 @@ function UploaderDispatchControl({
       <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
         {failed ? "error" : succeeded ? "check_circle" : "hourglass_top"}
       </span>
-      Uploader: {statusLabel}
+      Uploader: {stalled ? "No recent evidence — reconcile" : statusLabel}
     </div>
   );
 }
 
 export function UploadsTable() {
+  const [deliveryMode, setDeliveryMode] = useState<"manual" | "private" | "scheduled">("manual");
+  const [manualReportId, setManualReportId] = useState<string | null>(null);
+  const [manualReportUrl, setManualReportUrl] = useState("");
+  const manualReportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (manualReportId) manualReportRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [manualReportId]);
   const [videos, setVideos] = useState<VideoDeliveryRow[]>([]);
   const [uploadCalendar, setUploadCalendar] = useState<UploadCalendarDay[]>([]);
   const [canDispatch, setCanDispatch] = useState(false);
+  const [canViewPlan, setCanViewPlan] = useState(false);
+  const [canInspectUploader, setCanInspectUploader] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [cursor, setCursor] = useState<{ beforeAt: string; beforeId: string } | null>(null);
+  const [nextCursor, setNextCursor] = useState<{ beforeAt: string; beforeId: string } | null>(null);
+  const requestGeneration = useRef(0);
+  useEffect(() => { const timer = window.setTimeout(() => { setSearchQuery(search.trim()); setCursor(null); }, 300); return () => window.clearTimeout(timer); }, [search]);
   const [filter, setFilter] = useState<"ALL" | "PENDING" | "UPLOADED">("ALL");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [uploader, setUploader] = useState<UploaderStatus | null>(null);
   const [dispatchingId, setDispatchingId] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<"private" | "unlisted">(
-    "private",
+    "unlisted",
   );
   const [monetization, setMonetization] = useState<"" | "on" | "off">("");
   const [audienceConfirmed, setAudienceConfirmed] = useState(false);
   const [adSuitabilityConfirmed, setAdSuitabilityConfirmed] = useState(false);
 
   const loadData = useCallback(async (silent = false) => {
+    const generation = ++requestGeneration.current;
     if (!silent) setLoading(true);
     try {
-      const res = await fetch("/api/production/uploads");
+      const query = new URLSearchParams({ q: searchQuery, filter, ...(cursor ?? {}) });
+      const res = await fetch(`/api/production/uploads?${query}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (generation !== requestGeneration.current) return;
       setVideos(data.videos ?? []);
+      setNextCursor(data.nextCursor ?? null);
       setUploadCalendar(data.uploadCalendar ?? []);
       setCanDispatch(Boolean(data.canDispatch));
+      setCanViewPlan(Boolean(data.canViewPlan));
+      setCanInspectUploader(Boolean(data.canInspectUploader));
     } catch (e) {
-      if (!silent) {
+      if (!silent && generation === requestGeneration.current) {
         toast.error(
           `Failed to load uploads data: ${e instanceof Error ? e.message : "error"}`,
         );
       }
     } finally {
-      if (!silent) setLoading(false);
+      if (generation === requestGeneration.current) setLoading(false);
     }
-  }, []);
+  }, [searchQuery, filter, cursor]);
 
   const loadUploader = useCallback(async () => {
     try {
@@ -796,15 +849,14 @@ export function UploadsTable() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      // Receipt reconciliation runs in uploader-status; fetch the table after
-      // it so newly proven uploads are visible immediately.
-      await loadUploader();
-      await loadData();
-    })();
+    void loadData();
+  }, [loadData]);
+  useEffect(() => {
+    if (deliveryMode === "manual" || !canInspectUploader) return;
+    void loadUploader();
     const timer = setInterval(() => void loadUploader(), 15_000);
     return () => clearInterval(timer);
-  }, [loadData, loadUploader]);
+  }, [deliveryMode, canInspectUploader, loadUploader]);
 
   // The Drive bridge polls every 15 seconds. Follow it at the same cadence so
   // receipt progress appears without an operator repeatedly pressing Refresh.
@@ -828,49 +880,22 @@ export function UploadsTable() {
     parentId?: string,
   ) => {
     if (currentStatus) return;
-    const newStatus = !currentStatus;
-    setTogglingId(jobId);
-
-    // Optimistic UI update
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (!isChildTranslation && v.id === jobId) {
-          return {
-            ...v,
-            isUploaded: newStatus,
-            uploadedAt: newStatus ? new Date().toISOString() : null,
-          };
-        }
-        if (isChildTranslation && v.id === parentId) {
-          return {
-            ...v,
-            translations: v.translations.map((t) =>
-              t.id === jobId
-                ? {
-                    ...t,
-                    isUploaded: newStatus,
-                    uploadedAt: newStatus ? new Date().toISOString() : null,
-                  }
-                : t,
-            ),
-          };
-        }
-        return v;
-      }),
-    );
-
+    setManualReportId(jobId); setManualReportUrl("");
+  };
+  const submitManualReport = async () => {
+    if (!manualReportId) return;
+    setTogglingId(manualReportId);
     try {
       const res = await fetch("/api/production/uploads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, isUploaded: newStatus }),
+        body: JSON.stringify({ jobId: manualReportId, isUploaded: true, youtubeUrl: manualReportUrl }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success(
-        newStatus
-          ? "Marked as Uploaded to YouTube! 🎉"
-          : "Reverted status to Ready to Upload.",
-      );
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error ?? `HTTP ${res.status}`);
+      toast.success("Manual upload reported. Publication has not been independently verified.");
+      setManualReportId(null);
+      void loadData();
     } catch (e) {
       toast.error(
         `Could not update upload status: ${e instanceof Error ? e.message : "error"}`,
@@ -905,12 +930,12 @@ export function UploadsTable() {
     setDispatchingId(jobId);
     try {
       const res = await fetch(
-        `/api/production/jobs/${jobId}/uploader-dispatch`,
+        `/api/production/jobs/${jobId}/${deliveryMode === "scheduled" ? "scheduled-delivery" : "uploader-dispatch"}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            visibility,
+            visibility: deliveryMode === "scheduled" ? "private" : visibility,
             made_for_kids: false,
             monetization,
             ...(monetization === "on"
@@ -939,116 +964,44 @@ export function UploadsTable() {
     }
   };
 
-  const filteredVideos = videos.filter((v) => {
-    if (filter === "PENDING" && v.isUploaded) return false;
-    if (filter === "UPLOADED" && !v.isUploaded) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const matchParent =
-        v.title.toLowerCase().includes(q) ||
-        (v.creatorName ?? "").toLowerCase().includes(q) ||
-        (v.creatorEmail ?? "").toLowerCase().includes(q);
-      const matchChild = v.translations.some((t) =>
-        t.title.toLowerCase().includes(q),
-      );
-      if (!matchParent && !matchChild) return false;
-    }
-    return true;
-  });
+  const filteredVideos = videos;
 
-  const totalCount = videos.length;
-  const totalUploaded = videos.filter((v) => v.isUploaded).length;
-  const totalPending = totalCount - totalUploaded;
+  const deliveryCounts = summarizeDelivery(videos);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {/* Header & Metrics */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h2
-            style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: 0 }}
-          >
-            Delivery & Uploads Overview
-          </h2>
-          <div
-            style={{ fontSize: 12, color: "var(--v2-text-2)", marginTop: 4 }}
-          >
-            Queue guarded uploader jobs, follow verified receipt state, or use
-            the legacy manual handoff across all language variants.
-          </div>
-        </div>
-
-        {/* Counter Badges */}
-        <div style={{ display: "flex", gap: 8 }}>
-          <div
-            style={{
-              padding: "6px 14px",
-              borderRadius: 8,
-              background: "rgba(234,179,8,0.12)",
-              border: "1px solid rgba(234,179,8,0.3)",
-              color: "#facc15",
-              fontSize: 12,
-              fontWeight: 700,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              pending_actions
-            </span>
-            {totalPending} Ready to Upload
-          </div>
-
-          <div
-            style={{
-              padding: "6px 14px",
-              borderRadius: 8,
-              background: "rgba(34,197,94,0.12)",
-              border: "1px solid rgba(34,197,94,0.3)",
-              color: "#4ade80",
-              fontSize: 12,
-              fontWeight: 700,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              check_circle
-            </span>
-            {totalUploaded} Uploaded
-          </div>
-
-          <V2Button variant="outline" size="sm" onClick={() => void loadData()}>
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 16 }}
-            >
-              refresh
-            </span>
-            Refresh
-          </V2Button>
-        </div>
+      {canInspectUploader && <><DispatchControl /><ChannelSchedules /><UploaderAssignments /><ChannelDeliveryPolicy /></>}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px", padding: "8px 0", fontSize: 13 }}>
+        <label>Delivery method <select aria-label="Delivery method" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as typeof deliveryMode)} style={{ padding: 8, color: "var(--v2-text-1)", background: "var(--v2-surface-2)", border: "1px solid var(--v2-border-1)", borderRadius: 6 }}>
+          <option value="manual">Manual VA upload</option>
+          {canDispatch && <option value="private">Connected uploader — private / unlisted</option>}
+          {canDispatch && <option value="scheduled">Scheduled delivery — requires compatible connector</option>}
+        </select></label>
+        <details>
+          <summary style={{ cursor: "pointer" }}>Drive files &amp; folders</summary>
+          <p style={{ color: "var(--v2-text-2)", margin: "8px 0" }}>These are recorded Drive links for the tutorials you can access. A link alone does not prove that every artifact is backed up.</p>
+          {videos.some(video => video.driveUrl) ? <ul style={{ margin: 0, paddingLeft: 20 }}>{videos.filter(video => video.driveUrl).slice(0, 15).map(video => <li key={video.id}><a href={video.driveUrl!} target="_blank" rel="noreferrer">{video.title || "Untitled tutorial"}</a> <span style={{ color: "var(--v2-text-2)" }}>· {video.driveState}</span></li>)}</ul> : <p style={{ color: "var(--v2-text-2)" }}>No Drive links are recorded for this loaded queue yet. Approved assets can still be downloaded directly below.</p>}
+          {videos.filter(video => video.driveUrl).length > 15 && <p style={{ color: "var(--v2-text-2)" }}>More Drive links are available on each tutorial row below.</p>}
+        </details>
+        {deliveryMode === "manual" ? <>
+          <details style={{ color: "var(--v2-text-2)", fontSize: 13 }}><summary style={{ cursor: "pointer" }}>Manual upload checklist</summary>
+            <ol><li>Download the approved video, thumbnail and localized metadata.</li><li>Use the assigned channel and the Studio reservation when scheduling.</li><li>Do not manually upload a tutorial already handed to a connected uploader.</li><li>Save the YouTube link with “Report manual upload”. This is a VA report, not independently verified publication.</li></ol>
+          </details>
+        </> : <details><summary style={{ cursor: "pointer" }}>Connected delivery guidance</summary><p>{deliveryMode === "scheduled" ? "Uses the assigned channel and reserved publication time. A queued request does not mean YouTube has accepted the schedule." : "Verifies private/unlisted uploads; publication is not scheduled."} Confirm the declarations below before queueing.</p></details>}
+        {canViewPlan && <details><summary style={{ cursor: "pointer" }}>Publication reservations</summary><PublicationPlan /></details>}
       </div>
+      {manualReportId && <div ref={manualReportRef} style={{ padding: 16, border: "1px solid var(--v2-border-1)", borderRadius: 8 }}>
+        <strong>Report a manual upload</strong>
+        <p>This records your report, not verified publication. Check the correct channel and confirm no uploader request already exists.</p>
+        <label>YouTube watch or share link <input aria-label="Manual upload YouTube link" type="url" value={manualReportUrl} onChange={(event) => setManualReportUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=…" style={{ width: "100%", padding: 10, margin: "8px 0", color: "var(--v2-text-1)", background: "var(--v2-surface-2)", border: "1px solid var(--v2-border-1)" }} /></label>
+        <button type="button" disabled={Boolean(togglingId) || !manualReportUrl.trim()} onClick={() => void submitManualReport()}>Save manual report</button>{" "}
+        <button type="button" disabled={Boolean(togglingId)} onClick={() => setManualReportId(null)}>Cancel</button>
+      </div>}
 
       {/* Exact channel identities and uploader connection. These links are
           deliberately derived from immutable UC ids, never from handles. */}
-      <GlassCard style={{ padding: 14 }}>
+      {deliveryMode !== "manual" && canInspectUploader && <GlassCard style={{ padding: 14 }}>
         <div
           style={{
             display: "flex",
@@ -1059,13 +1012,13 @@ export function UploadsTable() {
           }}
         >
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "var(--v2-text-1)" }}>
               YouTube channel network
             </div>
             <div
               style={{
                 fontSize: 11,
-                color: uploader?.connected ? "#4ade80" : "#facc15",
+                color: "var(--v2-text-1)",
                 marginTop: 3,
               }}
             >
@@ -1103,8 +1056,8 @@ export function UploadsTable() {
                 style={{
                   padding: 10,
                   borderRadius: 8,
-                  background: "rgba(255,255,255,0.035)",
-                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "var(--v2-surface-2)",
+                  border: "1px solid var(--v2-border-1)",
                 }}
               >
                 <div
@@ -1115,7 +1068,7 @@ export function UploadsTable() {
                   }}
                 >
                   <span
-                    style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}
+                    style={{ fontSize: 12, fontWeight: 700, color: "var(--v2-text-1)" }}
                   >
                     {channel.name}
                   </span>
@@ -1162,7 +1115,7 @@ export function UploadsTable() {
                         borderRadius: 5,
                         border: "1px solid rgba(147,197,253,0.3)",
                         background: "rgba(59,130,246,0.1)",
-                        color: "#93c5fd",
+                        color: "var(--v2-text-1)",
                         fontWeight: 700,
                         textDecoration: "none",
                       }}
@@ -1188,7 +1141,7 @@ export function UploadsTable() {
                       borderRadius: 5,
                       border: "1px solid rgba(196,181,253,0.3)",
                       background: "rgba(139,92,246,0.1)",
-                      color: "#c4b5fd",
+                      color: "var(--v2-text-1)",
                       fontWeight: 700,
                       textDecoration: "none",
                     }}
@@ -1204,12 +1157,7 @@ export function UploadsTable() {
                   <span
                     style={{
                       marginLeft: "auto",
-                      color:
-                        latest?.state === "succeeded"
-                          ? "#4ade80"
-                          : latest
-                            ? "#facc15"
-                            : "var(--v2-text-3)",
+                      color: latest ? "var(--v2-text-1)" : "var(--v2-text-3)",
                     }}
                   >
                     {channel.uploaderChannelKey
@@ -1221,14 +1169,14 @@ export function UploadsTable() {
             );
           })}
         </div>
-      </GlassCard>
+      </GlassCard>}
 
-      <UploadCalendar
-        entries={uploadCalendar}
-        channels={uploader?.channels ?? []}
-      />
+      <details>
+        <summary style={{ cursor: "pointer", color: "var(--v2-text-2)", fontSize: 13 }}>View upload history calendar</summary>
+        <UploadCalendar entries={uploadCalendar} channels={uploader?.channels ?? []} />
+      </details>
 
-      {canDispatch && (
+      {canDispatch && deliveryMode !== "manual" && (
         <GlassCard style={{ padding: 14 }}>
           <div
             style={{
@@ -1252,7 +1200,8 @@ export function UploadsTable() {
               </label>
               <select
                 id="uploader-visibility"
-                value={visibility}
+                value={deliveryMode === "scheduled" ? "private" : visibility}
+                disabled={deliveryMode === "scheduled"}
                 onChange={(event) =>
                   setVisibility(event.target.value as "private" | "unlisted")
                 }
@@ -1260,9 +1209,9 @@ export function UploadsTable() {
                   width: "100%",
                   padding: "7px 9px",
                   borderRadius: 6,
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  background: "#111",
-                  color: "#fff",
+                  border: "1px solid var(--v2-border-1)",
+                  background: "var(--v2-surface-2)",
+                  color: "var(--v2-text-1)",
                   fontSize: 12,
                 }}
               >
@@ -1295,9 +1244,9 @@ export function UploadsTable() {
                   width: "100%",
                   padding: "7px 9px",
                   borderRadius: 6,
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  background: "#111",
-                  color: "#fff",
+                  border: "1px solid var(--v2-border-1)",
+                  background: "var(--v2-surface-2)",
+                  color: "var(--v2-text-1)",
                   fontSize: 12,
                 }}
               >
@@ -1353,86 +1302,18 @@ export function UploadsTable() {
         </GlassCard>
       )}
 
-      {/* Filters & Search */}
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ flex: "1 1 240px", minWidth: 200 }}>
-          <V2Input
-            placeholder="Search by video title, keyword, or VA name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            fullWidth
-          />
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 240px", minWidth: 210, fontSize: 13 }}>
+          Search <input id="tutorial-upload-search" type="search" aria-label="Search tutorials" placeholder="Title, keyword or VA…" value={search} onChange={event => setSearch(event.target.value)} maxLength={200} style={{ minWidth: 0, flex: 1, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--v2-border-1)", color: "var(--v2-text-1)", background: "var(--v2-surface-2)" }} />
+        </label>
+        <div role="group" aria-label="Delivery filter" style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {([["ALL", "All"], ["PENDING", "Awaiting delivery"], ["UPLOADED", "Upload reported"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => { setFilter(value); setCursor(null); }} style={{ minHeight: 36, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--v2-border-1)", background: filter === value ? "var(--v2-surface-3)" : "transparent", color: filter === value ? "var(--v2-text-1)" : "var(--v2-text-2)", fontSize: 12, cursor: "pointer" }}>{label}</button>)}
         </div>
-
-        <div
-          style={{
-            display: "inline-flex",
-            background: "rgba(255,255,255,0.06)",
-            padding: 3,
-            borderRadius: 8,
-            border: "1px solid rgba(255,255,255,0.12)",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setFilter("ALL")}
-            style={{
-              padding: "5px 12px",
-              borderRadius: 6,
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-              border: "none",
-              background:
-                filter === "ALL" ? "var(--v2-accent, #aaff00)" : "transparent",
-              color: filter === "ALL" ? "#000" : "var(--v2-text-2)",
-            }}
-          >
-            All Videos ({totalCount})
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter("PENDING")}
-            style={{
-              padding: "5px 12px",
-              borderRadius: 6,
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-              border: "none",
-              background: filter === "PENDING" ? "#facc15" : "transparent",
-              color: filter === "PENDING" ? "#000" : "var(--v2-text-2)",
-            }}
-          >
-            Ready to Upload ({totalPending})
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter("UPLOADED")}
-            style={{
-              padding: "5px 12px",
-              borderRadius: 6,
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-              border: "none",
-              background: filter === "UPLOADED" ? "#4ade80" : "transparent",
-              color: filter === "UPLOADED" ? "#000" : "var(--v2-text-2)",
-            }}
-          >
-            Uploaded ({totalUploaded})
-          </button>
-        </div>
+        <span style={{ color: "var(--v2-text-2)", fontSize: 12, overflowWrap: "anywhere" }}>Originals on this page: {deliveryCounts.pending} awaiting confirmation · {deliveryCounts.reported} reported, unverified · {deliveryCounts.transferred} uploaded, publication unconfirmed · {deliveryCounts.scheduled} externally scheduled · {deliveryCounts.published} verified published</span>
+        <V2Button variant="outline" size="sm" disabled={loading} onClick={() => void loadData()}>Refresh</V2Button>
+        <V2Button variant="outline" size="sm" disabled={loading || !cursor} onClick={() => setCursor(null)}>Newest</V2Button>
+        <V2Button variant="outline" size="sm" disabled={loading || !nextCursor} onClick={() => { setCursor(nextCursor); setExpandedIds(new Set()); }}>Older</V2Button>
       </div>
-
-      {/* Table Container */}
       <GlassCard style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table
@@ -1446,8 +1327,8 @@ export function UploadsTable() {
             <thead>
               <tr
                 style={{
-                  background: "rgba(255,255,255,0.04)",
-                  borderBottom: "1px solid rgba(255,255,255,0.08)",
+                  background: "var(--v2-surface-2)",
+                  borderBottom: "1px solid var(--v2-border-1)",
                   color: "var(--v2-text-2)",
                   fontSize: 11,
                   textTransform: "uppercase",
@@ -1511,7 +1392,7 @@ export function UploadsTable() {
                     <tr
                       key={v.id}
                       style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.06)",
+                        borderBottom: "1px solid var(--v2-border-1)",
                         background: v.isUploaded
                           ? "rgba(34,197,94,0.02)"
                           : "transparent",
@@ -1532,7 +1413,7 @@ export function UploadsTable() {
                             border: "none",
                             color: hasTranslations
                               ? "var(--v2-accent, #aaff00)"
-                              : "rgba(255,255,255,0.2)",
+                              : "var(--v2-text-3)",
                             cursor: hasTranslations ? "pointer" : "default",
                             padding: 0,
                             display: "grid",
@@ -1574,7 +1455,7 @@ export function UploadsTable() {
                             <div
                               style={{
                                 fontWeight: 700,
-                                color: "#fff",
+                                color: "var(--v2-text-1)",
                                 fontSize: 14,
                               }}
                             >
@@ -1619,8 +1500,8 @@ export function UploadsTable() {
                               style={{
                                 padding: "1px 6px",
                                 borderRadius: 4,
-                                background: "rgba(255,255,255,0.08)",
-                                color: "#fff",
+                                background: "var(--v2-surface-2)",
+                                color: "var(--v2-text-1)",
                                 fontSize: 10,
                                 fontWeight: 700,
                               }}
@@ -1637,8 +1518,8 @@ export function UploadsTable() {
                               marginTop: 12,
                               padding: "10px 14px",
                               borderRadius: 8,
-                              background: "rgba(0,0,0,0.3)",
-                              border: "1px solid rgba(255,255,255,0.08)",
+                              background: "var(--v2-surface-2)",
+                              border: "1px solid var(--v2-border-1)",
                               display: "flex",
                               flexDirection: "column",
                               gap: 8,
@@ -1679,7 +1560,7 @@ export function UploadsTable() {
                                     gap: 10,
                                     padding: "6px 8px",
                                     borderRadius: 6,
-                                    background: "rgba(255,255,255,0.03)",
+                                    background: "var(--v2-surface-2)",
                                   }}
                                 >
                                   <div
@@ -1703,7 +1584,7 @@ export function UploadsTable() {
                                         style={{
                                           fontSize: 12,
                                           fontWeight: 600,
-                                          color: "#eceae6",
+                                          color: "var(--v2-text-1)",
                                           overflow: "hidden",
                                           textOverflow: "ellipsis",
                                           whiteSpace: "nowrap",
@@ -1741,7 +1622,7 @@ export function UploadsTable() {
                                     />
                                     <UploaderDispatchControl
                                       dispatch={t.uploader}
-                                      authorized={canDispatch}
+                                      authorized={canDispatch && deliveryMode !== "manual"}
                                       disabled={
                                         !dispatchDeclarationsComplete ||
                                         t.dispatchBlockers.length > 0
@@ -1769,7 +1650,7 @@ export function UploadsTable() {
                                           background: "rgba(66,133,244,0.15)",
                                           border:
                                             "1px solid rgba(66,133,244,0.35)",
-                                          color: "#93c5fd",
+                                          color: "var(--v2-text-1)",
                                           textDecoration: "none",
                                         }}
                                       >
@@ -1785,46 +1666,20 @@ export function UploadsTable() {
                                       <span
                                         style={{
                                           fontSize: 10,
-                                          color: "rgba(255,255,255,0.3)",
+                                          color: "var(--v2-text-3)",
                                         }}
                                       >
                                         Local
                                       </span>
                                     )}
 
-                                    {/* Translation Download Button */}
-                                    <a
-                                      href={`/api/production/jobs/${t.id}/download`}
-                                      download
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 4,
-                                        padding: "3px 8px",
-                                        borderRadius: 5,
-                                        fontSize: 11,
-                                        fontWeight: 600,
-                                        background: "rgba(255,255,255,0.06)",
-                                        border:
-                                          "1px solid rgba(255,255,255,0.15)",
-                                        color: "#fff",
-                                        textDecoration: "none",
-                                      }}
-                                    >
-                                      <span
-                                        className="material-symbols-outlined"
-                                        style={{ fontSize: 14 }}
-                                      >
-                                        download
-                                      </span>
-                                      MP4
-                                    </a>
+                                    {t.finalReviewRecorded ? <DeliveryDownloads jobId={t.id} /> : <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>Final review required</span>}
 
                                     {/* Legacy manual status is not another queue state. */}
-                                    {!t.uploader && (
+                                    {deliveryMode === "manual" && !t.uploader && t.finalReviewRecorded && (
                                       <button
                                         type="button"
-                                        disabled={isChildToggling}
+                                        disabled={isChildToggling || t.isUploaded}
                                         onClick={() =>
                                           handleToggleUploaded(
                                             t.id,
@@ -1846,14 +1701,12 @@ export function UploadsTable() {
                                           borderColor: t.isUploaded
                                             ? "rgba(34,197,94,0.4)"
                                             : "rgba(234,179,8,0.4)",
-                                          color: t.isUploaded
-                                            ? "#4ade80"
-                                            : "#facc15",
+                                          color: "var(--v2-text-1)",
                                         }}
                                       >
                                         {t.isUploaded
-                                          ? "✓ Uploaded"
-                                          : "Mark Uploaded"}
+                                          ? "Upload reported"
+                                          : "Report manual upload"}
                                       </button>
                                     )}
                                   </div>
@@ -1871,7 +1724,7 @@ export function UploadsTable() {
                         <div
                           style={{
                             fontWeight: 600,
-                            color: "#eceae6",
+                            color: "var(--v2-text-1)",
                             fontSize: 12,
                           }}
                         >
@@ -1905,7 +1758,7 @@ export function UploadsTable() {
                               fontWeight: 700,
                               background: "rgba(66,133,244,0.15)",
                               border: "1px solid rgba(66,133,244,0.35)",
-                              color: "#93c5fd",
+                              color: "var(--v2-text-1)",
                               textDecoration: "none",
                             }}
                           >
@@ -1925,7 +1778,7 @@ export function UploadsTable() {
                               color:
                                 v.driveState === "held" ||
                                 v.driveState === "failed"
-                                  ? "#fca5a5"
+                                  ? "var(--v2-error)"
                                   : "var(--v2-text-2)",
                             }}
                           >
@@ -1944,32 +1797,7 @@ export function UploadsTable() {
                       <td
                         style={{ verticalAlign: "top", padding: "14px 14px" }}
                       >
-                        <a
-                          href={`/api/production/jobs/${v.id}/download`}
-                          download
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "5px 10px",
-                            borderRadius: 6,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            background: "rgba(255,255,255,0.06)",
-                            border: "1px solid rgba(255,255,255,0.15)",
-                            color: "#fff",
-                            textDecoration: "none",
-                          }}
-                          title="Download high-res rendered MP4 file"
-                        >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: 15 }}
-                          >
-                            download
-                          </span>
-                          MP4
-                        </a>
+                        {v.finalReviewRecorded ? <DeliveryDownloads jobId={v.id} /> : <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>Final review required</span>}
                       </td>
 
                       {/* Upload Status & Action */}
@@ -2013,7 +1841,7 @@ export function UploadsTable() {
                         >
                           <UploaderDispatchControl
                             dispatch={v.uploader}
-                            authorized={canDispatch}
+                            authorized={canDispatch && deliveryMode !== "manual"}
                             disabled={
                               !dispatchDeclarationsComplete ||
                               v.dispatchBlockers.length > 0
@@ -2022,7 +1850,7 @@ export function UploadsTable() {
                             busy={dispatchingId === v.id}
                             onDispatch={() => void handleDispatch(v.id)}
                           />
-                          {!v.uploader && (
+                          {deliveryMode === "manual" && !v.uploader && v.finalReviewRecorded && (
                             <button
                               type="button"
                               disabled={isToggling || v.isUploaded}
@@ -2042,7 +1870,7 @@ export function UploadsTable() {
                                 borderColor: v.isUploaded
                                   ? "rgba(34,197,94,0.45)"
                                   : "transparent",
-                                color: v.isUploaded ? "#4ade80" : "#000",
+                                color: v.isUploaded ? "var(--v2-text-1)" : "#000",
                                 boxShadow: v.isUploaded
                                   ? "none"
                                   : "0 2px 10px rgba(170,255,0,0.2)",
@@ -2057,7 +1885,7 @@ export function UploadsTable() {
                               >
                                 {v.isUploaded ? "check_circle" : "publish"}
                               </span>
-                              {v.isUploaded ? "Uploaded" : "Mark as Uploaded"}
+                              {v.isUploaded ? "Upload reported" : "Report manual upload"}
                             </button>
                           )}
                         </div>

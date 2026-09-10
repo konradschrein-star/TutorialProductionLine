@@ -1,43 +1,33 @@
 "use client";
-
 import { useState, useEffect } from "react";
 import { Command } from "cmdk";
 import { useRouter } from "next/navigation";
+import { getCommandPages } from "./command-palette-model";
+import { requestWorkspaceNavigation } from "@/lib/workspace-navigation-guard";
+import type { JWTPayload } from "@/lib/auth/jwt";
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
+  session: JWTPayload;
 }
-
-// Keep this in sync with the sidebar (sidebar.tsx NAV_SECTIONS). Two navigation
-// surfaces that disagree are their own lying index — the stale set here used to
-// omit the Production Board and point at a non-existent /templates route.
-const PAGES = [
-  { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
-  { label: "Tutorial Studio", href: "/tutorial-studio", icon: "smart_display" },
-  {
-    label: "Video Stitcher",
-    href: "/tutorial-studio/video-stitcher",
-    icon: "video_library",
-  },
-  { label: "Thumbnail Studio", href: "/thumbnails", icon: "image" },
-  { label: "Channels", href: "/channels", icon: "subscriptions" },
-  { label: "System Health", href: "/system-health", icon: "health_and_safety" },
-  { label: "Team", href: "/team", icon: "group" },
-  { label: "Settings", href: "/settings", icon: "settings" },
-];
-
-export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, session }: CommandPaletteProps) {
   const router = useRouter();
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!isOpen) setQuery("");
   }, [isOpen]);
+  useEffect(() => {
+    if (!isOpen) return;
+    const previous = document.activeElement;
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   function navigate(href: string) {
+    if (!requestWorkspaceNavigation()) return;
     router.push(href);
     onClose();
   }
@@ -50,9 +40,12 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="relative w-full max-w-xl overflow-hidden rounded-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Jump to a page"
         style={{
-          background: "rgba(19,19,19,0.98)",
-          border: "1px solid rgba(var(--v2-accent-rgb), 0.25)",
+          background: "var(--v2-surface-1)",
+          border: "1px solid var(--v2-border-1)",
           boxShadow: "0 0 60px rgba(var(--v2-accent-rgb), 0.15)",
         }}
         onClick={(e) => e.stopPropagation()}
@@ -61,7 +54,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           <div
             className="flex items-center px-4 py-3"
             style={{
-              borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.1)",
+              borderBottom: "1px solid var(--v2-border-1)",
             }}
           >
             <span
@@ -76,9 +69,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
               onValueChange={setQuery}
               placeholder="Type a command or search..."
               className="flex-1 bg-transparent border-none outline-none"
-              style={{ color: "#e5e2e1", fontSize: 14 }}
+              style={{ color: "var(--v2-text-1)", fontSize: 14 }}
             />
-            <kbd style={{ color: "#cdc3d7", fontSize: 10, opacity: 0.5 }}>
+            <kbd style={{ color: "var(--v2-text-3)", fontSize: 10 }}>
               ESC
             </kbd>
           </div>
@@ -87,7 +80,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           >
             <Command.Empty
               style={{
-                color: "#cdc3d7",
+                color: "var(--v2-text-2)",
                 fontSize: 12,
                 padding: "16px 20px",
                 textAlign: "center",
@@ -96,13 +89,13 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
               No results found.
             </Command.Empty>
             <Command.Group heading="Navigation">
-              {PAGES.map((page) => (
+              {getCommandPages(session).map((page) => (
                 <Command.Item
                   key={page.href}
                   value={page.label}
                   onSelect={() => navigate(page.href)}
                   className="flex items-center gap-3 px-4 py-2.5 cursor-pointer v2-cmd-item"
-                  style={{ color: "#cdc3d7", fontSize: 13 }}
+                  style={{ color: "var(--v2-text-2)", fontSize: 13 }}
                 >
                   <span
                     className="material-symbols-outlined"
@@ -120,21 +113,4 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     </div>
   );
 }
-
-export function CommandPaletteTrigger() {
-  const [isOpen, setIsOpen] = useState(false);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setIsOpen(true);
-      }
-      if (e.key === "Escape") setIsOpen(false);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  return <CommandPalette isOpen={isOpen} onClose={() => setIsOpen(false)} />;
-}
+// Keep the command palette as the only export from this module.

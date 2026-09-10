@@ -3,17 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { V2Button } from "../_components";
+
 import { ProductionDashboard } from "./_components/dashboard";
+import { MyWork } from "./_components/my-work";
+import { ActivityRecords } from "./_components/activity-records";
+import { LegacyArchive } from "./_components/legacy-archive";
 import { LocalizePanel } from "./_components/localize-panel";
 import { Review } from "./_components/review";
 import { ProductionCreate } from "./_components/create";
 import { ProductionStudio } from "./_components/studio";
 import { ProductionSettings } from "./_components/settings";
 import { ProductionKeywords } from "./_components/keywords";
-import { ProductionRanking } from "./_components/ranking";
-import { TtsHealthBadge } from "./_components/tts-health-badge";
+
+import { AllTutorials } from "./_components/all-tutorials";
 import { UploadsTable } from "./_components/uploads";
+import { ContentCalendar } from "./_components/content-calendar";
 // Mounted at the page root, OUTSIDE the tab switch below: recording uploads run
 // in a module-level manager and must stay visible while the VA leaves the
 // Studio tab to start the next job.
@@ -23,32 +27,24 @@ import type { TutorialPromptPreset } from "@repo/db";
 import type { TutorialSettingsRow } from "@repo/db";
 
 const TABS = [
-  { id: "dashboard", label: "Dashboard" },
+  { id: "dashboard", label: "My work" },
+  { id: "library", label: "All tutorials" },
+  { id: "activity", label: "Team activity" },
   // Keywords feed creation, so keep them adjacent in workflow order.
-  { id: "keywords", label: "Keywords" },
-  { id: "create", label: "Create" },
-  { id: "studio", label: "Studio" },
+  { id: "keywords", label: "Software & topics" },
+  { id: "create", label: "Prepare scripts" },
+  { id: "studio", label: "Record" },
   // Thumbnail approval happens before localization/rendering.
-  { id: "thumbnails", label: "Thumbnail Studio" },
-  { id: "review", label: "Review" },
-  { id: "localize", label: "Localized" },
-  // Delivery follows localization because the uploader consumes the complete
-  // language bundle, not the English source in isolation.
-  { id: "uploads", label: "Uploads" },
-  // RANKING lane. Tier-list videos are a separate content format with their
-  // own worker pipeline, but the VA who runs them is this VA, so the entry
-  // point belongs here rather than in a second tool they would have to learn.
-  { id: "ranking", label: "Ranking" },
-  { id: "settings", label: "Settings" },
+  { id: "thumbnails", label: "Thumbnails" },
+  { id: "review", label: "Final review" },
+  { id: "localize", label: "Languages" },
+  // Each ready, approved language can be delivered independently.
+  { id: "uploads", label: "Delivery" },
+  { id: "calendar", label: "Content calendar" },
+  { id: "settings", label: "My & workflow settings" },
 ] as const;
 
 
-/**
- * Ranking / tier-list production is an optional add-on. This deployment has not
- * commissioned it, so the tab shows a "not available in this version" notice
- * instead of the live ProductionRanking surface. Flip to true to enable.
- */
-const RANKING_ENABLED: boolean = false;
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -113,7 +109,7 @@ interface ProductionClientProps {
     tts: Record<string, boolean>;
   };
   canManage: boolean;
-  /** edit:tutorial-workflow — a producer VA may tune voice/speed/hotkey/prompts. */
+  /** Shared workflow defaults are Admin-only; per-job controls remain separate. */
   canEditWorkflow: boolean;
   totals: {
     total: number;
@@ -132,8 +128,10 @@ interface ProductionClientProps {
   rankingChannels: Array<{ id: string; name: string }>;
   /** view:production — the tutorial producer sees every tab. */
   canProduce: boolean;
+  canCreateTutorials: boolean;
   /** manage:thumbnails — the uploader VA sees the Thumbnails tab only. */
   canFixThumbnails: boolean;
+  canViewDelivery: boolean;
 }
 
 export function ProductionClient({
@@ -154,7 +152,9 @@ export function ProductionClient({
   channels,
   rankingChannels,
   canProduce,
+  canCreateTutorials,
   canFixThumbnails,
+  canViewDelivery,
 }: ProductionClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -177,17 +177,21 @@ export function ProductionClient({
    */
   const visibleTabs = useMemo(
     () =>
-      TABS.filter((candidate) =>
-        candidate.id === "thumbnails" ? canFixThumbnails || canProduce : canProduce,
-      ),
-    [canFixThumbnails, canProduce],
+      TABS.filter((candidate) => {
+        if (canProduce && !canCreateTutorials) return candidate.id === "dashboard" || candidate.id === "library";
+        if (candidate.id === "activity") return canManage;
+        if (candidate.id === "uploads") return canViewDelivery;
+        if (candidate.id === "settings") return canProduce && (canManage || canEditWorkflow);
+        return candidate.id === "thumbnails" ? canFixThumbnails || canProduce : canProduce;
+      }),
+    [canFixThumbnails, canProduce, canCreateTutorials, canManage, canEditWorkflow, canViewDelivery],
   );
   // Default landing tab per role. A ?tab=<id> deep-link (e.g. the Keywords
   // sidebar item -> /tutorial-studio?tab=keywords) overrides it, but ONLY when
   // that tab is actually visible to this user — otherwise an UPLOADER_VA
   // following a Keywords link would land on a tab they cannot use. Read once at
   // mount via the lazy initializer; tab switches thereafter stay local state.
-  const defaultTab: TabId = "create";
+  const defaultTab: TabId = canProduce ? "dashboard" : canViewDelivery ? "uploads" : "thumbnails";
   const [tab, setTab] = useState<TabId>(() => {
     const requested = searchParams.get("tab");
     return requested && visibleTabs.some((t) => t.id === requested)
@@ -211,8 +215,11 @@ export function ProductionClient({
   // There is one thumbnail surface: /thumbnails. The former in-page fixer was
   // a second, competing Thumbnail section with different capabilities.
   useEffect(() => {
-    if (!canProduce && canFixThumbnails) router.replace("/thumbnails");
-  }, [canProduce, canFixThumbnails, router]);
+    if (!canProduce && canFixThumbnails && !canViewDelivery) router.replace("/thumbnails");
+  }, [canProduce, canFixThumbnails, canViewDelivery, router]);
+  useEffect(() => {
+    if (tab === "thumbnails") router.replace("/thumbnails");
+  }, [tab, router]);
   const [jobs, setJobs] = useState<TutorialJob[]>(initialJobs);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
@@ -241,6 +248,7 @@ export function ProductionClient({
   // people's scripts every 5s stalls the main thread on the page the VA plays
   // the voiceover and records on. See the note in api/production/jobs/route.ts.
   const refresh = useCallback(async () => {
+    if (!canProduce) return;
     try {
       const res = await fetch("/api/production/jobs?summary=1");
       if (!res.ok) return;
@@ -337,7 +345,7 @@ export function ProductionClient({
     } catch {
       // ignore network errors
     }
-  }, []);
+  }, [canProduce]);
 
   /**
    * Read the list once on mount, always — even when every job we were handed is
@@ -387,71 +395,32 @@ export function ProductionClient({
     };
   }, [jobs, refresh]);
 
-  const readyCount = jobs.filter((j) => j.status === "READY_TO_RECORD").length;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {visibleTabs.map((t) => (
-          <V2Button
-            key={t.id}
-            variant={tab === t.id ? "accent" : "outline"}
-            onClick={() => {
-              if (t.id === "thumbnails") {
-                router.push("/thumbnails");
-                return;
-              }
-              setTab(t.id);
-              router.replace(`/tutorial-studio?tab=${t.id}`, { scroll: false });
-            }}
-          >
-            {t.label}
-            {t.id === "studio" && readyCount > 0 && (
-              <span
-                style={{
-                  background: "var(--v2-accent)",
-                  color: "#fff",
-                  borderRadius: 9999,
-                  fontSize: 9,
-                  padding: "1px 5px",
-                  fontWeight: 700,
-                  marginLeft: 4,
-                }}
-              >
-                {readyCount}
-              </span>
-            )}
-          </V2Button>
-        ))}
-        {/* Video Stitcher lives in its own route (it has its own server-loaded
-            jobs/presets), but belongs to the Tutorial Studio — so it sits in
-            the same card row as the tabs. */}
-        {canProduce && (
-          <V2Button
-            variant="outline"
-            onClick={() => router.push("/tutorial-studio/video-stitcher")}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 15 }}
-            >
-              video_library
-            </span>
-            Video Stitcher
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 13, opacity: 0.5 }}
-            >
-              arrow_outward
-            </span>
-          </V2Button>
-        )}
-        {canProduce && <TtsHealthBadge />}
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <div className="studio-page-heading">
+        <div>
+          <h1>{visibleTabs.find(item => item.id === tab)?.label ?? "Tutorial Studio"}</h1>
+          <p>{tab === "dashboard" ? "Pick up your next task. Production keeps moving in the background." :
+            tab === "library" ? "Every tutorial, from first script to published languages." :
+            tab === "review" ? "Check the English original, inspect language readiness, then approve." :
+            tab === "localize" ? "Track each language independently. Retry only what needs attention." :
+            tab === "studio" ? "Record one tutorial while the next is being prepared." :
+            tab === "create" ? "Work through your software batch without switching context." :
+            tab === "keywords" ? "Choose a focused batch of tutorials for your channel." :
+            tab === "uploads" ? "Approved files, scheduled slots, and upload confirmations." :
+            tab === "calendar" ? "Channel capacity, publication reservations, and delivery evidence." :
+            tab === "activity" ? "Recorded production milestones across your team." :
+            "Configure your production workflow."}</p>
+        </div>
       </div>
 
       {/* Tab content */}
       {tab === "dashboard" && (
+        canCreateTutorials ? <MyWork jobs={jobs} /> : <AllTutorials title="Read-only tutorials" />
+      )}
+      {tab === "activity" && canManage && (
+        <div>
+
         <ProductionDashboard
           jobs={jobs}
           totals={totals}
@@ -462,6 +431,7 @@ export function ProductionClient({
           dailyLeaderboard={dailyLeaderboard}
           vaTimeseries={vaTimeseries}
         />
+        </div>
       )}
       {tab === "create" && (
         <ProductionCreate
@@ -484,106 +454,31 @@ export function ProductionClient({
       )}
       {tab === "studio" && (
         <ProductionStudio
+          userId={userId}
           jobs={jobs}
           settings={settings}
           onChange={refresh}
         />
       )}
       {tab === "uploads" && <UploadsTable />}
-      {/* Ranking / tier-list is an optional add-on the client has not enabled
-
-          for this deployment. The tab stays visible so the capability is
-          discoverable, but ProductionRanking is withheld behind a friendly
-          notice rather than exposing an unconfigured pipeline. Flip
-          RANKING_ENABLED to true once the add-on is commissioned. */}
-      {tab === "ranking" &&
-        (RANKING_ENABLED ? (
-          <ProductionRanking channels={rankingChannels} />
-        ) : (
-          <RankingNotAvailable />
-        ))}
+      {tab === "calendar" && <ContentCalendar />}
+      {tab === "library" && canProduce && <AllTutorials title="" />}
+      {tab === "activity" && canManage && <ActivityRecords />}
+      {tab === "library" && canProduce && <LegacyArchive />}
       {tab === "review" && <Review />}
       {tab === "localize" && <LocalizePanel />}
-      {tab === "keywords" && <ProductionKeywords />}
+      {tab === "keywords" && <ProductionKeywords channels={channels} />}
       <RecordingUploadQueue />
       {tab === "settings" && (
+      <>
         <ProductionSettings
           presets={presets}
           settings={settings}
           canManage={canManage}
           canEditWorkflow={canEditWorkflow}
         />
+        </>
       )}
-    </div>
-  );
-}
-
-/**
- * Ranking tab placeholder shown when the tier-list add-on is not enabled for
- * this deployment. Keeps the tab discoverable while making clear the feature
- * is an optional extra that can be switched on later.
- */
-function RankingNotAvailable() {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        textAlign: "center",
-        gap: 14,
-        padding: "48px 24px",
-        borderRadius: 14,
-        background: "var(--v2-surface-2)",
-        border: "1px dashed rgba(255,255,255,0.12)",
-      }}
-    >
-      <span
-        className="material-symbols-outlined"
-        style={{ fontSize: 40, color: "var(--v2-text-2)", opacity: 0.7 }}
-      >
-        leaderboard
-      </span>
-      <div style={{ maxWidth: 460, display: "flex", flexDirection: "column", gap: 8 }}>
-        <h3
-          style={{
-            fontSize: 16,
-            fontWeight: 800,
-            color: "var(--v2-text-1)",
-            margin: 0,
-          }}
-        >
-          Ranking is not available in this version
-        </h3>
-        <p
-          style={{
-            fontSize: 13,
-            lineHeight: 1.6,
-            color: "var(--v2-text-2)",
-            margin: 0,
-          }}
-        >
-          Tier-list / ranking videos are an optional add-on and are not enabled
-          for this deployment. Your tutorial production workflow is unaffected —
-          everything else works as normal. This lane can be switched on later if
-          you decide to produce ranking content.
-        </p>
-      </div>
-      <span
-        style={{
-          fontSize: 10,
-          fontWeight: 700,
-          color: "var(--v2-text-2)",
-          background: "rgba(255,255,255,0.05)",
-          border: "1px solid rgba(255,255,255,0.12)",
-          padding: "4px 12px",
-          borderRadius: 999,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
-        Optional add-on
-      </span>
     </div>
   );
 }

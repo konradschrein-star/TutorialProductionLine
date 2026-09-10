@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { V2Button, GlassCard } from "../../_components";
+import { keywordIsProduced } from "@/lib/keyword-tool/workflow";
 
 /**
  * "My claimed keywords" — the VA's work queue, at the top of the Create form.
@@ -36,10 +37,12 @@ export interface MyKeyword {
   note: string | null;
   referenceUrl: string | null;
   ktUrl: string;
+  assignedChannelId?: string | null;
   job: { id: string; status: string; title: string } | null;
 }
 
 interface Response {
+  integration?: "configured" | "disabled" | "unconfigured";
   ktUser: string;
   total: number;
   remaining: number;
@@ -79,7 +82,7 @@ export function MyKeywords({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/production/keywords/mine");
+      const res = await fetch("/api/production/keywords/mine?includeDone=1");
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       setData(body as Response);
@@ -122,10 +125,15 @@ export function MyKeywords({
   }
 
   if (!data) return null;
+  if (data.integration === "disabled" || data.integration === "unconfigured") {
+    return <GlassCard style={{ padding: 16, color: "var(--v2-text-2)", fontSize: 13 }}>
+      {data.integration === "disabled" ? "Keyword Tool is switched off for this workspace." : "Keyword Tool has not been connected yet."} You can still prepare a tutorial below.
+    </GlassCard>;
+  }
 
   const visible = showDone
     ? data.keywords
-    : data.keywords.filter((k) => k.job === null);
+    : data.keywords.filter((k) => !keywordIsProduced(k));
 
   return (
     <GlassCard style={{ padding: 20 }}>
@@ -150,7 +158,7 @@ export function MyKeywords({
           Your claimed keywords
         </div>
         <div style={{ fontSize: 12, opacity: 0.75 }}>
-          {data.remaining} to go · {data.total - data.remaining} made
+          {data.remaining} unfinished · {data.total - data.remaining} produced
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           {data.total > data.remaining && (
@@ -184,7 +192,8 @@ export function MyKeywords({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {visible.map((k) => {
-          const done = k.job !== null;
+          const done = keywordIsProduced(k);
+          const bound = k.job !== null;
           const selected = selectedId === k.id;
           return (
             <div
@@ -218,7 +227,7 @@ export function MyKeywords({
                   {k.destination && k.destination !== "TUTORIAL"
                     ? ` · routed to ${k.destination}`
                     : ""}
-                  {done ? ` · already made (${k.job!.status})` : ""}
+                  {bound ? ` · ${done ? "Produced" : "In Studio"} (${k.job!.status.replaceAll("_", " ").toLowerCase()})` : done ? " · Produced" : ""}
                 </div>
               </div>
               <a
@@ -243,7 +252,7 @@ export function MyKeywords({
                 everything about. The Keyword Tool board has a one-press
                 Produce; this is the same thing on this side.
               */}
-              {!done && !selected && onSendToProduction && (
+              {!done && !bound && !selected && onSendToProduction && (
                 <V2Button
                   variant="outline"
                   disabled={sending === k.id}
@@ -253,7 +262,9 @@ export function MyKeywords({
                   {sending === k.id ? "Sending…" : "Send to production"}
                 </V2Button>
               )}
-              {selected ? (
+              {bound ? (
+                <a href={`/tutorial-studio?tab=${done ? "review" : "dashboard"}&jobId=${encodeURIComponent(k.job!.id)}`} style={{ color: "var(--v2-accent)", fontSize: 12, whiteSpace: "nowrap" }}>Open tutorial</a>
+              ) : selected ? (
                 <V2Button variant="outline" onClick={onClear}>
                   Clear
                 </V2Button>

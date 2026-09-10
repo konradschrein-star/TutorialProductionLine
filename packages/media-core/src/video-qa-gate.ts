@@ -314,6 +314,8 @@ export async function measureVideoQa(
     timeout: QA_TIMEOUT_MS,
     reject: false, // analysis filters write to stderr; exit code is not the signal
   });
+  // Partial/failed decodes cannot establish absence of black or silent frames.
+  if (result.exitCode !== 0) throw new Error("Video QA decode did not complete successfully");
 
   const stderr = String(result.stderr ?? "");
   const volume = probe.audio

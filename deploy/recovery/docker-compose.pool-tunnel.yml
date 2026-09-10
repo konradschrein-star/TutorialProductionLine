@@ -1,0 +1,46 @@
+# Explicit opt-in overlay. Never included in staging by default.
+# No host ports. Only selected application services join pool_clients.
+services:
+  web:
+    networks:
+      default: {}
+      pool_clients: {}
+  provider-pool-tunnel:
+    image: ${POOL_TUNNEL_IMAGE:?Set a reviewed tunnel image digest}
+    profiles: [provider-pools]
+    user: '1000:1000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      POOL_SOURCE_IPV4: ${POOL_SOURCE_IPV4:?Set the verified source IPv4}
+    volumes:
+      - type: bind
+        source: /opt/tutorial-recovery-private/pool-tunnel/id_ed25519
+        target: /run/pool-ssh/id_ed25519
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/tutorial-recovery-private/pool-tunnel/known_hosts
+        target: /run/pool-ssh/known_hosts
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      pool_clients: {}
+      pool_egress: {}
+    mem_limit: 48m
+    cpus: 0.15
+    pids_limit: 16
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: '2'
+networks:
+  pool_clients:
+    internal: true
+  pool_egress:
+    internal: false

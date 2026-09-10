@@ -13,6 +13,12 @@ import { createDrizzleClient } from "@repo/db";
 import { initializeDb } from "@repo/db/singleton";
 import { bootstrapValidation } from "@repo/domain";
 import { startProviderProber } from "./services/provider-prober.js";
+import { startThumbnailLocalizationRecovery } from "./services/thumbnail-localization-recovery.js";
+import { startEnglishThumbnailFanout } from "./services/english-thumbnail-fanout.js";
+import { startAutomaticEnglishThumbnails } from "./services/automatic-english-thumbnails.js";
+import { startLateLocalePublicationRecovery } from "./services/late-locale-publication.js";
+import { startKeywordOutbox } from "./services/keyword-outbox.js";
+import { startAutomaticScheduledDeliveryRecovery } from "./services/automatic-scheduled-delivery.js";
 import {
   createRedisConnection,
   closeRedisConnection,
@@ -270,8 +276,34 @@ async function bootstrap() {
     tutorialTranslateQueueConn,
   );
   const thumbnailQueue = createThumbnailQueue(thumbnailQueueConn);
+  const stopKeywordOutbox = startKeywordOutbox(db);
+  process.once("SIGINT", stopKeywordOutbox);
+  process.once("SIGTERM", stopKeywordOutbox);
+  if (process.env["TUTORIAL_AUTOMATIC_DELIVERY_RECOVERY_ENABLED"] !== "false") {
+    const stopAutomaticDelivery = startAutomaticScheduledDeliveryRecovery(db);
+    process.once("SIGINT", stopAutomaticDelivery);
+    process.once("SIGTERM", stopAutomaticDelivery);
+  }
+  if (process.env["TUTORIAL_PUBLICATION_RECOVERY_ENABLED"] !== "false") {
+    const stopPublicationRecovery = startLateLocalePublicationRecovery(db);
+    process.once("SIGINT", stopPublicationRecovery);
+    process.once("SIGTERM", stopPublicationRecovery);
+  }
+  if (process.env["TUTORIAL_LOCALIZATION_RECOVERY_ENABLED"] !== "false") {
+    const stopRecovery = startThumbnailLocalizationRecovery(db, tutorialTranslateQueue);
+    process.once("SIGINT", stopRecovery);
+    process.once("SIGTERM", stopRecovery);
+  }
 
   // 5. Create processors (pass queues for dispatch-next)
+  if (process.env.TUTORIAL_AI_THUMBNAIL_FANOUT_ENABLED !== "false") {
+    const stopFanout = startEnglishThumbnailFanout(db);
+    const stopAutomatic = startAutomaticEnglishThumbnails(db, thumbnailQueue);
+    process.once("SIGINT", stopFanout);
+    process.once("SIGTERM", stopFanout);
+    process.once("SIGINT", stopAutomatic);
+    process.once("SIGTERM", stopAutomatic);
+  }
   const thumbnailProcessor = createThumbnailProcessor(db);
   const tutorialGenerateProcessor = createTutorialGenerateProcessor(db, {
     tutorialGenerate: tutorialGenerateQueue,

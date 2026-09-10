@@ -8,6 +8,7 @@ import {
   TutorialUploaderJobSchema,
   TutorialUploaderReceiptSchema,
   canonicalTutorialUploaderJob,
+  normalizeTutorialLanguage,
   tutorialUploaderReceiptFileName,
   type TutorialUploaderAsset,
   type TutorialUploaderJob,
@@ -23,8 +24,14 @@ import {
   tutorialJobs,
   tutorialUploadDispatches,
   tutorialUploadReceipts,
+  systemSettings,
+  thumbnails,
+  tutorialSourceRevision,
   type DrizzleClient,
 } from "@repo/db";
+import { sql } from "drizzle-orm";
+import type { ApprovedPublication } from "@repo/media-core";
+import { withTutorialPublicationInputs } from "../utils/tutorial/media-inputs.js";
 import {
   DRIVE_FOLDER_MIME,
   resumableUpload,
@@ -70,6 +77,7 @@ export interface PublishCandidate {
   videoPath: string;
   thumbnailId: string;
   thumbnailPath: string;
+  approvedAssetSnapshot: Record<string, unknown> | null;
 }
 
 export interface ReceiptCandidate {
@@ -117,7 +125,8 @@ export function tutorialJobProjectionForReceipt(
       ...common,
       uploader_status: "uploaded",
       youtube_visibility: visibility,
-      scheduled_for: null,
+      // A private/unlisted upload receipt is not authority to erase Studio's
+      // independently owned publication reservation.
       is_uploaded: true,
       uploaded_at: happenedAt,
       youtube_published_at: null,
@@ -579,6 +588,24 @@ export async function publishTutorialUploaderCandidate(
   candidate: PublishCandidate,
   deps: TutorialUploaderExchangeDeps = {},
 ): Promise<void> {
+  const approval = candidate.approvedAssetSnapshot as unknown as ApprovedPublication | null;
+  if (!approval?.video || !approval.thumbnail || ![approval.video, approval.thumbnail].every(asset => /^[a-f0-9]{64}$/i.test(asset.sha256) && Number.isSafeInteger(asset.size) && asset.size > 0)) throw new TutorialUploaderExchangeError("approved_assets_changed", "Exact approved asset hashes are required before restoring a dispatch.");
+  try {
+    await withTutorialPublicationInputs({ jobId: candidate.tutorialJobId, videoPath: candidate.videoPath, thumbnailPath: candidate.thumbnailPath, video: approval.video, thumbnail: approval.thumbnail }, () => publishTutorialUploaderCandidateUnderLease(repository, drive, options, candidate, deps));
+  } catch (error) {
+    let cause: unknown = error;
+    for (let depth = 0; depth < 5 && cause && typeof cause === "object"; depth++) {
+      if ((cause as {code?:string}).code === "55P03") throw new TutorialUploaderExchangeError("publication_lock_busy", "A concurrent review owns this tutorial; retry admission after it completes. No provider upload was started.", true);
+      cause = (cause as {cause?:unknown}).cause;
+    }
+    throw error;
+  }
+}
+
+async function publishTutorialUploaderCandidateUnderLease(
+  repository: TutorialUploaderExchangeRepository, drive: TutorialUploaderDrivePort,
+  options: TutorialUploaderExchangeOptions, candidate: PublishCandidate, deps: TutorialUploaderExchangeDeps,
+): Promise<void> {
   const inspectLocalAsset =
     deps.inspectLocalAsset ?? inspectTutorialUploaderLocalAsset;
   if (candidate.videoPath.trim() === "") {
@@ -638,6 +665,10 @@ export async function publishTutorialUploaderCandidate(
   // process dies after uploading only part of the folder, a retry compares the
   // current local bytes with this durable revision instead of silently
   // accepting a changed render under the same idempotency key.
+  const approval = candidate.approvedAssetSnapshot as (ApprovedPublication & { uploaderChannelKey: string }) | null;
+  if (!approval || approval.version !== 1 || !approval.revision || approval.video?.sha256 !== video.sha256 || approval.video?.size !== video.sizeBytes || approval.thumbnail?.sha256 !== thumbnail.sha256 || approval.thumbnail?.size !== thumbnail.sizeBytes || approval.identity?.jobId !== candidate.tutorialJobId || approval.identity?.videoPath !== candidate.videoPath || approval.identity?.thumbnailId !== candidate.thumbnailId || approval.identity?.thumbnailPath !== candidate.thumbnailPath || approval.uploaderChannelKey !== candidate.channelKey || approval.identity?.title.trim() !== candidate.attributes.title || approval.identity?.description.trim() !== candidate.attributes.description || JSON.stringify(approval.identity?.tags.map((tag) => tag.trim())) !== JSON.stringify(candidate.attributes.tags)) {
+    throw new TutorialUploaderExchangeError("approved_assets_changed", "Dispatch bytes or metadata do not match final approval. Repeat review before requesting a new delivery revision.");
+  }
   await repository.markPublishing({
     dispatchId: candidate.dispatchId,
     manifest: built.manifest,
@@ -955,6 +986,9 @@ export async function runTutorialUploaderExchangeOnce(
       );
       totals.published += 1;
     } catch (error) {
+      // Ordinary review contention is deferred, not recorded as a publication
+      // failure or spent retry. Admission has not mutated any Drive object.
+      if (error instanceof TutorialUploaderExchangeError && error.code === "publication_lock_busy") continue;
       totals.publishFailed += 1;
       const failure =
         error instanceof TutorialUploaderExchangeError
@@ -1083,6 +1117,8 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
   constructor(private readonly db: DrizzleClient) {}
 
   async listPublishCandidates(limit: number): Promise<PublishCandidate[]> {
+    const [control] = await this.db.select({ paused: systemSettings.tutorialDispatchPaused }).from(systemSettings).where(eq(systemSettings.id, "singleton"));
+    if (control?.paused) return [];
     const rows = await this.db
       .select({
         dispatchId: tutorialUploadDispatches.id,
@@ -1098,6 +1134,7 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
         videoPath: tutorialUploadDispatches.video_path,
         thumbnailId: tutorialUploadDispatches.thumbnail_id,
         thumbnailPath: tutorialUploadDispatches.thumbnail_path,
+        approvedAssetSnapshot: tutorialUploadDispatches.approved_asset_snapshot,
       })
       .from(tutorialUploadDispatches)
       .where(
@@ -1119,8 +1156,30 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
   async markPublishing(
     record: Omit<PublishRecord, "driveFolderId">,
   ): Promise<void> {
+    return this.db.transaction(async (tx) => {
+    const [earlyControl] = await tx.select({ paused: systemSettings.tutorialDispatchPaused }).from(systemSettings).where(eq(systemSettings.id, "singleton"));
+    if (earlyControl?.paused) throw new TutorialUploaderExchangeError("dispatch_paused", "New uploader dispatches are paused by an Admin", true);
+    const [dispatch] = await tx.select().from(tutorialUploadDispatches).where(eq(tutorialUploadDispatches.id, record.dispatchId));
+    const [initialJob] = dispatch ? await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, dispatch.tutorial_job_id)) : [];
+    if (!dispatch || !initialJob) throw new TutorialUploaderExchangeError("approval_withdrawn", "The tutorial dispatch no longer exists.");
+    // Same lock order as Hub: root, variant, then admission control.
+    const [root] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.source_job_id ?? initialJob.id)).for("update", { noWait: true });
+    const [current] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, initialJob.id)).for("update", { noWait: true });
+    if (!root || !current || root.va_review_status !== "approved" || root.status !== "COMPLETED" || current.status !== "COMPLETED" || (current.source_job_id ?? current.id) !== root.id) throw new TutorialUploaderExchangeError("approval_withdrawn", "Final review is no longer valid.");
+    const sourceRevision = tutorialSourceRevision(root);
+    for (const job of current.id === root.id ? [root] : [root, current]) {
+      const approval = job.publication_approval as unknown as ApprovedPublication | null;
+      const identity = approval?.identity;
+      const candidates = await tx.select({ id: thumbnails.id, channelId: thumbnails.channel_id, language: thumbnails.language, status: thumbnails.status, outputPath: thumbnails.output_path }).from(thumbnails).where(and(eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, job.id), eq(thumbnails.is_selected, true)));
+      const selected = candidates.filter((candidate) => normalizeTutorialLanguage(candidate.language) === normalizeTutorialLanguage(job.language));
+      if (!identity || identity.jobId !== job.id || identity.sourceRevision !== sourceRevision || identity.channelId !== job.channel_id || identity.language !== job.language || identity.title !== job.title || identity.description !== job.description || JSON.stringify(identity.tags) !== JSON.stringify(job.tags) || identity.videoPath !== job.final_path || selected.length !== 1 || selected[0]!.id !== identity.thumbnailId || selected[0]!.channelId !== job.channel_id || selected[0]!.status !== "completed" || selected[0]!.outputPath !== identity.thumbnailPath) throw new TutorialUploaderExchangeError("approval_withdrawn", "Tutorial assets or metadata changed after review. Reconcile this dispatch before retrying.");
+    }
+    if (current.publication_approval?.revision !== dispatch.approved_asset_snapshot?.revision) throw new TutorialUploaderExchangeError("approval_withdrawn", "The dispatch refers to an older approval revision.");
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-dispatch-admission'))`);
+    const [control] = await tx.select({ paused: systemSettings.tutorialDispatchPaused }).from(systemSettings).where(eq(systemSettings.id, "singleton"));
+    if (control?.paused) throw new TutorialUploaderExchangeError("dispatch_paused", "New uploader dispatches are paused by an Admin", true);
     const now = new Date();
-    const updated = await this.db
+    const updated = await tx
       .update(tutorialUploadDispatches)
       .set({
         state: "publishing",
@@ -1156,6 +1215,7 @@ export class DrizzleTutorialUploaderExchangeRepository implements TutorialUpload
         "dispatch could not be frozen for this manifest revision",
       );
     }
+    });
   }
 
   async markPublished(record: PublishRecord): Promise<void> {

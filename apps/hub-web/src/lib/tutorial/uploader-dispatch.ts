@@ -90,14 +90,7 @@ export function validateDispatchCandidate(
       "Tutorial has no explicit language; dispatch will not assume English",
     );
   }
-  if (candidate.sourceJobId) {
-    if (!AUTOMATIC_TRANSLATION_LANGUAGES.some((code) => code === language)) {
-      throw new DispatchGateError(
-        "unsupported_translation_language",
-        `Translated tutorials may dispatch only in ${AUTOMATIC_TRANSLATION_LANGUAGES.join(", ")}`,
-      );
-    }
-  } else if (language !== "en") {
+  if (!candidate.sourceJobId && language !== "en") {
     throw new DispatchGateError(
       "source_not_english",
       "Original tutorials must be English; other languages must be localized children",
@@ -159,12 +152,11 @@ export function validateDispatchCandidate(
     );
   }
   if (
-    !candidate.thumbnailTextTop?.trim() ||
-    !candidate.thumbnailTextBottom?.trim()
+    !candidate.thumbnailTextTop?.trim()
   ) {
     throw new DispatchGateError(
       "localized_thumbnail_copy_incomplete",
-      "Localized thumbnail top and bottom copy must both be nonempty",
+      "Localized thumbnail copy must be nonempty",
     );
   }
 

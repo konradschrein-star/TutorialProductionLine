@@ -71,7 +71,7 @@ export function CharacterCard({ character, archetypeName }: CharacterCardProps) 
         )}
 
         <span className="text-xs text-[#aaff00] font-medium hover:text-[rgba(170,255,0,0.8)] transition-colors whitespace-nowrap">
-          View States →
+          View images →
         </span>
       </div>
     </div>

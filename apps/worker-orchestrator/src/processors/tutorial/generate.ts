@@ -7,6 +7,7 @@ import type { TutorialGeneratePayload, VoiceSettings } from "@repo/contracts";
 import {
   TutorialGeneratePayloadSchema,
   TUTORIAL_PROVIDERS,
+  tutorialChannelProfile,
 } from "@repo/contracts";
 import type { DrizzleClient, ChannelVoice } from "@repo/db";
 import {
@@ -18,6 +19,9 @@ import {
   createTutorialJob,
   listTutorialJobsByParent,
   getChannelVoice,
+  getTTSVoiceByDatabaseId,
+  channels,
+  eq,
 } from "@repo/db";
 import { generateScript } from "../../utils/tutorial/llm-registry.js";
 import { generateTutorialUploadMetadata } from "../../utils/tutorial/upload-metadata.js";
@@ -53,6 +57,7 @@ import {
 import { withTTSSlot } from "../../utils/tts-gateway.js";
 import { ai33TTSCircuitBreaker } from "../../utils/ai33-circuit-breaker.js";
 import { isFinalAttempt } from "../../utils/tutorial/attempts.js";
+import { resolveConfiguredTutorialVoice } from "../../utils/tutorial/configured-voice-default.js";
 
 const execFileAsync = promisify(execFile);
 const FFMPEG_BIN = process.env["FFMPEG_PATH"] ?? "ffmpeg";
@@ -498,6 +503,12 @@ export function createTutorialGenerateProcessor(
         if (!promptText) {
           throw new Error(`No prompt found for tutorial job ${jobId}`);
         }
+        const channelProfile = tutorialJob.channel_id
+          ? tutorialChannelProfile((await db.select({ metadata: channels.metadata }).from(channels).where(eq(channels.id, tutorialJob.channel_id)).limit(1))[0]?.metadata)
+          : tutorialChannelProfile({});
+        if (channelProfile.promptOverrides.script.trim()) {
+          promptText += `\n\nCHANNEL-SPECIFIC SCRIPT INSTRUCTIONS:\n${channelProfile.promptOverrides.script.trim()}`;
+        }
 
         // The VA's text box (`steps_input`) used to be concatenated onto the
         // preset here and handed over as `baseInstructions` — which the script
@@ -718,6 +729,8 @@ export function createTutorialGenerateProcessor(
             apiKey: llmApiKey,
             model: tutorialJob.script_model ?? undefined,
             language: tutorialJob.language,
+            metadataInstructions: channelProfile.promptOverrides.metadata,
+            thumbnailTextInstructions: channelProfile.promptOverrides.thumbnailText,
           });
 
           await updateTutorialJob(db, jobId, {
@@ -881,6 +894,8 @@ export function createTutorialGenerateProcessor(
             apiKey: llmApiKey,
             model: tutorialJob.script_model ?? undefined,
             language: tutorialJob.language,
+            metadataInstructions: channelProfile.promptOverrides.metadata,
+            thumbnailTextInstructions: channelProfile.promptOverrides.thumbnailText,
           });
 
           await updateTutorialJob(db, jobId, {
@@ -953,6 +968,8 @@ export function createTutorialGenerateProcessor(
           apiKey: llmApiKey,
           model: tutorialJob.script_model ?? undefined,
           language: tutorialJob.language,
+          metadataInstructions: channelProfile.promptOverrides.metadata,
+          thumbnailTextInstructions: channelProfile.promptOverrides.thumbnailText,
         });
 
         await updateTutorialJob(db, jobId, {
@@ -1090,7 +1107,13 @@ export function createTutorialGenerateProcessor(
             continue;
           }
 
-          const voice = resolveVoiceForProvider(
+          const configuredVoice = await resolveConfiguredTutorialVoice({
+            providerId, jobProvider: tutorialJob.tts_provider, jobVoice: tutorialJob.tts_voice,
+            settingsDefaultVoice: tutorialSettingsRow.default_tts_voice,
+            language: tutorialJob.language, channelVoice, env: process.env,
+            findVoiceRow: id => getTTSVoiceByDatabaseId(db, id),
+          });
+          const voice = configuredVoice ?? resolveVoiceForProvider(
             providerId,
             tutorialJob.tts_voice,
             channelVoice,

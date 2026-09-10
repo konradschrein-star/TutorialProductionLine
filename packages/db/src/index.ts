@@ -8,6 +8,7 @@
 export * from "./schema/index.js";
 export { createDrizzleClient } from "./client.js";
 export type { DrizzleClient } from "./client.js";
+export { tutorialSourceRevision } from "./tutorial-source-revision.js";
 
 // Re-export commonly used drizzle-orm utilities
 export {
@@ -88,6 +89,7 @@ export {
   getChannelPersona,
   upsertChannelPersona,
   getChannelThumbnailProfile,
+  getTutorialChannelProfile,
   upsertChannelThumbnailProfile,
   createThumbnailRecord,
   updateThumbnailRecord,
@@ -119,3 +121,9 @@ export type {
 } from "./subtitles/config-schema.js";
 
 export const DB_PACKAGE_VERSION = "0.1.0";
+export { reserveTutorialPublicationSlot } from "./reserve-tutorial-slot.js";
+export { inspectTutorialProductionBatch, loadTutorialProductionBatchInput, planTutorialProductionBatch, reserveTutorialProductionBatch, tutorialProductionBatchCsv } from "./tutorial-production-batch.js";
+export type { TutorialProductionBatchInput, TutorialProductionBatchPlan, TutorialBatchExclusionReason } from "./tutorial-production-batch.js";
+export { prepareLegacyTutorialArchive, assertArchivePayloadSafe } from "./legacy-archive-plan.js";
+export { recordApprovedEnglishThumbnailFanout, englishThumbnailApprovalRevision, resolveThumbnailFanoutTargets, THUMBNAIL_FANOUT_LANGUAGES } from "./tutorial-thumbnail-fanout.js";
+export type { ApprovedEnglishThumbnail } from "./tutorial-thumbnail-fanout.js";

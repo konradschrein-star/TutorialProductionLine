@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { stat as statFile } from "node:fs/promises";
 import type {
   DrizzleClient,
   StorageArtifact,
@@ -27,6 +28,9 @@ import {
   markUploading,
   recordProgress,
   getArtifactById,
+  getArtifact,
+  recordSourceRevision,
+  archiveArtifactVersion,
   markDeletedFromDrive,
 } from "./repository.js";
 import { checkBudget, recordUsage } from "./daily-budget.js";
@@ -113,7 +117,7 @@ export interface PutFinalArtifactArgs {
   localPath: string;
   /** Override the conventional filename. Rarely needed. */
   filename?: string;
-  /** Skip the sha256 pass (it reads the whole file). Default: computed. */
+  /** Deprecated compatibility option: revision-safe storage always hashes bytes. */
   computeChecksum?: boolean;
   /** Which owner table job_id points at. Default content_job. */
   ownerKind?: StorageOwnerKind;
@@ -181,18 +185,15 @@ export interface ArtifactStoreDeps extends DriveClientDeps {
   };
 }
 
-function hashFile(path: string, algorithm: "sha256" | "md5"): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash(algorithm);
-    const stream = createReadStream(path);
-    stream.on("error", reject);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-  });
+export async function fingerprintStorageSource(path: string) {
+  const before = await statFile(path);
+  if (!before.isFile() || before.size <= 0) throw new Error("Storage source is empty or not a file");
+  const sha = createHash("sha256"); const md5 = createHash("md5");
+  for await (const chunk of createReadStream(path)) { sha.update(chunk); md5.update(chunk); }
+  const after = await statFile(path);
+  if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.ino !== after.ino) throw new Error("Storage source changed while fingerprinting; retry after production settles");
+  return { bytes: after.size, sha256: sha.digest("hex"), md5: md5.digest("hex") };
 }
-
-const sha256File = (path: string): Promise<string> => hashFile(path, "sha256");
-const md5File = (path: string): Promise<string> => hashFile(path, "md5");
 
 function backoffFrom(config: DriveConfig): BackoffOptions {
   return {
@@ -271,6 +272,8 @@ export class ArtifactStore {
     args: PutFinalArtifactArgs,
   ): Promise<PutFinalArtifactResult> {
     const filename = args.filename ?? ARTIFACT_FILENAMES[args.kind];
+    const previous = await getArtifact(this.db, args.jobId, args.kind);
+    if (previous) await archiveArtifactVersion(this.db, previous);
 
     const row = await ensureArtifactRow(this.db, {
       job_id: args.jobId,
@@ -283,22 +286,10 @@ export class ArtifactStore {
       source_job_id: args.sourceJobId ?? null,
     });
 
-    // Fast path: we already did this. Trust the row, but only when it actually
-    // carries a Drive file id — a row that says "uploaded" with no id is a bug
-    // we would rather re-upload than paper over.
-    if (row.state === "uploaded" && row.drive_file_id !== null) {
-      return {
-        outcome: "already_uploaded",
-        artifactId: row.id,
-        driveFileId: row.drive_file_id,
-        driveWebLink: row.drive_web_link,
-        driveFolderPath: row.drive_folder_path,
-      };
-    }
-
     await markUploading(this.db, row.id);
 
-    const result = await this.upload(args, row, filename);
+    // Preserve the pre-upsert path for resumable-session identity checks.
+    const result = await this.upload(args, previous ? { ...row, vps_path: previous.vps_path } : row, filename);
 
     if (result.outcome === "uploaded") {
       // Count the bytes against today's budget only for a genuinely new upload.
@@ -474,6 +465,10 @@ export class ArtifactStore {
         reason: `file is ${bytes} bytes, above STORAGE_DRIVE_MAX_FILE_BYTES (${this.config.maxFileBytes})`,
       };
     }
+    let source: Awaited<ReturnType<typeof fingerprintStorageSource>>;
+    try { source = await fingerprintStorageSource(args.localPath); }
+    catch (error) { return { outcome: "failed", error: classifyThrown(error) }; }
+    if (source.bytes !== bytes) return { outcome: "failed", error: storageError("local_file", "Source changed before upload") };
 
     // Tutorials / Clip Forge supply a pre-computed plan for their own trees;
     // content jobs fall back to the default plan (with language variants).
@@ -498,10 +493,13 @@ export class ArtifactStore {
 
     // Idempotency check #2 (after the DB row): ask Drive whether it already
     // holds a file tagged with this job+kind. This survives a lost DB row.
-    const existing = await this.client.findExistingArtifact(
-      args.jobId,
-      args.kind,
-    );
+    const byId = row.drive_file_id ? await this.client.getFile(row.drive_file_id) : null;
+    if (byId && !byId.ok && byId.error.kind !== "not_found") return { outcome: "failed", error: byId.error };
+    const exactRevision = await this.client.findExistingArtifact(args.jobId, args.kind, source.sha256);
+    if (!exactRevision.ok) return { outcome: "failed", error: exactRevision.error };
+    const existing = exactRevision.value ? exactRevision : byId?.ok && !byId.value.trashed
+      ? { ok: true as const, value: byId.value }
+      : await this.client.findExistingArtifact(args.jobId, args.kind);
     if (!existing.ok) return { outcome: "failed", error: existing.error };
 
     const folder = await this.client.ensureFolderPath(plan.segments);
@@ -510,10 +508,14 @@ export class ArtifactStore {
     if (existing.value !== null) {
       const remoteSize =
         existing.value.size !== undefined ? Number(existing.value.size) : null;
-      // Same size => same file, as far as we can cheaply tell. A re-render
-      // that changed the video will differ in size and fall through to a
-      // re-upload below.
-      if (remoteSize === bytes) {
+      const remoteMatches = remoteSize === bytes && (
+        existing.value.sha256Checksum ? existing.value.sha256Checksum.toLowerCase() === source.sha256
+          : Boolean(existing.value.md5Checksum && existing.value.md5Checksum.toLowerCase() === source.md5)
+      );
+      if (remoteMatches) {
+        const current = await fingerprintStorageSource(args.localPath).catch(() => null);
+        if (!current || current.sha256 !== source.sha256) return { outcome: "failed", error: storageError("local_file", "Source changed while verifying Drive copy") };
+        await recordSourceRevision(this.db, row.id, { vps_path: args.localPath, bytes, checksum_sha256: source.sha256, preserveSession: false });
         return {
           outcome: "already_uploaded",
           driveFileId: existing.value.id,
@@ -521,13 +523,13 @@ export class ArtifactStore {
           driveFolderId: folder.value,
           driveFolderPath: plan.path,
           bytes,
-          checksum: row.checksum_sha256,
-          driveMd5: existing.value.md5Checksum ?? row.drive_md5 ?? null,
-          verified: row.verified_at !== null,
+          checksum: source.sha256,
+          driveMd5: existing.value.md5Checksum ?? null,
+          verified: true,
         };
       }
       this.logger.warn(
-        "storage: Drive already holds a differently-sized copy; uploading a new revision",
+        "storage: Drive copy does not match current bytes; retaining it while uploading a new revision",
         {
           job_id: args.jobId,
           kind: args.kind,
@@ -556,42 +558,28 @@ export class ArtifactStore {
       };
     }
 
-    let checksum: string | null = null;
-    if (args.computeChecksum !== false) {
-      try {
-        checksum = await sha256File(args.localPath);
-      } catch (err) {
-        return { outcome: "failed", error: classifyThrown(err) };
-      }
-    }
+    const checksum = source.sha256;
+    const canResume = row.vps_path === args.localPath && row.bytes === bytes && row.checksum_sha256 === checksum;
+    await recordSourceRevision(this.db, row.id, { vps_path: args.localPath, bytes, checksum_sha256: checksum, preserveSession: canResume });
 
     const mimeType = MIME_BY_KIND[args.kind];
 
     if (bytes <= SMALL_FILE_THRESHOLD_BYTES) {
       const content = await this.readSmall(args.localPath);
       if (!content.ok) return { outcome: "failed", error: content.error };
+      if (content.value.length !== bytes || createHash("sha256").update(content.value).digest("hex") !== checksum) return { outcome: "failed", error: storageError("local_file", "Source changed before multipart upload") };
 
-      const uploaded =
-        existing.value !== null
-          ? await this.client.updateSmallFile({
-              fileId: existing.value.id,
-              mimeType,
-              content: content.value,
-            })
-          : await this.client.uploadSmallFile({
+      const uploaded = await this.client.uploadSmallFile({
               filename,
               parentId: folder.value,
               mimeType,
               content: content.value,
               jobId: args.jobId,
               kind: args.kind,
+              sourceSha256: checksum,
             });
       if (!uploaded.ok) return { outcome: "failed", error: uploaded.error };
-      const verified = await this.verifyMd5(
-        args.localPath,
-        uploaded.value.id,
-        uploaded.value.md5Checksum,
-      );
+      const verified = await this.verifyUploadedRevision(args.localPath, source, uploaded.value);
       if (!verified.ok) return { outcome: "failed", error: verified.error };
       return {
         outcome: "uploaded",
@@ -611,18 +599,19 @@ export class ArtifactStore {
       {
         localPath: args.localPath,
         totalBytes: bytes,
-        sessionUri: row.resumable_session_uri ?? undefined,
+        sessionUri: canResume ? row.resumable_session_uri ?? undefined : undefined,
         filename,
         parentId: folder.value,
         mimeType,
         jobId: args.jobId,
         kind: args.kind,
+        sourceSha256: checksum,
         chunkSizeBytes: this.config.chunkSizeBytes,
         onProgress: async (info) => {
           await recordProgress(this.db, row.id, {
             resumable_session_uri: info.sessionUri,
             bytes_uploaded: info.bytesUploaded,
-          });
+          }, checksum);
         },
       },
       backoffFrom(this.config),
@@ -643,11 +632,7 @@ export class ArtifactStore {
       };
     }
 
-    const verified = await this.verifyMd5(
-      args.localPath,
-      uploaded.value.id,
-      uploaded.value.md5Checksum,
-    );
+    const verified = await this.verifyUploadedRevision(args.localPath, source, uploaded.value);
     if (!verified.ok) return { outcome: "failed", error: verified.error };
 
     return {
@@ -661,6 +646,21 @@ export class ArtifactStore {
       driveMd5: uploaded.value.md5Checksum ?? null,
       verified: verified.value,
     };
+  }
+
+  private async verifyUploadedRevision(localPath: string, expected: Awaited<ReturnType<typeof fingerprintStorageSource>>, remote: { id: string; size?: string; md5Checksum?: string; sha256Checksum?: string }) {
+    const current = await fingerprintStorageSource(localPath).catch(() => null);
+    if (!current || current.sha256 !== expected.sha256 || current.bytes !== expected.bytes) return { ok: false as const, error: storageError("local_file", "Source changed during upload; previous Drive revision was preserved") };
+    const matches = remote.size !== undefined && Number(remote.size) !== expected.bytes ? false
+      : remote.sha256Checksum ? remote.sha256Checksum.toLowerCase() === expected.sha256
+      : remote.md5Checksum ? remote.md5Checksum.toLowerCase() === expected.md5 : null;
+    if (matches === true) return { ok: true as const, value: true };
+    if (matches === null) {
+      const inspected = await this.client.inspectFileContent(remote.id, expected.bytes);
+      if (!inspected.ok) return inspected;
+      if (inspected.value.sha256 === expected.sha256 && inspected.value.sizeBytes === expected.bytes) return { ok: true as const, value: true };
+    }
+    return { ok: false as const, error: storageError("unknown", "Uploaded revision checksum could not be verified; previous Drive copy was preserved") };
   }
 
   /**
@@ -693,42 +693,6 @@ export class ArtifactStore {
       "deleted from Drive by VA review (disapproved)",
     );
     return true;
-  }
-
-  /**
-   * Compare Drive's reported MD5 with a locally computed one. A mismatch means
-   * the stored bytes are corrupt: delete the Drive copy and fail (never leave a
-   * bad file behind pretending to be the artefact). When Drive returns no MD5
-   * (rare, some content types) verification is skipped, not faked — returns
-   * `verified: false`.
-   */
-  private async verifyMd5(
-    localPath: string,
-    driveFileId: string,
-    driveMd5: string | undefined,
-  ): Promise<
-    { ok: true; value: boolean } | { ok: false; error: StorageError }
-  > {
-    if (driveMd5 === undefined || driveMd5 === "") {
-      return { ok: true, value: false };
-    }
-    let localMd5: string;
-    try {
-      localMd5 = await md5File(localPath);
-    } catch (err) {
-      return { ok: false, error: classifyThrown(err) };
-    }
-    if (localMd5.toLowerCase() !== driveMd5.toLowerCase()) {
-      await this.client.deleteFile(driveFileId);
-      return {
-        ok: false,
-        error: storageError(
-          "unknown",
-          `checksum mismatch after upload: local MD5 ${localMd5}, Drive ${driveMd5}. Deleted the corrupt Drive copy.`,
-        ),
-      };
-    }
-    return { ok: true, value: true };
   }
 
   private async readSmall(

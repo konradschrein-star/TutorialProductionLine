@@ -5,12 +5,15 @@ import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import { db, tutorialJobs, users } from "@/lib/db";
-import { createTutorialJob, listTutorialJobsByUser } from "@repo/db";
+import { createOrReuseTutorialJob, listTutorialJobs, listTutorialJobsByUser } from "@repo/db";
 import {
   createRedisConnection,
   createTutorialGenerateQueue,
 } from "@repo/queue";
 import { VoiceSettingsSchema } from "@repo/contracts";
+import { getProductionChannelAccess } from "@/lib/tutorial/channel-access";
+import { KeywordProductionSchema, keywordProductionPayload } from "@/lib/keyword-tool/production";
+import { ktLogin, ktGet, ktProduce, KeywordToolError } from "@/lib/keyword-tool/client";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +80,9 @@ export async function GET(req: NextRequest) {
   if (!session || !hasPermission(session, "view:production")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const jobs = await listTutorialJobsByUser(db, session.userId, 100);
+  const jobs = hasPermission(session, "manage:tutorial-settings")
+    ? await listTutorialJobs(db, 100)
+    : await listTutorialJobsByUser(db, session.userId, 100);
 
   // `?summary=1` nulls script_text. Tutorial Studio polls this endpoint every
   // 5s and script_text dominates the payload — 100 rows measured 546 kB in
@@ -130,11 +135,46 @@ export async function POST(req: NextRequest) {
   if (!session || !hasPermission(session, "create:tutorial-job")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const parsed = CreateSchema.safeParse(await req.json());
+  const incoming = await req.json();
+  if (incoming && typeof incoming === "object" && incoming.keyword_ref) {
+    const linked = KeywordProductionSchema.safeParse(incoming);
+    if (!linked.success) return NextResponse.json({ error: linked.error.message }, { status: 400 });
+    const data = linked.data;
+    const destination = await getProductionChannelAccess(session.userId, data.channel_id);
+    if (!destination) return NextResponse.json({ error: "This channel is not assigned to you." }, { status: 403 });
+    if (data.language !== destination.language) return NextResponse.json({ error: "The language must match the assigned channel." }, { status: 400 });
+    try {
+      const kt = await ktLogin(session);
+      // Even an Admin's browser acts on its own claims here, never an arbitrary VA.
+      const claims = await ktGet<Array<{ id: number }>>(kt, "/api/v5/keywords", { claimed_by: kt.user.id, limit: 200 });
+      if (!claims.some((k) => String(k.id) === data.keyword_ref)) return NextResponse.json({ error: "Claim this keyword in the Keyword Tool before preparing it." }, { status: 403 });
+      const result = await ktProduce(kt, data.keyword_ref, keywordProductionPayload(data));
+      if (result.state !== "confirmed" || !result.forge_job_id) return NextResponse.json({
+        error: result.message ?? "Your request is saved but Studio has not confirmed it. Retry this same keyword; do not create replacement work.",
+        intentState: result.state ?? "uncertain",
+      }, { status: 503 });
+      // A retry reuses the frozen request, not newly edited form values.
+      // Verify the actual original before claiming this selected destination succeeded.
+      const [bound] = await db.select({ owner: tutorialJobs.created_by, channelId: tutorialJobs.channel_id, keywordRef: tutorialJobs.keyword_ref })
+        .from(tutorialJobs).where(eq(tutorialJobs.id, result.forge_job_id)).limit(1);
+      if (!bound || bound.owner !== session.userId || bound.channelId !== data.channel_id || bound.keywordRef !== data.keyword_ref) {
+        return NextResponse.json({ error: "The saved request belongs to a different channel or producer, or cannot be verified here. Open the existing Studio tutorial or ask an Admin to reconcile it; do not create a replacement." }, { status: 409 });
+      }
+      return NextResponse.json({ jobId: result.forge_job_id, duplicate: result.duplicate ?? false }, { status: 200 });
+    } catch (error) {
+      if (error instanceof KeywordToolError) return NextResponse.json({ error: error.message }, { status: error.status });
+      throw error;
+    }
+  }
+  const parsed = CreateSchema.safeParse(incoming);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
   const data = parsed.data;
+  const destination = await getProductionChannelAccess(session.userId, data.channel_id);
+  if (!destination) return NextResponse.json({ error: "This channel is not assigned to you for production. Ask an Admin to check your channel assignments." }, { status: 403 });
+  if (data.language && data.language !== destination.language) return NextResponse.json({ error: "The tutorial language must match its assigned channel." }, { status: 400 });
+  data.language = destination.language;
 
   // A job with neither a preset id nor a custom prompt will fail at the
   // script stage with "No prompt found". Reject up front instead of
@@ -154,7 +194,7 @@ export async function POST(req: NextRequest) {
   // Only failed/cancelled jobs may be re-sent.
   if (data.keyword_ref) {
     const [existing] = await db
-      .select({ id: tutorialJobs.id, status: tutorialJobs.status })
+      .select({ id: tutorialJobs.id, status: tutorialJobs.status, owner: tutorialJobs.created_by, channelId: tutorialJobs.channel_id })
       .from(tutorialJobs)
       .where(
         and(
@@ -168,19 +208,19 @@ export async function POST(req: NextRequest) {
         ),
       )
       .limit(1);
-    if (existing) {
+    if (existing && existing.owner !== session.userId) return NextResponse.json({ error: "This keyword is already assigned to another producer." }, { status: 409 });
+    if (existing && existing.channelId !== data.channel_id) return NextResponse.json({ error: "This keyword is already bound to another channel." }, { status: 409 });
+    if (existing && existing.status !== "QUEUED") {
       return NextResponse.json(
         {
-          error:
-            `You have already started this keyword — it is job "${existing.id}" (${existing.status}). ` +
-            `Cancel that one first if you want to redo it.`,
+          jobId: existing.id, duplicate: true, status: existing.status,
         },
-        { status: 409 },
+        { status: 200 },
       );
     }
   }
 
-  const job = await createTutorialJob(db, {
+  const intake = await createOrReuseTutorialJob(db, {
     created_by: session.userId,
     keyword_ref: data.keyword_ref,
     kt_url: data.kt_url,
@@ -205,6 +245,9 @@ export async function POST(req: NextRequest) {
     reference_transcript: data.reference_transcript,
     language: data.language,
   });
+  const job = intake.job;
+  if (!job) return NextResponse.json({ error: "This keyword already belongs to another producer or channel." }, { status: 409 });
+  if (!intake.created && job.status !== "QUEUED") return NextResponse.json({ jobId: job.id, duplicate: true, status: job.status });
 
   // Remember the channel this assistant is working on. It is what attributes a
   // job created OUTSIDE this form — one pushed from the keyword board's Produce
@@ -243,5 +286,5 @@ export async function POST(req: NextRequest) {
   } finally {
     await conn.quit();
   }
-  return NextResponse.json({ jobId: job.id }, { status: 201 });
+  return NextResponse.json({ jobId: job.id, duplicate: !intake.created }, { status: intake.created ? 201 : 200 });
 }

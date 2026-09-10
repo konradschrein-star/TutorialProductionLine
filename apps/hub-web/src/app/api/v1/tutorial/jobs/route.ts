@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, notInArray } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { resolvePrincipal, ApiAuthError } from "@/app/api/_lib/auth";
-import { db, tutorialJobs, users, channels } from "@/lib/db";
+import { db, users, tutorialJobs } from "@/lib/db";
 import {
-  createTutorialJob,
+  createOrReuseTutorialJob,
   getTutorialSettings,
   listPromptPresets,
 } from "@repo/db";
@@ -14,6 +14,7 @@ import {
   createTutorialGenerateQueue,
 } from "@repo/queue";
 import { findUserByEmail } from "@/lib/repositories/user-repository";
+import { getProductionChannelAccess } from "@/lib/tutorial/channel-access";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +27,9 @@ export const dynamic = "force-dynamic";
  * at /api/production/jobs, but authenticated by Authorization: Bearer
  * ${CF_API_TOKEN} instead of a hub session cookie.
  *
- * This is a STANDALONE route. Its job-creation logic is copied from the proven
- * POST handler in /api/production/jobs/route.ts (duplicate guard, create
- * TutorialJob call, and enqueue) rather than refactored out of it, so a change
- * here can never regress the VA-facing browser route.
+ * The shared createOrReuseTutorialJob helper preserves a stable intake identity
+ * across retries. Producer and channel assignment are validated before intake;
+ * no administrator or random language channel is used as a fallback.
  */
 
 const CreateSchema = z.object({
@@ -51,13 +51,30 @@ const CreateSchema = z.object({
     ])
     .default("THREE_MIN"),
   language: z.string().optional(),
-  reference_url: z.string().optional(),
-  // Validated against the DB below rather than by shape — a bad id is treated
-  // as "no channel", not a 400.
+  steps_input: z.string().max(100000).default(""),
+  source_mode: z.enum(["FROM_SCRATCH", "TRANSCRIPT_REWRITE"]).default("FROM_SCRATCH"),
+  reference_url: z.string().url().refine(value => /^https?:\/\//i.test(value), "Use an HTTP(S) reference URL").optional(),
+  reference_transcript: z.string().max(500000).optional(),
+  // Validated against the DB and the producer's authorized channels below.
   channel_id: z.string().optional(),
   // The KT operator who clicked Produce. Used to attribute created_by when it
   // maps to a real hub user.
   claimed_by_email: z.string().optional(),
+}).strict().superRefine((data, context) => {
+  if (data.source_mode === "TRANSCRIPT_REWRITE" && !data.reference_transcript?.trim() && !data.reference_url) {
+    context.addIssue({ code: "custom", path: ["reference_transcript"], message: "Rewrite requires a reference transcript or URL; it will not silently become from-scratch." });
+  }
+  if (data.source_mode === "TRANSCRIPT_REWRITE") {
+    const transcript = data.reference_transcript?.trim();
+    if (transcript && transcript.split(/\s+/).length < 80) {
+      context.addIssue({ code: "custom", path: ["reference_transcript"], message: "Paste the full reference transcript (at least 80 words), matching Studio's source-quality gate." });
+    } else if (!transcript && data.reference_url && URL.canParse(data.reference_url)) {
+      const host = new URL(data.reference_url).hostname.toLowerCase();
+      if (!(host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com"))) {
+        context.addIssue({ code: "custom", path: ["reference_url"], message: "Automatic transcript retrieval supports YouTube only; otherwise paste the full transcript." });
+      }
+    }
+  }
 });
 
 const UUID_RE =
@@ -88,101 +105,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const parsed = CreateSchema.safeParse(await req.json());
+  const parsed = CreateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
   const data = parsed.data;
 
-  // Duplicate guard (copied from /api/production/jobs): keyword_ref is indexed
-  // but not unique, so a double-click or retry would create a second full job
-  // for the same keyword and pay for the whole pipeline twice. Only
-  // failed/cancelled jobs may be re-sent.
-  {
-    const [existing] = await db
-      .select({ id: tutorialJobs.id, status: tutorialJobs.status })
-      .from(tutorialJobs)
-      .where(
-        and(
-          eq(tutorialJobs.keyword_ref, data.keyword_ref),
-          notInArray(tutorialJobs.status, [
-            "FAILED_SCRIPT",
-            "FAILED_AUDIO",
-            "FAILED_SPLICE",
-            "CANCELLED",
-          ]),
-        ),
-      )
-      .limit(1);
-    if (existing) {
-      return NextResponse.json(
-        {
-          error:
-            `This keyword already has a tutorial job "${existing.id}" (${existing.status}). ` +
-            `Cancel that one first if you want to redo it.`,
-        },
-        { status: 409 },
-      );
-    }
-  }
+  // Attribute production only to the actual active operator supplied by KT.
+  const claimed = data.claimed_by_email ? await findUserByEmail(data.claimed_by_email) : null;
+  if (!claimed?.isActive) return NextResponse.json({ error: "claimed_by_email must identify an active Studio producer. No fallback owner will be assigned." }, { status: 422 });
+  const createdBy = claimed.id;
 
-  // created_by resolution (created_by is NOT NULL).
-  //   a. Prefer the KT operator's email if it maps to a real hub user.
-  //   b. Otherwise fall back to the oldest ADMIN user.
-  //   c. If neither exists, we cannot legally create the row.
-  let createdBy: string | null = null;
-  if (data.claimed_by_email) {
-    const claimed = await findUserByEmail(data.claimed_by_email);
-    if (claimed) createdBy = claimed.id;
-  }
-  if (!createdBy) {
-    const [admin] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.role, "ADMIN"))
-      .orderBy(asc(users.created_at))
-      .limit(1);
-    if (admin) createdBy = admin.id;
-  }
-  if (!createdBy) {
-    return NextResponse.json(
-      {
-        error:
-          "Cannot attribute this job: claimed_by_email matched no user and no ADMIN user exists.",
-      },
-      { status: 500 },
-    );
-  }
+  // Use the upstream channel or the producer's configured default, then enforce
+  // explicit channel access. Language alone never chooses a destination.
+  const [operator] = await db.select().from(users).where(eq(users.id, createdBy)).limit(1);
+  const channelId = data.channel_id ?? operator?.default_tutorial_channel_id;
+  if (!channelId || !UUID_RE.test(channelId)) return NextResponse.json({ error: "Provide the keyword's assigned channel_id, or configure the producer's default channel." }, { status: 422 });
+  const destination = await getProductionChannelAccess(createdBy, channelId);
+  if (!destination) return NextResponse.json({ error: "The keyword's channel is not assigned to this producer or is not enabled for original tutorials." }, { status: 403 });
+  if (data.language && data.language !== destination.language) return NextResponse.json({ error: "Language must match the keyword's assigned channel." }, { status: 422 });
 
-  // channel_id resolution (nullable, but a NULL channel historically caused
-  // misfiled jobs, so resolve one when we can).
-  //   a. Use body.channel_id if it names an existing channel.
-  //   b. Else, if a language was given, the most recently created channel that
-  //      accepts tutorials in that language.
-  //   c. Else leave it null and note it in the response.
-  let channelId: string | null = null;
-  if (data.channel_id && UUID_RE.test(data.channel_id)) {
-    const [ch] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(eq(channels.id, data.channel_id))
-      .limit(1);
-    if (ch) channelId = ch.id;
+  // A saved job owns its frozen recipe. A later missing/changed default preset
+  // must not prevent recovery of the original accepted intake.
+  const [existing] = await db.select().from(tutorialJobs).where(and(
+    eq(tutorialJobs.keyword_ref, data.keyword_ref), isNull(tutorialJobs.source_job_id),
+  )).orderBy(asc(tutorialJobs.created_at)).limit(1);
+  if (existing && (existing.created_by !== createdBy || existing.channel_id !== channelId)) {
+    return NextResponse.json({ error: "This keyword already belongs to another producer or channel." }, { status: 409 });
   }
-  if (!channelId && data.language) {
-    const [ch] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(
-        and(
-          eq(channels.accepts_tutorials, true),
-          eq(channels.language, data.language),
-        ),
-      )
-      .orderBy(desc(channels.created_at))
-      .limit(1);
-    if (ch) channelId = ch.id;
-  }
+  let intake;
+  if (existing) {
+    intake = { job: existing, created: false };
+  } else {
 
   // Required provider fields (script_provider, tts_provider, tts_voice are NOT
   // NULL). Fill from the single-row tutorial settings defaults. An empty
@@ -190,39 +144,42 @@ export async function POST(req: NextRequest) {
   // real voice (per-channel voice binding), matching the browser route.
   const settings = await getTutorialSettings(db);
 
-  // Prompt preset: KT sends none, so use the default preset. If there is no
-  // default preset AND no custom prompt (there never is one here), the job
-  // would fail at the script stage with "No prompt found" — reject up front
-  // with the same guarded error the browser route returns.
+  // Prompt/provider/voice selection belongs to Studio Admin settings, not KT.
+  // Reject missing defaults before queuing an unrecoverable script job.
   const presets = await listPromptPresets(db);
   const defaultPreset = presets.find((p) => p.is_default);
   if (!defaultPreset) {
     return NextResponse.json(
       {
-        error: "Pick a prompt preset or supply a custom prompt — got neither.",
+        error: "A Studio Admin must configure a default tutorial prompt preset before new intake.",
       },
       { status: 400 },
     );
   }
 
-  const job = await createTutorialJob(db, {
+  intake = await createOrReuseTutorialJob(db, {
     created_by: createdBy,
     keyword_ref: data.keyword_ref,
     kt_url: data.kt_url,
     batch_id: randomUUID(),
     title: data.title,
     mode: data.mode,
-    steps_input: "",
+    steps_input: data.steps_input,
     prompt_preset_id: defaultPreset.id,
     script_provider: settings.default_script_provider,
     script_model: settings.default_script_model ?? undefined,
     tts_provider: settings.default_tts_provider,
     tts_voice: settings.default_tts_voice,
     channel_id: channelId,
-    source_mode: "FROM_SCRATCH",
+    source_mode: data.source_mode,
     reference_url: data.reference_url,
-    language: data.language,
+    reference_transcript: data.reference_transcript,
+    language: destination.language,
   });
+  }
+  const job = intake.job;
+  if (!job) return NextResponse.json({ error: "This keyword already belongs to another producer or channel." }, { status: 409 });
+  if (!intake.created && job.status !== "QUEUED") return NextResponse.json({ jobId: job.id, duplicate: true, status: job.status });
 
   const redisUrl = process.env["REDIS_URL"];
   if (!redisUrl) {
@@ -240,17 +197,12 @@ export async function POST(req: NextRequest) {
     await conn.quit();
   }
 
-  const channelResolved = channelId !== null;
   return NextResponse.json(
     {
       jobId: job.id,
-      channelResolved,
-      ...(channelResolved
-        ? {}
-        : {
-            note: "No channel could be resolved (channel_id absent/unknown and no accepts_tutorials channel matched the language). The job was created with channel_id null.",
-          }),
+      duplicate: !intake.created,
+      channelResolved: true,
     },
-    { status: 201 },
+    { status: intake.created ? 201 : 200 },
   );
 }

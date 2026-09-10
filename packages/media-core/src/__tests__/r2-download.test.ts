@@ -18,13 +18,17 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 // Mock path
-vi.mock("node:path", () => ({
-  dirname: (path: string) => {
-    const parts = path.split("/");
-    parts.pop();
-    return parts.join("/");
-  },
-}));
+vi.mock("node:path", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:path")>();
+  return {
+    ...actual,
+    dirname: (path: string) => {
+      const parts = path.split("/");
+      parts.pop();
+      return parts.join("/");
+    },
+  };
+});
 
 describe("downloadFromR2", () => {
   beforeEach(() => {

@@ -5,6 +5,7 @@ import {
   timestamp,
   uuid,
   check,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { users } from "./users.js";
@@ -37,6 +38,7 @@ export const systemSettings = pgTable(
 
     /** Non-secret controls for the separate YouTube uploader. */
     uploader: jsonb("uploader"),
+    tutorialDispatchPaused: boolean("tutorial_dispatch_paused").notNull().default(false),
 
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

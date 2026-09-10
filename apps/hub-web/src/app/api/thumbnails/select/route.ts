@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db, storageArtifacts, tutorialJobs } from "@/lib/db";
-import { and, eq } from "drizzle-orm";
+import { db, storageArtifacts, thumbnails, tutorialJobs, tutorialUploadDispatches } from "@/lib/db";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { selectThumbnail, getThumbnailById } from "@repo/db";
 import { normalizeTutorialLanguage } from "@repo/contracts";
 
@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  const privileged = hasPermission(session, "manage:tutorial-settings") || session.role === "ADMIN" || session.role === "MANAGER";
+  if (existing.subject_kind !== "tutorial_job" && !privileged) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   // Only a rendered thumbnail can ship. Selecting a failed/generating row
   // would set is_selected on something with no output_path, and the uploader
   // would publish a video with no thumbnail at all.
@@ -59,14 +61,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (existing.subject_kind === "tutorial_job") {
-    const [job] = await db
+    return db.transaction(async (tx) => {
+    const [job] = await tx
       .select({
+        id: tutorialJobs.id,
+        createdBy: tutorialJobs.created_by,
+        sourceJobId: tutorialJobs.source_job_id,
         language: tutorialJobs.language,
         channelId: tutorialJobs.channel_id,
       })
       .from(tutorialJobs)
       .where(eq(tutorialJobs.id, existing.subject_id))
       .limit(1);
+    if (!job || (!privileged && job.createdBy !== session.userId)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const rootId = job.sourceJobId ?? job.id;
+    await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, rootId)).for("update");
     if (
       !job ||
       !job.channelId ||
@@ -82,15 +91,16 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-  }
-
-  const thumbnail = await selectThumbnail(db, parsed.data.thumbnailId);
-  if (existing.subject_kind === "tutorial_job") {
-    await db
+    const family = await tx.select({ id: tutorialJobs.id, uploaded: tutorialJobs.is_uploaded, status: tutorialJobs.uploader_status }).from(tutorialJobs).where(or(eq(tutorialJobs.id, rootId), eq(tutorialJobs.source_job_id, rootId)));
+    const [dispatch] = await tx.select({ id: tutorialUploadDispatches.id }).from(tutorialUploadDispatches).where(inArray(tutorialUploadDispatches.tutorial_job_id, family.map((row) => row.id))).limit(1);
+    if (dispatch || family.some((row) => row.uploaded || row.status)) return NextResponse.json({ error: "Delivery has started. Reconcile the external upload before changing selected assets." }, { status: 409 });
+    await tx.update(thumbnails).set({ is_selected: false }).where(and(eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, job.id), eq(thumbnails.language, existing.language)));
+    const [thumbnail] = await tx.update(thumbnails).set({ is_selected: true }).where(eq(thumbnails.id, existing.id)).returning();
+    await tx
       .update(storageArtifacts)
       .set({
         state: "pending",
-        vps_path: existing.output_path,
+        vps_path: existing.output_path!,
         error_kind: "thumbnail_replaced",
         error_message: "Selected thumbnail changed; replace Drive copy",
         updated_at: new Date(),
@@ -101,6 +111,10 @@ export async function POST(req: NextRequest) {
           eq(storageArtifacts.kind, "thumbnail"),
         ),
       );
+    await tx.update(tutorialJobs).set({ va_review_status: null, va_reviewed_at: null, va_reviewed_by: null }).where(eq(tutorialJobs.id, rootId));
+    return NextResponse.json({ thumbnail });
+    });
   }
+  const thumbnail = await selectThumbnail(db, parsed.data.thumbnailId);
   return NextResponse.json({ thumbnail });
 }

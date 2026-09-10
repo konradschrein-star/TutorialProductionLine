@@ -956,6 +956,7 @@ class MediaGateway {
         const jobId = await submitVeoForgeImage(entry.prompt, {
           aspectRatio: o.aspectRatio,
           referenceImages: veoforgeRefs,
+          idempotencyKey: o.idempotencyKey,
         });
         const [url] = await waitForVeoForgeJob(jobId, {
           timeoutMs: VEOFORGE_IMAGE_TIMEOUT_MS,

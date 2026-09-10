@@ -540,6 +540,9 @@ export {
   canonicalTutorialUploaderJob,
   tutorialUploaderReceiptFileName,
 } from "./tutorial-uploader-exchange.js";
+export { CHANNEL_SCHEDULE_WEEKDAYS, ChannelDayScheduleSchema, ChannelScheduleSchema, channelLocalDate, scheduleForLocalDay, slotsForLocalDay, nextPublicationSlot } from "./publication-slots.js";
+export * from "./tutorial-scheduled-delivery.js";
+export type { ChannelDaySchedule, ChannelSchedule } from "./publication-slots.js";
 export type {
   TutorialUploaderAttributes,
   TutorialUploaderAsset,
@@ -547,3 +550,4 @@ export type {
   TutorialUploaderReceipt,
   TutorialUploaderReceiptState,
 } from "./tutorial-uploader-exchange.js";
+export * from './tutorial-channel-profile.js';

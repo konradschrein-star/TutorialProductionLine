@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import { eq } from "drizzle-orm";
 import { db, users } from "@/lib/db";
 import type { JWTPayload } from "@/lib/auth/jwt";
+import { keywordApiBase, keywordIntegrationState } from "./workflow";
 
 /**
  * Server-side Keyword Tool client, acting AS the signed-in Content Forge user.
@@ -56,13 +57,14 @@ interface KtSession {
 function config(): { base: string; secret: string } {
   const base = process.env["KT_EMBED_URL"];
   const secret = process.env["KT_EMBED_SECRET"];
-  if (!base || !secret) {
+  if (keywordIntegrationState(process.env) !== "configured" || !base || !secret) {
     throw new KeywordToolError(
       "The keyword board is not connected on this server (KT_EMBED_URL / KT_EMBED_SECRET are unset).",
       503,
     );
   }
-  return { base: base.replace(/\/$/, ""), secret };
+  try { return { base: keywordApiBase(process.env), secret }; }
+  catch { throw new KeywordToolError("The Keyword Tool API address is invalid. Ask an administrator to check the integration configuration.", 503); }
 }
 
 /**
@@ -168,4 +170,22 @@ export async function ktGet<T>(
 export function ktKeywordUrl(keywordId: number | string): string {
   const base = (process.env["KT_EMBED_URL"] ?? "").replace(/\/$/, "");
   return `${base}/board?kid=${encodeURIComponent(String(keywordId))}`;
+}
+
+/** The existing KT intent service owns persistence, retries and callback binding. */
+export async function ktProduce(kt: KtSession, keywordId: string, payload: unknown) {
+  let response: Response;
+  try {
+    response = await fetch(`${kt.base}/api/v5/keywords/${encodeURIComponent(keywordId)}/produce`, {
+      method: "POST", headers: { Authorization: `Bearer ${kt.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(45_000), cache: "no-store",
+    });
+  } catch {
+    throw new KeywordToolError("Acknowledgement is uncertain. Retry this same keyword; its saved request will be reused. Do not create a replacement tutorial.", 503);
+  }
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new KeywordToolError(
+    typeof result.detail === "string" ? result.detail : "Keyword production could not be confirmed. Keep this keyword selected and check its saved request.",
+    response.status >= 400 && response.status < 500 ? response.status : 502);
+  return result as { state?: string; forge_job_id?: string; duplicate?: boolean; message?: string };
 }

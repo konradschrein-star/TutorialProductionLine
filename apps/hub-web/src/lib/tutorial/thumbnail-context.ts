@@ -36,9 +36,9 @@ export function resolveTutorialThumbnailVariant(
     throw new Error("tutorial language does not match its channel language");
   }
   const thumbnailTextTop = variant.thumbnailTextTop?.trim();
-  const thumbnailTextBottom = variant.thumbnailTextBottom?.trim();
-  if (!thumbnailTextTop || !thumbnailTextBottom) {
-    throw new Error("localized two-line thumbnail copy is incomplete");
+  const thumbnailTextBottom = variant.thumbnailTextBottom?.trim() ?? "";
+  if (!thumbnailTextTop) {
+    throw new Error("localized thumbnail copy is incomplete");
   }
   return {
     language,

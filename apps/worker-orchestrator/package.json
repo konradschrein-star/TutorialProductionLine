@@ -36,12 +36,12 @@
     "postgres": "^3.4.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
     "@types/fontkit": "^2.0.9",
+    "@types/node": "^25.5.0",
     "@typescript-eslint/parser": "^8",
     "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^9",

@@ -1,0 +1,21 @@
+import { describe, expect, it } from 'vitest';
+import { fixture } from './preservation-fixture';
+import { planPreservationPromotion } from '../plan-preservation-promotion';
+function sample() {
+  const context=fixture(), now=Date.parse('2026-09-09T00:10:00Z');
+  const remote=context.manifest.entries.map((e,i)=>({fileId:`synthetic-file-${i}`,ownerMatches:true,ownedByMe:true,trashed:false,bytes:e.bytes,md5:e.md5,sha256:e.sha256,checkedAt:'2026-09-09T00:09:00Z',parentIds:['actual-parent']}));
+  const local=context.manifest.entries.map(e=>({jobId:e.jobId,safePath:true,parentDirectoryReady:true,state:'absent' as 'absent'|'exact'|'conflict',bytes:e.bytes,sha256:e.sha256}));
+  const current=context.target.artifacts.map(a=>({id:a.artifactId,job_id:a.jobId,owner_kind:'tutorial_job',kind:'final_video',state:'uploaded',vps_path:'/opt/content-forge/media/prior.mp4',drive_file_id:'prior-id',bytes:1,checksum_sha256:'c'.repeat(64),drive_md5:null,verified_at:null,updated_at:'2026-09-08T00:00:00Z',resumable_session_uri:null as string|null}));
+  return {context,remote,local,current,now};
+}
+const run=(s:ReturnType<typeof sample>)=>planPreservationPromotion(s.context,s.remote,s.local,s.current,s.now);
+describe('guarded Phase B preservation proposal',()=>{
+  it('plans all five atomically without execution or local-presence fabrication',()=>{const s=sample(),p=run(s);expect(p.updates).toHaveLength(5);expect(p.preparation.parents).toHaveLength(3);expect(p).toMatchObject({atomicAllFive:true,execute:false,mediaWrites:0,jobWrites:0,scheduleWrites:0});expect(p.updates.every(u=>u.localPresence==='absent')).toBe(true);expect(p.updates[0]!.values).toMatchObject({state:'uploaded',drive_folder_id:'actual-parent',drive_folder_path:null,verified_at:'2026-09-09T00:00:00Z'});});
+  it('preserves prior pointer evidence and full CAS snapshots without mutating inputs',()=>{const s=sample(),before=JSON.stringify(s),p=run(s);expect(p.priorVersions).toHaveLength(2);expect(p.priorVersions[0]).toMatchObject({drive_file_id:'prior-id',verified_at:null,bytes:1});expect(p.updates[0]!.expectedCurrent).toEqual(s.current[0]);expect(JSON.stringify(s)).toBe(before);});
+  it('rejects stale, wrong-owner, mismatched and duplicate remote proof',()=>{for(const change of [(s:ReturnType<typeof sample>)=>s.remote[0]!.checkedAt='2026-09-08T00:00:00Z',(s:ReturnType<typeof sample>)=>s.remote[0]!.ownerMatches=false,(s:ReturnType<typeof sample>)=>s.remote[0]!.sha256='d'.repeat(64),(s:ReturnType<typeof sample>)=>s.remote.push(s.remote[0]!)]){const s=sample();change(s);expect(()=>run(s)).toThrow('Drive proof');}});
+  it('rejects conflicting bytes and absent parent directories',()=>{const s=sample();s.local[0]!.state='conflict';expect(()=>run(s)).toThrow('Local path');s.local[0]!.state='exact';s.local[0]!.bytes=42;expect(()=>run(s)).toThrow('Local path');s.local[0]!.state='absent';s.local[0]!.parentDirectoryReady=false;expect(()=>run(s)).toThrow('Local path');});
+  it('rejects active or uncertain uploads and missing prior snapshots',()=>{const s=sample();s.current[0]!.state='uploading';expect(()=>run(s)).toThrow('reconciled');s.current[0]!.state='failed';s.current[0]!.resumable_session_uri='private-session';expect(()=>run(s)).toThrow('reconciled');s.current.pop();expect(()=>run(s)).toThrow();});
+  it('rejects changed source revision and invalid proof clock',()=>{const s=sample();s.context.target.runtime[0]!.final_path+='.new';expect(()=>run(s)).toThrow('revision');expect(()=>run({...sample(),now:NaN})).toThrow('evaluation time');});
+  it('does not overwrite contradictory prior evidence for the same Drive identity',()=>{const s=sample();s.current[0]!.drive_file_id='synthetic-file-0';expect(()=>run(s)).toThrow('immutable identity conflicts');});
+  it('leases both incoming and different previous paths in stable unique order',()=>{const s=sample(),p=run(s);expect(p.mediaLeases).toHaveLength(6);expect(p.mediaLeases).toContain('/opt/content-forge/media/prior.mp4');expect(p.mediaLeases).toEqual([...p.mediaLeases].sort());s.current[0]!.vps_path='/opt/content-forge/media/../private.mp4';expect(()=>run(s)).toThrow('Unsafe prior');s.current[0]!.vps_path='/tmp/prior.mp4';expect(()=>run(s)).toThrow('Unsafe prior');});
+});

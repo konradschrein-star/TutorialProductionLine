@@ -6,7 +6,6 @@ import { AppSidebar } from './_components/sidebar';
 import { AppHeader } from './_components/header';
 import { KeybindProvider } from './_lib/keybinds';
 import { KeybindOverlay } from './_components/keybind-overlay';
-import { CommandPaletteTrigger } from './_components/command-palette';
 import { PresenceHeartbeat } from './_components/presence-heartbeat';
 import './v2.css';
 
@@ -15,8 +14,8 @@ const VALID_THEMES = new Set(['lime', 'purple', 'teal', 'orange', 'blue', 'green
 export default async function AuthenticatedLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
   const cookieStore = await cookies();
-  const rawTheme = cookieStore.get('hub_ui_theme')?.value ?? 'lime';
-  const theme = VALID_THEMES.has(rawTheme) ? rawTheme : 'lime';
+  const rawTheme = cookieStore.get('hub_ui_theme')?.value ?? 'blue';
+  const theme = VALID_THEMES.has(rawTheme) ? rawTheme : 'blue';
   const themeClass = theme !== 'lime' ? `theme-${theme}` : '';
   const mode = cookieStore.get('hub_ui_mode')?.value === 'light' ? 'light' : 'dark';
 
@@ -32,25 +31,15 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
         <PresenceHeartbeat />
         <div
           data-theme={mode}
-          className={`flex h-screen overflow-hidden${themeClass ? ` ${themeClass}` : ''}`}
+          className={`studio-shell flex overflow-hidden${themeClass ? ` ${themeClass}` : ''}`}
           style={{ backgroundColor: 'var(--v2-bg)', color: 'var(--v2-text-1)', fontFamily: 'Inter, sans-serif' }}
         >
-          {/* Ambient background glow blobs */}
-          <div
-            className="fixed top-0 right-0 pointer-events-none -z-10"
-            style={{ width: 800, height: 800, background: 'rgba(var(--v2-accent-rgb), 0.05)', filter: 'blur(120px)', borderRadius: '50%', transform: 'translate(50%, -50%)' }}
-          />
-          <div
-            className="fixed bottom-0 left-0 pointer-events-none -z-10"
-            style={{ width: 600, height: 600, background: 'rgba(var(--v2-accent-rgb), 0.03)', filter: 'blur(100px)', borderRadius: '50%', transform: 'translate(-50%, 50%)' }}
-          />
-
           <AppSidebar session={session} />
 
-          <div className="flex flex-col flex-1 min-h-screen overflow-hidden" style={{ marginLeft: 256 }}>
+          <div className="studio-shell-content">
             <AppHeader session={session} />
-            <main className="flex-1 overflow-y-auto p-8">
-              <div className="max-w-[1600px] mx-auto w-full">
+            <main id="workspace-main" className="studio-main" tabIndex={-1}>
+              <div className="w-full min-w-0">
                 {children}
               </div>
             </main>
@@ -58,7 +47,6 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
         </div>
 
         <KeybindOverlay />
-        <CommandPaletteTrigger />
       </KeybindProvider>
       <Toaster
         theme="dark"

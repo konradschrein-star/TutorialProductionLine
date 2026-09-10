@@ -71,6 +71,29 @@ export function ArchetypeGallery({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <section aria-labelledby="procedural-blueprints-title">
+        <div style={{display:"flex",alignItems:"end",justifyContent:"space-between",gap:12,marginBottom:10,flexWrap:"wrap"}}>
+          <div><h2 id="procedural-blueprints-title" style={{margin:0,fontSize:18,color:TEXT_1}}>Procedural blueprints</h2><p style={{margin:"4px 0 0",fontSize:12.5,color:TEXT_2}}>Two right-locked automatic layouts. Left-host compositions remain available only as manual exceptions in the editor.</p></div>
+          <a href="/settings?section=channels" className="v2-btn" style={{textDecoration:"none"}}>Configure channels</a>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10}}>
+          {[
+            ["UI focus · host right","Recorded interface","right"],
+            ["Icon focus · host right","App or document","right"],
+          ].map(([name,object,side])=><div key={name} style={{border:"1px solid var(--v2-border-2)",borderRadius:10,overflow:"hidden",background:"var(--v2-surface-1)"}}>
+            <div aria-hidden="true" style={{height:124,position:"relative",background:"linear-gradient(135deg,#f7f8fa,#dfe4e8)"}}>
+              <div style={{position:"absolute",left:side==="right"?12:92,right:side==="left"?12:92,top:12,height:32,borderRadius:7,background:"#0b0c0f"}}/>
+              <div style={{position:"absolute",left:side==="right"?12:76,right:side==="left"?12:76,top:54,bottom:10,border:"3px solid #17191d",borderRadius:9,background:"white"}}/>
+              <div style={{position:"absolute",left:side==="left"?-8:undefined,right:side==="right"?-8:undefined,top:19,width:88,height:116,borderRadius:"48px 48px 12px 12px",background:"linear-gradient(#d6a47e 0 34%,#18314e 35%)"}}/>
+              <div style={{position:"absolute",left:side==="right"?118:74,top:48,color:"#ef233c",fontSize:30,fontWeight:900}}>↘</div>
+            </div>
+            <div style={{padding:10}}><strong style={{display:"block",fontSize:12.5,color:TEXT_1}}>{name}</strong><span style={{fontSize:11,color:TEXT_2}}>Tight host · 1–4 words · {object} · arrow only for a neutral pose</span></div>
+          </div>)}
+        </div>
+      </section>
+
+      <div style={{height:1,background:"var(--v2-border-2)",margin:"4px 0"}}/>
+      <h2 style={{margin:0,fontSize:18,color:TEXT_1}}>AI and reference archetypes</h2>
       {/* Filter bar */}
       <GlassCard
         style={{

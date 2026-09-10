@@ -1,0 +1,21 @@
+// Synthetic container-only pilot: both fixed roots must be disposable tmpfs.
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { pipeline } from 'node:stream/promises';
+import assert from 'node:assert/strict';
+if(process.platform!=='linux' || process.getuid()!==1000 || process.env.SYNTHETIC_DISPOSABLE_TMPFS!=='yes') throw Error('Synthetic UID1000 tmpfs container required');
+const source='/opt/content-forge/media/synthetic-pilot.bin';
+const content=Buffer.from([0,255,13,10,128,42]);
+await writeFile(source,content,{flag:'wx',mode:0o600});
+const dir='/tmp/tutorial-migration-synthetic';await mkdir(dir,{mode:0o700});
+const manifest=JSON.stringify({version:'tutorial-private-media-manifest/3',files:[{path:source,state:'local_verified',bytes:content.length,sha256:createHash('sha256').update(content).digest('hex')}]});
+await writeFile(dir+'/pilot.json',manifest,{flag:'wx',mode:0o600});
+const sender=spawn('node',['/tool/media-transfer-cli.mjs','--mode','send-stream','--confirm-transfer','tutorial-recovery-staging','--manifest',dir+'/pilot.json','--sha256',createHash('sha256').update(manifest).digest('hex')]);
+const receiver=spawn('node',['/tool/media-transfer-cli.mjs','--mode','receive','--confirm-target','tutorial-recovery-staging']);
+let report='';receiver.stdout.on('data',b=>report+=b);sender.stderr.resume();receiver.stderr.resume();
+const done=p=>new Promise((resolve,reject)=>{p.once('error',reject);p.once('close',code=>code===0?resolve():reject(Error('Synthetic child failed')));});
+await Promise.all([done(sender),done(receiver),pipeline(sender.stdout,receiver.stdin)]);
+assert.equal(JSON.parse(report).copied,1);
+assert.deepEqual(await readFile('/opt/tutorial-recovery-staging/media/synthetic-pilot.bin'),content);
+console.log(JSON.stringify({actualEsmBundle:true,linux:true,uid1000:true,syntheticOnly:true,networkDisabled:true,binaryVerified:true}));

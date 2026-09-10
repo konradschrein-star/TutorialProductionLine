@@ -70,8 +70,8 @@ export const UploaderSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   executionMode: z.enum(["dry_run", "live"]).default("dry_run"),
   transport: z
-    .enum(["youtube_data_api", "browser_assisted"])
-    .default("youtube_data_api"),
+    .enum(["custom_uploader", "youtube_data_api", "browser_assisted"])
+    .default("custom_uploader"),
   dashboardApiUrl: z
     .string()
     .url()
@@ -80,7 +80,7 @@ export const UploaderSettingsSchema = z.object({
   callbackPublicUrl: z.string().url().optional(),
   defaultVisibility: z
     .enum(["private", "unlisted", "scheduled"])
-    .default("private"),
+    .default("unlisted"),
   timezone: z.string().min(1).max(100).default("Europe/Berlin"),
   scheduleLeadMinutes: z.number().int().min(15).max(43_200).default(120),
   maxConcurrentUploads: z.number().int().min(1).max(3).default(1),

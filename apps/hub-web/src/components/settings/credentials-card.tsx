@@ -12,7 +12,7 @@ export interface CredentialRow {
   expiresAt: string | null;
   costTier: string;
   sortOrder: number;
-  kind?: "script" | "tts" | "delivery" | "alerts";
+  kind?: "script" | "tts" | "images" | "delivery" | "alerts";
   required?: boolean;
   notNeeded?: boolean;
   description?: string;
@@ -81,9 +81,9 @@ function CredentialEditor({
   const [last4, setLast4] = useState(row.last4);
   const badge = sourceStyle[source];
   const testTarget =
-    row.kind === "script"
+    row.keyEnvVar === "DEEPSEEK_API_KEY"
       ? "script"
-      : row.kind === "tts"
+      : row.keyEnvVar === "FISH_API_KEY"
         ? "tts"
         : row.providerKey.startsWith("google_drive")
           ? "drive"
@@ -358,6 +358,7 @@ export function CredentialsCard({
       hint: "Scripts, titles, descriptions, tags and translations",
     },
     { key: "tts", label: "Voices", hint: "Narration and localized audio" },
+    { key: "images", label: "Thumbnail images", hint: "Optional image-provider credentials; procedural thumbnails do not need them" },
     {
       key: "delivery",
       label: "Delivery & uploader",
@@ -419,7 +420,7 @@ export function CredentialsCard({
             color: "var(--v2-text-1)",
           }}
         >
-          <span>Handoff readiness</span>
+          <span>Credential inventory (not a live connection test)</span>
           <span>
             {ready} / {required.length} required
           </span>

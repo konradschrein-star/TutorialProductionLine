@@ -9,6 +9,7 @@ import { parse } from "url";
 import next from "next";
 import { getPgListenServer } from "./pg-listen-server";
 import { handleVideoStitchUpload } from "./upload-handler";
+import { handleUploaderOpsAuth } from "./uploader-ops-auth";
 
 /**
  * Custom Next.js Server
@@ -37,6 +38,8 @@ async function startServer() {
 
     const server = createServer(async (req, res) => {
       try {
+        if (await handleUploaderOpsAuth(req, res)) return;
+
         // Handle large file uploads outside of Next.js to bypass 10MB limit
         // Next.js truncates request bodies > 10MB, but we need to support
         // large video uploads (up to 10GB) for video stitcher

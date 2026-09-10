@@ -1,4 +1,6 @@
 import { generateScript } from "./llm-registry.js";
+import { compactHeadlineBlocks, condenseHeadline } from "../thumbnail/headline.js";
+import { deriveLogoSubject } from "@repo/domain";
 
 /**
  * Generate YouTube description, tags, and two-line thumbnail copy for a
@@ -44,6 +46,8 @@ export interface GenerateUploadMetadataParams {
   model?: string;
   timeoutMs?: number;
   language?: string | null;
+  metadataInstructions?: string | null;
+  thumbnailTextInstructions?: string | null;
 }
 
 /** Tags YouTube will accept: non-empty, <=30 chars, deduped, max 15. */
@@ -76,6 +80,17 @@ function normaliseThumbnailText(raw: unknown): string | null {
   if (text === "" || text.length > 48) return null;
   if (/^(learn fast|step by step)$/i.test(text)) return null;
   return text;
+}
+
+function normaliseThumbnailPair(topRaw: unknown, bottomRaw: unknown): { top: string | null; bottom: string | null } {
+  const top = normaliseThumbnailText(topRaw);
+  const bottom = normaliseThumbnailText(bottomRaw);
+  const words = [top, bottom].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
+  if (words.length <= 4) return { top, bottom };
+  const compact = condenseHeadline(words.join(" "), { maxWords: 4 }).split(/\s+/).filter(Boolean);
+  if (!compact.length) return { top: null, bottom: null };
+  const split = Math.min(2, Math.max(1, Math.ceil(compact.length / 2)));
+  return { top: compact.slice(0, split).join(" "), bottom: compact.slice(split).join(" ") || null };
 }
 
 /**
@@ -120,11 +135,12 @@ export function parseUploadMetadataResponse(
     typeof obj["description"] === "string" && obj["description"].trim() !== ""
       ? obj["description"].trim()
       : null;
+  const thumbnail = normaliseThumbnailPair(obj["thumbnail_text_top"], obj["thumbnail_text_bottom"]);
   return {
     description,
     tags: normaliseTags(obj["tags"]),
-    thumbnailTextTop: normaliseThumbnailText(obj["thumbnail_text_top"]),
-    thumbnailTextBottom: normaliseThumbnailText(obj["thumbnail_text_bottom"]),
+    thumbnailTextTop: thumbnail.top,
+    thumbnailTextBottom: thumbnail.bottom,
   };
 }
 
@@ -132,6 +148,7 @@ export function buildUploadMetadataPrompt(
   title: string,
   scriptText: string,
   language: string | null | undefined,
+  overrides: { metadataInstructions?: string | null; thumbnailTextInstructions?: string | null } = {},
 ): string {
   // The script can be an hour long; the opening carries the topic and promise,
   // which is all the description needs. Sending the whole thing would burn
@@ -168,11 +185,19 @@ export function buildUploadMetadataPrompt(
     "- Real search phrases a person would type, not hashtags.",
     "",
     "THUMBNAIL COPY rules:",
-    "- Write two short lines of visible thumbnail copy in the requested language.",
-    "- Each line must be a punchy phrase that fits a thumbnail, not a sentence.",
-    "- Keep software and product names unchanged.",
+    "- Write one or two short headline blocks in the requested language.",
+    "- Use 2–3 words ideally and NEVER more than 4 words total across both fields.",
+    "- Set thumbnail_text_bottom to an empty string when one headline block is stronger.",
+    "- When the software logo is present, do not repeat its product name in the copy.",
+    "- Never place &, +, and, or or alone in a headline block.",
     "- Promise only an action or outcome that the title and script actually support.",
     "- Never use generic filler such as 'LEARN FAST' or 'STEP BY STEP'.",
+    ...(overrides.metadataInstructions?.trim()
+      ? ["", "CHANNEL-SPECIFIC METADATA INSTRUCTIONS:", overrides.metadataInstructions.trim()]
+      : []),
+    ...(overrides.thumbnailTextInstructions?.trim()
+      ? ["", "CHANNEL-SPECIFIC THUMBNAIL COPY INSTRUCTIONS:", overrides.thumbnailTextInstructions.trim()]
+      : []),
     "",
     "Return ONLY a JSON object, no prose around it:",
     '{"description": "...", "tags": ["...", "..."], "thumbnail_text_top": "...", "thumbnail_text_bottom": "..."}',
@@ -182,7 +207,7 @@ export function buildUploadMetadataPrompt(
 export async function generateTutorialUploadMetadata(
   params: GenerateUploadMetadataParams,
 ): Promise<TutorialUploadMetadata> {
-  const { title, scriptText, provider, apiKey, model, timeoutMs, language } =
+  const { title, scriptText, provider, apiKey, model, timeoutMs, language, metadataInstructions, thumbnailTextInstructions } =
     params;
 
   if (!title.trim() || !scriptText.trim()) {
@@ -198,7 +223,7 @@ export async function generateTutorialUploadMetadata(
     const raw = await generateScript({
       provider,
       apiKey,
-      prompt: buildUploadMetadataPrompt(title, scriptText, language),
+      prompt: buildUploadMetadataPrompt(title, scriptText, language, { metadataInstructions, thumbnailTextInstructions }),
       ...(model !== undefined ? { model } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       // 2000 was catastrophically low for a REASONING model (the default here is
@@ -214,6 +239,14 @@ export async function generateTutorialUploadMetadata(
       maxTokens: 8192,
     });
     const result = parseUploadMetadataResponse(raw);
+    if (result.thumbnailTextTop) {
+      const blocks = compactHeadlineBlocks(
+        [result.thumbnailTextTop, result.thumbnailTextBottom].filter(Boolean).join(" "),
+        { maxWords: 4, blocks: result.thumbnailTextBottom ? 2 : 1, logoSubject: deriveLogoSubject(title) },
+      );
+      result.thumbnailTextTop = blocks[0] ?? null;
+      result.thumbnailTextBottom = blocks[1] ?? null;
+    }
     if (
       result.description === null &&
       result.tags === null &&

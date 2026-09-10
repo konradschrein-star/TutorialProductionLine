@@ -402,3 +402,5 @@ export type {
 } from "./plates/index.js";
 
 export const MEDIA_CORE_PACKAGE_VERSION = "0.1.0";
+export { capturePublicationApproval, publicationApprovalMatches } from "./publication-approval.js";
+export type { PublicationIdentity, ApprovedPublication } from "./publication-approval.js";

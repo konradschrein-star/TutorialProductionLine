@@ -2,6 +2,7 @@ import { BUILT_IN_PROVIDERS } from "@repo/provider-registry";
 import { getSecretPresences } from "@repo/db";
 import { db } from "@/lib/db";
 import type { CredentialRow } from "@/components/settings/credentials-card";
+import { TUTORIAL_PROVIDER_KEY_OVERRIDES, TUTORIAL_ADDITIONAL_KEYS } from './credential-slots';
 
 /**
  * Single source of truth for the secrets THIS tutorial tool actually uses.
@@ -12,7 +13,7 @@ import type { CredentialRow } from "@/components/settings/credentials-card";
  * System Health page read from here so the two never drift apart.
  */
 
-export type CredentialKind = "script" | "tts" | "delivery" | "alerts";
+export type CredentialKind = "script" | "tts" | "images" | "delivery" | "alerts";
 
 /** Provider-catalog keys we surface, mapped to what they power. */
 const PROVIDER_KINDS: Record<string, CredentialKind> = {
@@ -59,6 +60,7 @@ interface ExtraCredential {
 }
 
 const EXTRA_CREDENTIALS: ExtraCredential[] = [
+  ...TUTORIAL_ADDITIONAL_KEYS.map(([keyEnvVar, displayName, kind], index) => ({providerKey:keyEnvVar.toLowerCase(),keyEnvVar,displayName,kind,costTier:'optional',sortOrder:70+index,required:false,description:'Optional provider credential. Save encrypted here; configure its endpoint and provider separately. Presence does not confirm account validity.'})),
   {
     providerKey: "google_drive_client_id",
     displayName: "Google Drive — Client ID",
@@ -109,9 +111,9 @@ const EXTRA_CREDENTIALS: ExtraCredential[] = [
     costTier: "uploader",
     sortOrder: 120,
     kind: "delivery",
-    required: true,
+    required: false,
     description:
-      "Shared token for uploader callbacks and runtime configuration. Use a random value of at least 32 characters.",
+      "Optional for manual delivery. When connecting an uploader, use a shared random token of at least 32 characters for callbacks and runtime configuration.",
   },
 ];
 
@@ -133,7 +135,7 @@ export interface TutorialCredentialRow extends CredentialRow {
 export async function buildTutorialCredentialRows(): Promise<
   TutorialCredentialRow[]
 > {
-  const providers = BUILT_IN_PROVIDERS.filter((p) => PROVIDER_KINDS[p.key]);
+  const providers = BUILT_IN_PROVIDERS.filter((p) => PROVIDER_KINDS[p.key]).map(p => ({...p,keyEnvVar:TUTORIAL_PROVIDER_KEY_OVERRIDES[p.key] ?? p.keyEnvVar}));
 
   const names = Array.from(
     new Set(

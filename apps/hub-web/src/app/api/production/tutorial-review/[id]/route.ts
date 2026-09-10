@@ -1,54 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import { unlink } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db, tutorialJobs, storageArtifacts } from "@/lib/db";
-import { getHubConfig } from "@/lib/config";
+import { db, thumbnails, tutorialJobs, tutorialUploadDispatches } from "@/lib/db";
+import { reserveCompletedTutorialSlots } from "@/lib/tutorial/reserve-publication";
+import { assessPublicationVariant } from "@/lib/tutorial/publication-readiness";
+import { captureFamilyApproval } from "@/lib/tutorial/capture-family-approval";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Record the VA's end-of-day verdict on one finished tutorial.
- *
- * The owner's instruction: "Disapprove deletes the video, including from Drive.
- * Approve or no action = it stays."
- *
- * ## What approve does
- *
- * Records the verdict. Nothing else. Approval is not a gate — the video was
- * already delivered — it exists so the VA can see what they cleared. NULL and
- * 'approved' are identical to every other part of the system.
- *
- * ## What disapprove does, and the order it does it in
- *
- * Drive FIRST, then local, then the flag. That order is deliberate: Drive is
- * the copy a VA might publish from, so it is the one that must go. If the Drive
- * delete fails we stop and report, leaving the row untouched — a job marked
- * disapproved whose video is still sitting in Drive is worse than one that
- * failed loudly, because the whole point of the verdict is that the video is
- * gone.
- *
- * The local file is deleted too, but its absence is not an error: retention may
- * already have collected it.
- *
- * ## Why this is the only place anything deletes a finished video
- *
- * A human pressed a button. Nothing in this system deletes a video on a timer
- * or a heuristic — `job-auto-delete.ts` used to, which is why that rule now
- * appears in three files.
- */
-
+// Keep the old action name compatible with already-open clients. Review is
+// never authority to delete recordings or their Drive copies.
 const ActionSchema = z.object({
   action: z.enum(["approve", "disapprove"]),
+  reason: z.string().trim().max(2000).optional(),
 });
-
-function resolveLocal(path: string | null, mediaRoot: string): string | null {
-  if (!path) return null;
-  return isAbsolute(path) ? path : join(mediaRoot, path);
-}
 
 export async function POST(
   req: NextRequest,
@@ -58,131 +25,78 @@ export async function POST(
   if (!session || !hasPermission(session, "create:tutorial-job")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
   const { id } = await params;
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  if (!z.string().uuid().safeParse(id).success) {
+    return NextResponse.json({ error: "Invalid tutorial id" }, { status: 400 });
   }
-  const parsed = ActionSchema.safeParse(body);
+  const parsed = ActionSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid review action" }, { status: 400 });
   }
 
-  const [job] = await db
-    .select({
-      id: tutorialJobs.id,
-      created_by: tutorialJobs.created_by,
-      final_path: tutorialJobs.final_path,
-      recording_path: tutorialJobs.recording_path,
-    })
-    .from(tutorialJobs)
-    .where(eq(tutorialJobs.id, id))
-    .limit(1);
-
-  if (!job) {
-    return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
-
-  // A VA reviews THEIR OWN work. This check was missing: the permission gate
-  // above only asks "is this a tutorial VA", so any of the four could delete any
-  // of the other three's finished videos — out of Drive and off disk — by
-  // posting an id. The list never offered them the option, which is exactly why
-  // nobody would have found this from the UI.
-  const isOwner = job.created_by === session.userId;
-  const isPrivileged =
-    hasPermission(session, "manage:tutorial-settings") ||
-    session.role === "ADMIN" ||
-    session.role === "MANAGER";
-  if (!isOwner && !isPrivileged) {
-    return NextResponse.json(
-      { error: "That video was produced by someone else." },
-      { status: 403 },
-    );
-  }
-
-  if (parsed.data.action === "approve") {
-    await db
-      .update(tutorialJobs)
-      .set({
-        va_review_status: "approved",
-        va_reviewed_at: new Date(),
-        va_reviewed_by: session.userId,
-      })
-      .where(eq(tutorialJobs.id, id));
-    return NextResponse.json({ success: true, status: "approved" });
-  }
-
-  // ── disapprove ───────────────────────────────────────────────────────────
-  const artifacts = await db
-    .select({
-      id: storageArtifacts.id,
-      kind: storageArtifacts.kind,
-      driveFileId: storageArtifacts.drive_file_id,
-    })
-    .from(storageArtifacts)
-    .where(
-      and(
-        eq(storageArtifacts.job_id, id),
-        eq(storageArtifacts.owner_kind, "tutorial_job"),
-      ),
-    );
-
-  const withDriveCopy = artifacts.filter((a) => a.driveFileId);
-  const driveDeleted: string[] = [];
-
-  if (withDriveCopy.length > 0) {
-    const { ArtifactStore } = await import("@repo/storage");
-    const created = await ArtifactStore.createFromDatabase(db);
-    if (!created.ok) {
-      return NextResponse.json(
-        {
-          error: `Google Drive is not configured on this server (${created.reason}), so the Drive copy cannot be deleted. Nothing was changed — a job marked disapproved whose video is still in Drive is worse than a loud failure.`,
-        },
-        { status: 503 },
-      );
+  return db.transaction(async (tx) => {
+    const [job] = await tx.select().from(tutorialJobs)
+      .where(eq(tutorialJobs.id, id)).limit(1).for("update");
+    if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    const privileged = hasPermission(session, "manage:tutorial-settings") ||
+      session.role === "ADMIN" || session.role === "MANAGER";
+    if (job.created_by !== session.userId && !privileged) {
+      return NextResponse.json({ error: "That video was produced by someone else." }, { status: 403 });
     }
-    for (const a of withDriveCopy) {
-      const ok = await created.store.deleteArtifactFromDrive(a.id);
-      if (!ok) {
-        return NextResponse.json(
-          {
-            error: `Failed to delete ${a.kind} from Google Drive. Nothing was changed; try again.`,
-            deletedSoFar: driveDeleted,
-          },
-          { status: 502 },
-        );
-      }
-      driveDeleted.push(a.kind);
+    if (job.source_job_id) {
+      return NextResponse.json({ error: "Review the original English tutorial." }, { status: 409 });
     }
-  }
+    if (parsed.data.action === "disapprove" && job.va_review_status === "rework_requested") {
+      return NextResponse.json({ success: true, status: "rework_requested", idempotent: true });
+    }
+    if (job.status !== "COMPLETED" || !job.final_path) {
+      return NextResponse.json({ error: "Finish processing the video before final review." }, { status: 409 });
+    }
+    if (parsed.data.action === "approve") {
+      const candidates = await tx.select({
+        id: thumbnails.id, language: thumbnails.language, channelId: thumbnails.channel_id,
+        status: thumbnails.status, isSelected: thumbnails.is_selected, outputPath: thumbnails.output_path,
+      }).from(thumbnails).where(and(eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, id)));
+      const readiness = assessPublicationVariant(job, candidates);
+      if (!readiness.ready) return NextResponse.json({
+        error: "Complete the English publication assets before approval.", reasons: readiness.reasons,
+      }, { status: 409 });
+      let captured: Awaited<ReturnType<typeof captureFamilyApproval>>;
+      try { captured = await captureFamilyApproval(tx, job); }
+      catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Could not verify publication assets." }, { status: 409 }); }
+      await tx.update(tutorialJobs).set({
+        va_review_status: "approved", va_reviewed_at: new Date(), va_reviewed_by: session.userId,
+      }).where(eq(tutorialJobs.id, id));
+      const plan = await reserveCompletedTutorialSlots(tx, id, new Date(), captured.approvedIds);
+      plan.outstanding.push(...captured.unavailable);
+      return NextResponse.json({ success: true, status: "approved", plan });
+    }
 
-  // Local files. Absence is fine — retention may already have collected them.
-  const mediaRoot = getHubConfig().LOCAL_MEDIA_ROOT;
-  for (const p of [job.final_path, job.recording_path]) {
-    const local = resolveLocal(p, mediaRoot);
-    if (local) await unlink(local).catch(() => undefined);
-  }
-
-  await db
-    .update(tutorialJobs)
-    .set({
-      va_review_status: "disapproved",
-      va_reviewed_at: new Date(),
-      va_reviewed_by: session.userId,
-      delivered_to_drive: false,
-    })
-    .where(eq(tutorialJobs.id, id));
-
-  return NextResponse.json({
-    success: true,
-    status: "disapproved",
-    driveDeleted,
+    // Never imply that a rework request recalls an externally scheduled video.
+    const family = await tx.select({ id: tutorialJobs.id, status: tutorialJobs.status, uploaded: tutorialJobs.is_uploaded, uploaderStatus: tutorialJobs.uploader_status })
+      .from(tutorialJobs).where(or(eq(tutorialJobs.id, id), eq(tutorialJobs.source_job_id, id)));
+    const [dispatch] = await tx.select({ id: tutorialUploadDispatches.id })
+      .from(tutorialUploadDispatches).where(inArray(tutorialUploadDispatches.tutorial_job_id, family.map((row) => row.id))).limit(1);
+    if (dispatch || family.some((row) => row.uploaded || row.uploaderStatus)) {
+      return NextResponse.json({ error: "Delivery has already started. Ask an Admin to reconcile or cancel the external upload before reworking this video. No files were changed." }, { status: 409 });
+    }
+    if (family.some((row) => row.id !== id && row.status && !["COMPLETED", "CANCELLED", "AWAITING_THUMBNAILS"].includes(row.status) && !row.status.startsWith("FAILED"))) {
+      return NextResponse.json({ error: "A language version is still processing. Wait for it to settle before replacing the source recording; no files were changed." }, { status: 409 });
+    }
+    const childIds = family.filter((row) => row.id !== id).map((row) => row.id);
+    if (childIds.length) await tx.update(tutorialJobs).set({
+      status: "CANCELLED", scheduled_for: null, va_review_status: "rework_requested",
+      publication_approval: null,
+      error_message: "Source recording requires rework. Retry this language after the new source is approved.",
+    }).where(inArray(tutorialJobs.id, childIds));
+    await tx.update(tutorialJobs).set({
+      va_review_status: "rework_requested",
+      publication_approval: null,
+      va_reviewed_at: new Date(), va_reviewed_by: session.userId,
+      status: "READY_TO_RECORD", progress: 0,
+      scheduled_for: null,
+      error_message: parsed.data.reason || "Final review requested a new recording. Existing files have been preserved.",
+    }).where(eq(tutorialJobs.id, id));
+    return NextResponse.json({ success: true, status: "rework_requested", filesPreserved: true });
   });
 }

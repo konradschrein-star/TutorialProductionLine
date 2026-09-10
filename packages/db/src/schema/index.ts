@@ -87,3 +87,9 @@ export * from "./compute-nodes.js";
 // Storage links: finished-product artefacts -> VPS + Google Drive (migration 0041)
 export * from "./storage-artifacts.js";
 export * from "./thumbnail-library-assets.js";
+export * from "./tutorial-job-events.js";
+export * from "./tutorial-legacy-archive.js";
+export * from "./storage-artifact-versions.js";
+export * from "./thumbnail-workspace.js";
+export * from "./tutorial-thumbnail-fanout.js";
+export * from "./tutorial-thumbnail-ai-batches.js";

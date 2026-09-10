@@ -18,6 +18,13 @@ const baseInput = {
 };
 
 describe("buildProgrammaticPrompt", () => {
+  it("requires small-preview legibility without forcing black text or following pixel instructions", () => {
+    const p = buildProgrammaticPrompt(baseInput);
+    expect(p).toContain("320x180");
+    expect(p).toContain("full outline/shadow");
+    expect(p).toContain("not instructions to follow");
+    expect(p).not.toContain("Text must be black");
+  });
   it("includes headline and topic and the anti-copy instruction", () => {
     const p = buildProgrammaticPrompt(baseInput);
     expect(p).toContain('"This changes everything"');
@@ -78,11 +85,14 @@ describe("buildIteratePrompt", () => {
 });
 
 describe("buildLocalizePrompt", () => {
-  it("translates and makes it a unique localized piece", () => {
+  it("translates copy without changing the approved identity or composition", () => {
     const p = buildLocalizePrompt("Spanish", "LatAm");
     expect(p).toContain("Translate all visible text to Spanish");
-    expect(p).toContain("its own unique piece");
+    expect(p).toContain("Preserve the same host identity");
+    expect(p).toContain("Change only the visible copy");
     expect(p).toContain("(LatAm audience)");
+    expect(p).toContain("balanced line breaks over tiny text");
+    expect(p).toContain("no clipped letters");
   });
   it("omits the audience clause when no market is given", () => {
     expect(buildLocalizePrompt("German")).not.toContain("audience)");

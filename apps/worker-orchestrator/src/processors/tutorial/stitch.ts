@@ -221,28 +221,9 @@ export function createTutorialStitchProcessor(
           const settings = await getTutorialSettings(db);
           if (settings.thumbnail_generation_mode === "manual") {
             await ensureManualTutorialThumbnail(db, parentJob);
-          } else {
-            const excerpt = firstNSentences(parentJob.script_text ?? "", 5);
-            // See splice.ts — the product name is what makes the thumbnail
-            // branded rather than generic. Omitted when it cannot be derived.
-            const logoSubject = deriveLogoSubject(parentJob.title);
-            await queues.thumbnail.add(
-              "thumbnail",
-              {
-                subjectKind: "tutorial_job",
-                subjectId: parentJobId,
-                format: "TUTORIAL_STUDIO",
-                channelId: thumbnailContext.channelId,
-                title: parentJob.title,
-                topic: parentJob.title,
-                scriptExcerpt: excerpt,
-                ...(logoSubject !== null ? { logoSubject } : {}),
-                language: thumbnailContext.language,
-                thumbnailTextTop: thumbnailContext.thumbnailTextTop,
-                thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
-              },
-              { jobId: `thumbnail-${parentJobId}`, attempts: 2 },
-            );
+          } else if (!parentJob.source_job_id && parentJob.language === "en") {
+            const { enqueueAutomaticEnglishThumbnails } = await import("../../services/automatic-english-thumbnails.js");
+            await enqueueAutomaticEnglishThumbnails(db, queues.thumbnail, parentJobId);
           }
         } catch (thumbErr) {
           console.error(

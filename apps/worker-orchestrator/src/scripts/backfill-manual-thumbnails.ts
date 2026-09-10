@@ -3,6 +3,7 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import {
   and,
+  channels,
   createDrizzleClient,
   eq,
   inArray,
@@ -12,10 +13,20 @@ import {
   tutorialJobs,
 } from "@repo/db";
 import { ensureManualTutorialThumbnail } from "../utils/tutorial/manual-thumbnail.js";
+import {
+  assertExactTutorialThumbnailJobs,
+  parseTutorialThumbnailJobAllowlist,
+} from "../utils/tutorial/backfill-job-allowlist.js";
 
 config({ path: resolve(process.cwd(), "../../.env") });
 config({ path: resolve(process.cwd(), ".env"), override: false });
 
+// Parse the mandatory fence before opening a database connection. This script
+// used to mean "every completed tutorial" when the env was omitted; omission
+// now fails closed before any rendering, filesystem, or database mutation.
+const jobAllowlist = parseTutorialThumbnailJobAllowlist(
+  process.env["TUTORIAL_THUMBNAIL_JOB_ALLOWLIST"],
+);
 const databaseUrl = process.env["DATABASE_URL"];
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
 
@@ -28,19 +39,30 @@ const jobs = await db
     language: tutorialJobs.language,
     channel_id: tutorialJobs.channel_id,
     source_job_id: tutorialJobs.source_job_id,
+    recording_path: tutorialJobs.recording_path,
+    final_path: tutorialJobs.final_path,
     thumbnail_text_top: tutorialJobs.thumbnail_text_top,
     thumbnail_text_bottom: tutorialJobs.thumbnail_text_bottom,
   })
   .from(tutorialJobs)
+  .innerJoin(channels, eq(tutorialJobs.channel_id, channels.id))
   .where(
     and(
       eq(tutorialJobs.status, "COMPLETED"),
       isNull(tutorialJobs.parent_job_id),
       isNotNull(tutorialJobs.final_path),
-      inArray(tutorialJobs.language, ["English", "en", "de", "fr", "it", "sv"]),
+      // Active channel configuration is the authority. This deliberately does
+      // not duplicate the historical five-language list so newly configured
+      // destinations are eligible without another code release.
+      eq(channels.accepts_tutorials, true),
+      inArray(tutorialJobs.id, jobAllowlist),
     ),
   )
   .orderBy(tutorialJobs.created_at);
+
+// Resolve the whole allowlist before the first Promise starts. One missing,
+// inactive, incomplete, or otherwise ineligible UUID aborts the entire run.
+assertExactTutorialThumbnailJobs(jobAllowlist, jobs);
 
 let created = 0;
 let existing = 0;

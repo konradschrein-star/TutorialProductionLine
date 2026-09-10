@@ -18,6 +18,8 @@ import { DriveArchiveCard } from "@/components/settings/sections/drive-archive-c
 import type { PgTable } from "drizzle-orm/pg-core";
 import { SetupReadinessCard } from "@/components/settings/setup-readiness-card";
 import { UploaderSettingsSchema } from "@repo/contracts";
+import { channelSetupCheck } from "@/components/settings/setup-checks";
+import { ChannelGroups } from "@/components/settings/channel-groups";
 
 /**
  * Settings — reworked (§3.3). Only three things do something now: Credentials
@@ -85,8 +87,8 @@ export default async function SettingsPage() {
   const canManageCredentials = hasPermission(session, "manage:credentials");
 
   const cookieStore = await cookies();
-  const rawTheme = cookieStore.get("hub_ui_theme")?.value ?? "lime";
-  const currentTheme = VALID_THEMES.has(rawTheme) ? rawTheme : "lime";
+  const rawTheme = cookieStore.get("hub_ui_theme")?.value ?? "blue";
+  const currentTheme = VALID_THEMES.has(rawTheme) ? rawTheme : "blue";
 
   // ── Stored settings (only storage + notifications survive) ────────────────
   let initialData: Record<string, unknown>;
@@ -184,13 +186,7 @@ export default async function SettingsPage() {
     initialData.uploader ?? {},
   );
   const handoffChecks = [
-    {
-      id: "channels",
-      label: "Channels",
-      ready: (channelCount ?? 0) >= 5,
-      detail: `${channelCount ?? 0} configured; 5 required`,
-      href: "/channels",
-    },
+    channelSetupCheck(channelCount),
     {
       id: "accounts",
       label: "Team access",
@@ -200,24 +196,27 @@ export default async function SettingsPage() {
     },
     {
       id: "script",
+      probe: true,
       label: "Script provider",
       ready: credentialReady("script"),
       detail: credentialReady("script")
-        ? "Connected"
+        ? "Credential saved; test to verify connectivity"
         : "Add a required API key below",
       href: "#connections",
     },
     {
       id: "tts",
+      probe: true,
       label: "Voice provider",
       ready: credentialReady("tts"),
       detail: credentialReady("tts")
-        ? "Connected"
+        ? "Credential saved; test to verify connectivity"
         : "Add a required API key below",
       href: "#connections",
     },
     {
       id: "drive",
+      probe: true,
       label: "Google Drive",
       ready: driveCredentialCount === 3,
       detail: `${driveCredentialCount}/3 OAuth values saved`,
@@ -225,11 +224,13 @@ export default async function SettingsPage() {
     },
     {
       id: "uploader",
-      label: "Uploader safety",
-      ready: uploaderSettings.executionMode === "dry_run",
+      label: "Automatic uploader",
+      optional: true,
+      probe: uploaderSettings.enabled,
+      ready: uploaderSettings.enabled,
       detail: uploaderSettings.enabled
-        ? uploaderSettings.executionMode
-        : "Disabled (safe)",
+        ? `${uploaderSettings.executionMode}; test connection and configure channel destinations before use`
+        : "Not enabled. Use manual delivery; connect your own uploader later.",
       href: "#uploader",
     },
   ];
@@ -331,6 +332,14 @@ export default async function SettingsPage() {
       <ConfigMap tiles={tiles} />
 
       <SetupReadinessCard checks={handoffChecks} />
+
+      {session.role === "ADMIN" && (
+        <div id="channel-groups">
+          <GlassCard style={{ padding: 16 }}>
+            <ChannelGroups />
+          </GlassCard>
+        </div>
+      )}
 
       {/* Appearance */}
       <GlassCard

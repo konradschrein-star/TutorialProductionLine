@@ -44,6 +44,8 @@ export const tutorialUploadDispatches = pgTable(
       .notNull()
       .references(() => thumbnails.id, { onDelete: "restrict" }),
     thumbnail_path: text("thumbnail_path").notNull(),
+    approved_asset_snapshot: jsonb("approved_asset_snapshot").$type<Record<string, unknown>>(),
+    scheduled_delivery: jsonb("scheduled_delivery").$type<Record<string, unknown>>(),
     state: varchar("state", { length: 32 }).notNull().default("requested"),
     attributes: jsonb("attributes").$type<TutorialUploaderAttributes>().notNull(),
     manifest: jsonb("manifest").$type<TutorialUploaderJob>(),

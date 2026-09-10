@@ -24,6 +24,15 @@ export interface ThumbnailPackAssessment {
   reasons: string[];
 }
 
+/** Editing a thumbnail needs localized copy, not a completed localized video
+ * or upload metadata. Keep this separate from the publication gate below. */
+export function assessThumbnailDraft(job: ThumbnailPackJob): ThumbnailPackAssessment {
+  const reasons: string[] = [];
+  if (!job.jobId) reasons.push("language variant job missing");
+  if (!job.thumbnailTextTop?.trim()) reasons.push("thumbnail top line missing");
+  return { ready: reasons.length === 0, reasons };
+}
+
 /**
  * Fail-closed readiness for one localized publishing variant. These are the
  * fields the uploader needs; a plausible English fallback is intentionally not
@@ -46,13 +55,10 @@ export function assessThumbnailPackJob(
     reasons.push("localized tags missing");
   }
   if (!job.thumbnailTextTop?.trim()) reasons.push("thumbnail top line missing");
-  if (!job.thumbnailTextBottom?.trim()) {
-    reasons.push("thumbnail bottom line missing");
-  }
   return { ready: reasons.length === 0, reasons };
 }
 
-export function assessThumbnailPack(jobs: readonly ThumbnailPackJob[]): {
+export function assessThumbnailPack(jobs: readonly ThumbnailPackJob[], purpose: "publication" | "editing" = "publication", expectedLanguages: readonly string[] = THUMBNAIL_PACK_LANGUAGES): {
   ready: boolean;
   expected: number;
   readyCount: number;
@@ -64,7 +70,8 @@ export function assessThumbnailPack(jobs: readonly ThumbnailPackJob[]): {
     matches.push(job);
     byLanguage.set(job.language, matches);
   }
-  const variants = THUMBNAIL_PACK_LANGUAGES.map((language) => {
+  const languages = [...new Set(expectedLanguages)];
+  const variants = languages.map((language) => {
     const matches = byLanguage.get(language) ?? [];
     const job =
       matches[0] ??
@@ -87,12 +94,12 @@ export function assessThumbnailPack(jobs: readonly ThumbnailPackJob[]): {
         reasons: [`multiple translation jobs found (${matches.length})`],
       };
     }
-    return { ...job, ...assessThumbnailPackJob(job) };
+    return { ...job, ...(purpose === "editing" ? assessThumbnailDraft(job) : assessThumbnailPackJob(job)) };
   });
   const readyCount = variants.filter((variant) => variant.ready).length;
   return {
-    ready: readyCount === THUMBNAIL_PACK_LANGUAGES.length,
-    expected: THUMBNAIL_PACK_LANGUAGES.length,
+    ready: readyCount === languages.length,
+    expected: languages.length,
     readyCount,
     variants,
   };

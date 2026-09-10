@@ -27,16 +27,14 @@ describe("normalizeUploaderChannelKey", () => {
 });
 
 describe("validateTutorialUploaderChannelKey", () => {
-  it("accepts explicit mappings for the five active languages", () => {
+  it("accepts explicit mappings for configured languages", () => {
     expect(
       validateTutorialUploaderChannelKey("German", "tutorial_german"),
     ).toBe("tutorial_german");
   });
 
-  it("keeps Dutch as archive-only", () => {
-    expect(() =>
-      validateTutorialUploaderChannelKey("nl", "tutorial_dutch"),
-    ).toThrow("nl is archive-only");
+  it("allows additional languages without a source-code allowlist", () => {
+    expect(validateTutorialUploaderChannelKey("nl", "tutorial_dutch")).toBe("tutorial_dutch");
     expect(validateTutorialUploaderChannelKey("nl", "")).toBeNull();
   });
 });

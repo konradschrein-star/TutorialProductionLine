@@ -52,6 +52,7 @@ export function V2EditUserForm({ user }: Props) {
       email: formData.get("email") as string,
       name: formData.get("name") as string,
       role: formData.get("role") as string,
+      password: formData.get("password") as string,
     });
     if (result.success) {
       router.push("/team");
@@ -75,6 +76,12 @@ export function V2EditUserForm({ user }: Props) {
           defaultValue={user.name}
           style={inputStyle}
         />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={labelStyle} htmlFor="replacement-password">Replacement password</label>
+        <input id="replacement-password" name="password" type="password" minLength={12} autoComplete="new-password" placeholder="Leave blank to keep the current password" style={inputStyle} />
+        <span style={{ fontSize: 11, color: "var(--v2-text-2)" }}>Existing passwords are securely hashed and cannot be displayed. An Admin can set a replacement here and share it directly with the user.</span>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

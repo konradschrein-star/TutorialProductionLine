@@ -50,7 +50,7 @@ const nextConfig = {
     return config;
   },
 
-  typescript: { ignoreBuildErrors: true },
+  typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
 
   // Transpile workspace packages

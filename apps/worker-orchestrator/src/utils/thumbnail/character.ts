@@ -68,6 +68,9 @@ export interface CycleSeed {
   variantIndex: number;
   /** Set on iterate/regenerate — this is what makes a regenerate differ. */
   parentThumbnailId?: string | null;
+  /** Optional visual-direction preference. Falls back to the complete active
+   * image cycle when no saved pose contains one of these terms. */
+  preferredPoseTerms?: readonly string[];
 }
 
 /** The stable part of the seed: which JOB this is. Not the variant/regen step. */
@@ -140,8 +143,13 @@ export async function resolveCharacterReference(
   const host: ChannelHost | undefined = await resolveChannelHost(db, channelId);
   if (!host) return undefined;
 
-  const cycleIndex = pickCycleIndex(seed, host.images.length);
-  const image = host.images[cycleIndex]!;
+  const preferred = seed.preferredPoseTerms?.map(term => term.toLowerCase()) ?? [];
+  const eligible = preferred.length
+    ? host.images.filter(image => preferred.some(term => `${image.pose ?? ""} ${image.expression ?? ""}`.toLowerCase().includes(term)))
+    : [];
+  const pool = eligible.length ? eligible : host.images;
+  const cycleIndex = pickCycleIndex(seed, pool.length);
+  const image = pool[cycleIndex]!;
   return {
     characterId: host.character.id,
     characterName: host.character.name,
@@ -151,6 +159,6 @@ export async function resolveCharacterReference(
     pose: image.pose,
     expression: image.expression,
     cycleIndex,
-    cycleSize: host.images.length,
+    cycleSize: pool.length,
   };
 }

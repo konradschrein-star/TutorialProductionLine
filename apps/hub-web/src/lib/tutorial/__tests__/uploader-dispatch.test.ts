@@ -75,7 +75,7 @@ describe("tutorial uploader dispatch gate", () => {
     ["channel", { channelId: null }, "tutorial_channel_missing"],
     [
       "thumbnail copy",
-      { thumbnailTextBottom: null },
+      { thumbnailTextTop: null },
       "localized_thumbnail_copy_incomplete",
     ],
   ])("fails closed for missing %s", (_name, patch, code) => {
@@ -84,8 +84,8 @@ describe("tutorial uploader dispatch gate", () => {
     ).toThrowError(expect.objectContaining({ code }));
   });
 
-  it("permits only de/fr/it/sv localized children", () => {
-    for (const language of ["de", "fr", "it", "sv"]) {
+  it("permits any explicitly routed localized child", () => {
+    for (const language of ["de", "fr", "it", "sv", "nl", "ja"]) {
       expect(() =>
         validateDispatchCandidate(
           {
@@ -98,19 +98,6 @@ describe("tutorial uploader dispatch gate", () => {
         ),
       ).not.toThrow();
     }
-    expect(() =>
-      validateDispatchCandidate(
-        {
-          ...complete,
-          sourceJobId: "11111111-1111-4111-8111-111111111111",
-          language: "nl",
-          channelLanguage: "nl",
-        },
-        request,
-      ),
-    ).toThrowError(
-      expect.objectContaining({ code: "unsupported_translation_language" }),
-    );
   });
 
   it("does not treat a non-English original as an automatic translation", () => {

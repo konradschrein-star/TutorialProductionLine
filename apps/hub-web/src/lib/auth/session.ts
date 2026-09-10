@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import { signToken, verifyToken, type JWTPayload } from "./jwt";
+import { db, users } from "@/lib/db";
+import { eq } from "drizzle-orm";
 
 /**
  * Session management using HTTP-only cookies
@@ -44,7 +46,11 @@ export async function getSession(): Promise<JWTPayload | null> {
 
   try {
     const payload = await verifyToken(token);
-    return payload;
+    // Role changes and deactivation take effect immediately, not after a
+    // seven-day cookie expires. Never return password hashes to callers.
+    const [user] = await db.select({ id: users.id, email: users.email, role: users.role, active: users.is_active }).from(users).where(eq(users.id, payload.userId)).limit(1);
+    if (!user?.active) return null;
+    return { ...payload, userId: user.id, email: user.email, role: user.role };
   } catch (error) {
     // Token is invalid or expired
     return null;

@@ -1,8 +1,10 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { WORKSPACE_NAVIGATION } from "./workspace-navigation";
+import { useState, useEffect } from "react";
 import { CommandPalette } from "./command-palette";
+import { paletteShortcut } from "./command-palette-model";
 import { useSSE } from "@/hooks/use-sse";
 import { ThemeModeToggle } from "./theme-mode-toggle";
 import type { JWTPayload } from "@/lib/auth/jwt";
@@ -15,6 +17,8 @@ const SEGMENT_LABELS: Record<string, string> = {
   "system-health": "System Health",
   team: "Team",
   settings: "Settings",
+  "tutorial-studio": "Tutorial Studio",
+  thumbnails: "Thumbnail Studio",
 };
 
 const UUID_RE =
@@ -31,21 +35,34 @@ interface Props {
 
 export function AppHeader({ session }: Props) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const action = paletteShortcut(event);
+      if (!action) return;
+      event.preventDefault();
+      setPaletteOpen(current => action === "toggle" ? !current : false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const segments = pathname.split("/").filter(Boolean);
   const crumbs = segments.map(formatSegment);
+  if (pathname === "/tutorial-studio") {
+    const entry = WORKSPACE_NAVIGATION.find(item => item.href === `/tutorial-studio?tab=${searchParams.get("tab") || "dashboard"}`);
+    if (entry) crumbs.push(entry.label);
+  }
 
   return (
     <>
       <header
-        className="sticky top-0 z-40 flex items-center justify-between px-8"
+        className="studio-header sticky top-0 z-40 flex items-center justify-between"
         style={{
           height: 64,
-          backgroundColor: "rgba(0,0,0,0.92)",
-          backdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.12)",
-          boxShadow: "0 4px 20px rgba(var(--v2-accent-rgb), 0.06)",
+          backgroundColor: "var(--v2-surface-1)",
+          borderBottom: "1px solid var(--v2-border-1)",
         }}
       >
         {/* Breadcrumb */}
@@ -58,7 +75,7 @@ export function AppHeader({ session }: Props) {
               {i > 0 && (
                 <span
                   className="material-symbols-outlined"
-                  style={{ fontSize: 14, color: "rgba(229,226,225,0.2)" }}
+                  style={{ fontSize: 14, color: "var(--v2-text-3)" }}
                 >
                   chevron_right
                 </span>
@@ -67,8 +84,8 @@ export function AppHeader({ session }: Props) {
                 style={{
                   color:
                     i === crumbs.length - 1
-                      ? "var(--v2-accent)"
-                      : "rgba(229,226,225,0.4)",
+                      ? "var(--v2-text-1)"
+                      : "var(--v2-text-2)",
                   fontWeight: i === crumbs.length - 1 ? 700 : 500,
                 }}
               >
@@ -79,8 +96,12 @@ export function AppHeader({ session }: Props) {
         </nav>
 
         {/* Search trigger */}
-        <div className="flex-1 max-w-sm mx-12">
+        <div className="studio-header-search flex-1 max-w-sm mx-6">
           <button
+            type="button"
+            aria-label="Search or jump to a page"
+            aria-haspopup="dialog"
+            aria-expanded={paletteOpen}
             onClick={() => setPaletteOpen(true)}
             className="v2-glow w-full flex items-center gap-3 px-4 py-2 rounded-full text-left"
             style={{
@@ -100,18 +121,18 @@ export function AppHeader({ session }: Props) {
             <span className="ml-auto flex items-center gap-1">
               <kbd
                 style={{
-                  background: "rgba(75,68,85,0.4)",
+                  background: "var(--v2-surface-3)",
                   padding: "1px 5px",
                   borderRadius: 3,
                   fontSize: 9,
                   fontFamily: "monospace",
                 }}
               >
-                \u2318
+                Ctrl / ⌘
               </kbd>
               <kbd
                 style={{
-                  background: "rgba(75,68,85,0.4)",
+                  background: "var(--v2-surface-3)",
                   padding: "1px 5px",
                   borderRadius: 3,
                   fontSize: 9,
@@ -143,6 +164,7 @@ export function AppHeader({ session }: Props) {
       </header>
 
       <CommandPalette
+        session={session}
         isOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}
       />
@@ -156,20 +178,16 @@ function SseIndicator() {
   return (
     <div className="flex items-center gap-2">
       <div
-        className={isConnected ? "animate-pulse" : ""}
         style={{
           width: 6,
           height: 6,
           borderRadius: "50%",
-          backgroundColor: isConnected ? "#23decb" : "#ffb4ab",
-          boxShadow: isConnected
-            ? "0 0 8px rgba(35,222,203,0.5)"
-            : "0 0 8px rgba(255,180,171,0.5)",
+          backgroundColor: isConnected ? "var(--v2-success)" : "var(--v2-error)",
         }}
       />
       <span
         style={{
-          color: "rgba(229,226,225,0.4)",
+          color: "var(--v2-text-2)",
           fontSize: 10,
           textTransform: "uppercase",
           letterSpacing: "0.08em",

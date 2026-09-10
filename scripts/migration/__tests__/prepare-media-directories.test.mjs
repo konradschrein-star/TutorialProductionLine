@@ -1,0 +1,11 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { boundedParents, planDirectories, applyDirectories } from '../prepare-media-directories.mjs';
+const root='/opt/content-forge/media';
+const dir={isDirectory:()=>true,isSymbolicLink:()=>false};
+const absent=()=>{throw Object.assign(Error(),{code:'ENOENT'})};
+test('bounds paths, rejects traversal and other roots',()=>{const p=boundedParents([root+'/a/b.mp4',root+'/../secret', '/etc/file']);assert.equal(p.safePaths,1);assert.equal(p.blocked.outside_or_noncanonical,2);assert.deepEqual(p.parents,[root+'/a']);});
+test('dry-run only plans missing directories',async()=>{const p=await planDirectories([root+'/a/b/file.jpg'],{stat:async p=>p===root?dir:absent()});assert.equal(p.create.length,2);assert.equal(p.existing,0);});
+test('rejects symlink ancestors and descendants',async()=>{const p=await planDirectories([root+'/a/b/file.jpg'],{stat:async p=>p===root?dir:{...dir,isSymbolicLink:()=>true}});assert.equal(p.unsafe.length,2);await assert.rejects(applyDirectories(p));});
+test('creates only empty directories with restrictive mode',async()=>{const present=new Set([root]);let calls=0;const stat=async p=>present.has(p)?dir:absent();const p=await planDirectories([root+'/a/b/file.jpg'],{stat});assert.equal(await applyDirectories(p,{stat,make:async(path,options)=>{assert.equal(options.mode,0o700);present.add(path);calls++}}),2);assert.equal(calls,2);});
+test('rechecks changed ancestors before create',async()=>{const p=await planDirectories([root+'/a/file.jpg'],{stat:async p=>p===root?dir:absent()});await assert.rejects(applyDirectories(p,{stat:async()=>({...dir,isSymbolicLink:()=>true}),make:async()=>{throw Error('must not create')}}),/Ancestor changed/);});

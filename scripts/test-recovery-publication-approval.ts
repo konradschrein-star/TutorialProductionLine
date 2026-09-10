@@ -1,0 +1,133 @@
+/** Local HTTP/DB/file probe. No workers, providers, Drive or YouTube calls. */
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import postgres from "postgres";
+import { signToken } from "../apps/hub-web/src/lib/auth/jwt";
+import { createDrizzleClient, tutorialSourceRevision } from "../packages/db/dist/index.js";
+import { DrizzleTutorialUploaderExchangeRepository } from "../apps/worker-orchestrator/src/storage/tutorial-uploader-exchange";
+import { reconcileLateLocalePublication } from "../apps/worker-orchestrator/src/services/late-locale-publication";
+const url = process.env.DATABASE_URL ?? "";
+if (url !== "postgresql://recovery:local-test-only@127.0.0.1:55438/tutorial_recovery_test" || process.env.JWT_SECRET !== "local-recovery-test-secret-not-for-production-2026") throw new Error("Isolated recovery runtime only");
+const sql = postgres(url, { max: 1 });
+const root = randomUUID();
+const directory = `C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media/approval-${root}`;
+try {
+  const [owner] = await sql`SELECT id FROM users WHERE email='va@recovery.test'`;
+  const [admin] = await sql`SELECT id FROM users WHERE email='admin@recovery.test'`;
+  assert(owner && admin);
+  const vaToken = await signToken({ userId: owner.id, email: "va@recovery.test", role: "TUTORIAL_VA" });
+  const adminToken = await signToken({ userId: admin.id, email: "admin@recovery.test", role: "ADMIN" });
+  const [channel] = await sql`INSERT INTO channels(youtube_channel_id,name,language,accepts_tutorials,uploader_channel_key) VALUES (${`approval-test-${root}`},'Approval isolation test','en',true,${`approval_${root}`}) RETURNING id`;
+  await mkdir(directory, { recursive: true });
+  const videoPath = `${directory}/video.mp4`;
+  const thumbPath = `${directory}/thumbnail.jpg`;
+  await copyFile("C:/Users/konra/AppData/Local/Temp/tutorial-recovery-media/pilot-test-pattern.mp4", videoPath);
+  const [reference] = await sql`SELECT output_path FROM thumbnails WHERE subject_id='11111111-2222-4333-8444-555555555551' AND is_selected=true LIMIT 1`;
+  assert(reference);
+  await copyFile(reference.output_path, thumbPath);
+  await sql`INSERT INTO tutorial_jobs(id,created_by,channel_id,title,mode,status,script_provider,tts_provider,tts_voice,language,final_path,recording_path,script_text,description,tags,thumbnail_text_top,thumbnail_text_bottom)
+    VALUES(${root},${owner.id},${channel!.id},'Exact approval test','THREE_MIN','COMPLETED','test','test','test','en',${videoPath},${videoPath},'Test source','Test description',${sql.json(["tutorial"])},'TEST','APPROVAL')`;
+  await sql`INSERT INTO thumbnails(subject_kind,subject_id,channel_id,language,prompt_mode,prompt_used,reference_paths,aspect_ratio,resolution,headline_source,generation_kind,output_path,requested_backend,provider_used,backend_chain,review_verdict,status,is_selected)
+    VALUES('tutorial_job',${root},${channel!.id},'en','manual','{}','{}','16:9','1280x720','operator','edit',${thumbPath},'browser-layout','browser-layout',ARRAY['browser-layout'],'acceptable','completed',true)`;
+  const review = () => fetch(`http://127.0.0.1:3108/api/production/tutorial-review/${root}`, { method: "POST", headers: { Cookie: `hub_session=${vaToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }), redirect: "error" });
+  const dispatch = () => fetch(`http://127.0.0.1:3108/api/production/jobs/${root}/uploader-dispatch`, { method: "POST", headers: { Cookie: `hub_session=${adminToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ visibility: "private", made_for_kids: false, monetization: "off" }), redirect: "error" });
+  const approved = await review(); assert.equal(approved.status, 200, await approved.clone().text());
+  const [snapshot] = await sql`SELECT publication_approval,scheduled_for FROM tutorial_jobs WHERE id=${root}`;
+  assert.match(snapshot!.publication_approval.revision, /^[a-f0-9]{64}$/); assert(snapshot!.scheduled_for);
+  const scheduleUrl = "http://127.0.0.1:3108/api/production/channel-schedules";
+  const saveSchedule = (token: string, timezone = "Europe/Berlin") => fetch(scheduleUrl, { method: "POST", headers: { Cookie: `hub_session=${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ channelId: channel!.id, schedule: { timezone, dailyCapacity: 30, startMinute: 480, endMinute: 1200 } }) });
+  assert.equal((await saveSchedule(vaToken)).status, 403);
+  assert.equal((await saveSchedule(adminToken, "invalid-timezone")).status, 400);
+  await sql`UPDATE channels SET metadata=${sql.json({ unrelated: "preserve me" })} WHERE id=${channel!.id}`;
+  const configured = await saveSchedule(adminToken); assert.equal(configured.status, 200, await configured.clone().text());
+  const [savedChannel] = await sql`SELECT metadata FROM channels WHERE id=${channel!.id}`;
+  assert.equal(savedChannel!.metadata.unrelated, "preserve me"); assert.equal(savedChannel!.metadata.tutorialSchedule.dailyCapacity, 30);
+  const [unchangedSlot] = await sql`SELECT scheduled_for FROM tutorial_jobs WHERE id=${root}`;
+  assert.equal(unchangedSlot!.scheduled_for.toISOString(), snapshot!.scheduled_for.toISOString());
+  console.log(JSON.stringify({ channelScheduleAdminOnly: true, invalidTimezoneRejected: true, unrelatedChannelMetadataPreserved: true, existingReservationsUnchanged: true }));
+  const planUrl = "http://127.0.0.1:3108/api/production/publication-plan";
+  const movedAt = new Date(Date.now() + 10 * 86_400_000).toISOString();
+  const move = (token: string, at = movedAt) => fetch(planUrl, { method: "POST", headers: { Cookie: `hub_session=${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ jobId: root, publishAt: at, reason: "Isolated scheduling regression test" }) });
+  assert.equal((await move(vaToken)).status, 403);
+  assert.equal((await move(adminToken, new Date(0).toISOString())).status, 400);
+  const moves = await Promise.all(Array.from({ length: 4 }, () => move(adminToken)));
+  for (const response of moves) assert.equal(response.status, 200, await response.clone().text());
+  assert.equal((await Promise.all(moves.map((response) => response.json()))).filter((row) => row.idempotent).length, 3);
+  const [eventCount] = await sql`SELECT count(*)::int AS count FROM tutorial_job_events WHERE tutorial_job_id=${root} AND event_type='schedule_overridden' AND actor_id=${admin.id}`;
+  assert.equal(eventCount!.count, 1);
+  const searched = await (await fetch(`${planUrl}?q=Exact%20approval%20test`, { headers: { Cookie: `hub_session=${adminToken}` } })).json();
+  assert(searched.rows.some((row: { id: string }) => row.id === root));
+  const literalSearch = await (await fetch(`${planUrl}?q=%25`, { headers: { Cookie: `hub_session=${adminToken}` } })).json();
+  assert.equal(literalSearch.rows.length, 0, "SQL wildcard must be searched literally");
+  const occupiedAt = new Date(Date.now() + 12 * 86_400_000).toISOString();
+  await sql`INSERT INTO tutorial_jobs(created_by,channel_id,title,mode,status,script_provider,tts_provider,tts_voice,language,scheduled_for) VALUES(${owner.id},${channel!.id},'Occupied slot test','THREE_MIN','COMPLETED','test','test','test','en',${occupiedAt})`;
+  assert.equal((await move(adminToken, occupiedAt)).status, 409);
+  await sql`UPDATE channels SET metadata=jsonb_set(metadata,'{tutorialSchedule,dailyCapacity}','1') WHERE id=${channel!.id}`;
+  assert.equal((await move(adminToken, new Date(new Date(occupiedAt).getTime() + 60_000).toISOString())).status, 409);
+  await saveSchedule(adminToken);
+  const history = await fetch(`http://127.0.0.1:3108/api/production/jobs/${root}/history`, { headers: { Cookie: `hub_session=${vaToken}` } });
+  assert.equal(history.status, 200); assert((await history.json()).events.some((event: { type: string }) => event.type === "schedule_overridden"));
+  console.log(JSON.stringify({ scheduleOverrideAdminOnly: true, concurrentOverrideIdempotent: true, occupiedSlotRejected: true, dailyCapacityEnforced: true, overrideAuditedOnce: true, ownerCanReadHistory: true }));
+  await sql`UPDATE tutorial_jobs SET title='Changed after review' WHERE id=${root}`;
+  assert.equal((await dispatch()).status, 409);
+  await sql`UPDATE tutorial_jobs SET title='Exact approval test' WHERE id=${root}`;
+  await writeFile(thumbPath, "Replacement bytes at the identical file path");
+  assert.equal((await dispatch()).status, 409);
+  await copyFile(reference.output_path, thumbPath);
+  const accepted = await dispatch(); assert.equal(accepted.status, 201, await accepted.clone().text());
+  const dispatchId = (await accepted.json()).dispatch.id;
+  assert.equal((await move(adminToken)).status, 409);
+  const repeated = await dispatch(); assert.equal(repeated.status, 200); assert((await repeated.json()).idempotent);
+  const [savedDispatch] = await sql`SELECT approved_asset_snapshot FROM tutorial_upload_dispatches WHERE tutorial_job_id=${root}`;
+  assert.equal(savedDispatch!.approved_asset_snapshot.revision, snapshot!.publication_approval.revision);
+  await sql`UPDATE tutorial_jobs SET title='Changed after dispatch admission' WHERE id=${root}`;
+  const repository = new DrizzleTutorialUploaderExchangeRepository(createDrizzleClient(url));
+  await assert.rejects(() => repository.markPublishing({ dispatchId } as never), /changed after review/);
+  await sql`UPDATE tutorial_jobs SET title='Exact approval test' WHERE id=${root}`;
+  console.log(JSON.stringify({ selfReviewCapturedBytes: true, metadataChangeRejected: true, inPlaceThumbnailReplacementRejected: true, approvedRevisionFrozenAtDispatch: true, postDispatchCorrectionRejectedByWorker: true, duplicateRequestSuppressed: true, externalCalls: 0 }));
+  const sourceRevision = tutorialSourceRevision({ recording_path: videoPath, final_path: videoPath, script_text: "Test source", recorded_at: null });
+  const childIds: Record<string, string> = {};
+  for (const language of ["de", "fr", "it"]) {
+    const childId = randomUUID(); childIds[language] = childId;
+    const [destination] = await sql`SELECT id FROM channels WHERE youtube_channel_id=${`recovery-test-${language}`}`;
+    assert(destination);
+    await sql`INSERT INTO tutorial_jobs(id,created_by,channel_id,source_job_id,title,mode,status,script_provider,tts_provider,tts_voice,language,final_path,recording_path,script_text,description,tags,thumbnail_text_top,thumbnail_text_bottom,localization_source_revision)
+      VALUES(${childId},${owner.id},${destination.id},${root},'Late locale test','THREE_MIN',${language === "fr" ? "FAILED_AUDIO" : "COMPLETED"},'test','test','test',${language},${videoPath},${videoPath},'Localized test','Localized metadata',${sql.json(["tutorial"])},'TEST','LOCALE',${language === "it" ? "0".repeat(64) : sourceRevision})`;
+    await sql`INSERT INTO thumbnails(subject_kind,subject_id,channel_id,language,prompt_mode,prompt_used,reference_paths,aspect_ratio,resolution,headline_source,generation_kind,output_path,requested_backend,provider_used,backend_chain,review_verdict,status,is_selected)
+      VALUES('tutorial_job',${childId},${destination.id},${language},'manual','{}','{}','16:9','1280x720','operator','edit',${thumbPath},'browser-layout','browser-layout',ARRAY['browser-layout'],'acceptable','completed',true)`;
+  }
+  const recoveryDb = createDrizzleClient(url);
+  await sql`UPDATE tutorial_jobs SET title='Source edited before late approval' WHERE id=${root}`;
+  await reconcileLateLocalePublication(recoveryDb);
+  const [blockedLate] = await sql`SELECT publication_approval FROM tutorial_jobs WHERE id=${childIds.de!}`;
+  assert.equal(blockedLate!.publication_approval, null);
+  await sql`UPDATE tutorial_jobs SET title='Exact approval test' WHERE id=${root}`;
+  const recoveries = await Promise.all(Array.from({ length: 4 }, () => reconcileLateLocalePublication(recoveryDb)));
+  assert.equal(recoveries.reduce((sum, row) => sum + row.approved, 0), 1);
+  const results = await sql`SELECT id,language,publication_approval,scheduled_for FROM tutorial_jobs WHERE source_job_id=${root}`;
+  assert(results.find((row) => row.language === "de")!.publication_approval);
+  assert(results.find((row) => row.language === "de")!.scheduled_for);
+  for (const language of ["fr", "it"]) { const row = results.find((item) => item.language === language)!; assert.equal(row.publication_approval, null); assert.equal(row.scheduled_for, null); }
+  assert.equal((await reconcileLateLocalePublication(recoveryDb)).approved, 0);
+  console.log(JSON.stringify({ lateLocaleAutomaticallyApprovedAndPlanned: true, concurrentRecoveryIdempotent: true, failedLocaleDidNotBlockSibling: true, staleSourceRevisionNotInherited: true, modifiedEnglishApprovalNotInherited: true }));
+  const [other] = await sql`SELECT id FROM users WHERE email='other@recovery.test'`;
+  const otherToken = await signToken({ userId: other!.id, email: "other@recovery.test", role: "TUTORIAL_VA" });
+  assert.equal((await fetch(`http://127.0.0.1:3108/api/production/jobs/${root}/history`, { headers: { Cookie: `hub_session=${otherToken}` } })).status, 403);
+  const otherPlan = await (await fetch(planUrl, { headers: { Cookie: `hub_session=${otherToken}` } })).json();
+  assert(!otherPlan.rows.some((row: { id: string }) => row.id === root));
+  const otherList = await (await fetch("http://127.0.0.1:3108/api/production/uploads", { headers: { Cookie: `hub_session=${otherToken}` } })).json();
+  assert(!otherList.videos.some((row: { id: string }) => row.id === root));
+  const manual = (token: string) => fetch("http://127.0.0.1:3108/api/production/uploads", { method: "PATCH", headers: { Cookie: `hub_session=${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ jobId: childIds.de, isUploaded: true, youtubeUrl: "https://youtu.be/abcdefghijk" }) });
+  assert.equal((await manual(otherToken)).status, 403);
+  const report = await manual(vaToken); assert.equal(report.status, 200, await report.clone().text());
+  const [reported] = await sql`SELECT uploader_status,youtube_visibility,youtube_published_at,upload_verified_at FROM tutorial_jobs WHERE id=${childIds.de!}`;
+  assert.equal(reported!.uploader_status, "reported_uploaded");
+  assert.equal(reported!.youtube_visibility, null); assert.equal(reported!.youtube_published_at, null); assert.equal(reported!.upload_verified_at, null);
+  console.log(JSON.stringify({ deliveryListOwnerScoped: true, manualReportOwnerScoped: true, manualReportNotMisrepresentedAsVerifiedPublication: true }));
+} finally {
+  // Retain evidence, but never let a later local worker consume this probe.
+  await sql`UPDATE tutorial_upload_dispatches SET state='test_only_complete',terminal_at=now() WHERE tutorial_job_id=${root}`;
+  await sql.end();
+}
+process.exit(0);

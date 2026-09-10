@@ -1,10 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DrizzleClient } from "@repo/db";
+import { type DrizzleClient } from "@repo/db";
+import { tutorialChannelProfile } from "@repo/contracts";
 import {
   resolveArchetypeCandidates,
   getThumbnailArchetypeById,
   getChannelThumbnailProfile,
+  getTutorialChannelProfile,
   createThumbnailRecord,
   updateThumbnailRecord,
   getThumbnailById,
@@ -33,6 +35,7 @@ import {
 } from "./branding-contract.js";
 import { requestLLMText } from "../llm-client.js";
 import { buildIteratePrompt, buildLocalizePrompt } from "./prompt-builder.js";
+import { condenseHeadline } from "./headline.js";
 import {
   compileThumbnailBrief,
   renderProgrammatic,
@@ -43,6 +46,7 @@ import {
   type ThumbnailBrief,
 } from "./brief.js";
 import { authorThumbnailPrompt } from "./deepseek-prompt.js";
+import { inspectThumbnailQuality } from "./quality.js";
 
 const THUMBNAIL_MEDIA_DIR =
   process.env["THUMBNAIL_MEDIA_DIR"] ?? "/opt/content-forge/media/thumbnails";
@@ -105,6 +109,8 @@ export interface RequestThumbnailArgs {
   language?: string;
   targetLanguage?: string;
   localizeFromThumbnailId?: string;
+  /** Worker-only immutable bytes captured under the exact approved-English lease. */
+  approvedEnglishReference?: { thumbnailId: string; path: string; dataUrl: string };
   /**
    * How this row was produced. Determines which reference image is used:
    *   original/variant — the archetype reference
@@ -132,6 +138,7 @@ export interface RequestThumbnailArgs {
 }
 
 export interface RequestThumbnailResult {
+  failureCertainty?: "definite" | "uncertain";
   thumbnailId: string;
   outputPath: string | null;
   status: "completed" | "failed" | "skipped";
@@ -155,16 +162,27 @@ export async function requestThumbnail(
   db: DrizzleClient,
   args: RequestThumbnailArgs,
 ): Promise<RequestThumbnailResult> {
+  if (args.subjectKind === "tutorial_job" && process.env.TUTORIAL_AI_THUMBNAILS_ENABLED === "false") return { thumbnailId: "", outputPath: null, status: "failed", error: "Tutorial AI thumbnails are disabled on this installation. Use procedural or manual thumbnails.", failureCertainty: "definite" };
   // Non-blocking by contract: this function must NEVER throw. Any failure is
   // caught below and recorded on the thumbnail row so the caller's job is not
   // failed/retried; the uploader can regenerate later.
   let record: { id: string } | undefined;
+  let imageInvocationStarted = false;
   const channelId = args.channelId ?? null;
-  const onFallback = args.onFallback ?? "warn";
+  const onFallback = (args.backend ?? configuredBackend()) === "veoforge" ? "fail" : args.onFallback ?? "warn";
   try {
     const profile = channelId
       ? await getChannelThumbnailProfile(db, channelId)
       : undefined;
+    const tutorialProfile = channelId
+      ? await getTutorialChannelProfile(db, channelId)
+      : tutorialChannelProfile({});
+    const channelPromptNote = tutorialProfile.promptOverrides.thumbnailImage.trim()
+      ? `\nChannel-specific thumbnail instructions: ${tutorialProfile.promptOverrides.thumbnailImage.trim()}`
+      : "";
+    if (channelPromptNote.length > 1000) {
+      throw new Error("Channel thumbnail instructions are too long for the image provider; keep them under 950 characters.");
+    }
 
     // Infer the generation kind when the caller didn't state it (back-compat).
     const kind: ThumbnailGenerationKind =
@@ -250,7 +268,10 @@ export async function requestThumbnail(
           error: "base thumbnail missing",
         };
       }
-      reference = base.output_path;
+      if (args.subjectKind === "tutorial_job" && (!args.approvedEnglishReference || args.approvedEnglishReference.thumbnailId !== base.id || args.approvedEnglishReference.path !== base.output_path)) {
+        throw new Error("Tutorial localization requires the exact approved English reference lease");
+      }
+      reference = args.approvedEnglishReference?.dataUrl ?? base.output_path;
       prompt = buildLocalizePrompt(args.targetLanguage ?? "en");
       promptMode = "programmatic";
       recordLanguage = args.targetLanguage ?? "en";
@@ -430,12 +451,10 @@ export async function requestThumbnail(
       const rule =
         rawRule ??
         (await getThumbnailFormatRule(db, "OTHER").catch(() => undefined));
-      // Network contract: action + subject, three words maximum.
-      const maxWords = Math.min(rule?.text_max_words ?? 3, 3);
-      if (args.thumbnailTextTop && args.thumbnailTextBottom) {
-        // These lines belong to the localized tutorial job. Do not condense,
-        // translate, or replace them with a title-derived English headline.
-        headlineText = `${args.thumbnailTextTop.trim()}\n${args.thumbnailTextBottom.trim()}`;
+      // Network contract: 2–3 words ideally, four words as a hard maximum.
+      const maxWords = Math.min(rule?.text_max_words ?? 4, 4);
+      if (args.thumbnailTextTop) {
+        headlineText = condenseHeadline([args.thumbnailTextTop, args.thumbnailTextBottom].filter(Boolean).join(" "), { maxWords, logoSubject: args.logoSubject ?? null });
         headlineSource = "operator";
       } else {
         const derived = await deriveHeadline({
@@ -515,7 +534,7 @@ export async function requestThumbnail(
       // truncate them, it refuses the job. A thumbnail always carries at least
       // the archetype reference, so 2000 is the operative ceiling and the
       // renderer budgets the brief down to fit rather than overflowing it.
-      const promptBudget = DEFAULT_PROMPT_BUDGET_CHARS;
+      const promptBudget = DEFAULT_PROMPT_BUDGET_CHARS - channelPromptNote.length;
       if (promptMode === "manual" && args.editedPrompt?.trim()) {
         prompt = args.editedPrompt.trim();
       } else if (args.editedPrompt?.trim()) {
@@ -556,7 +575,6 @@ export async function requestThumbnail(
             maxChars: promptBudget - regenNote.length,
           }) + regenNote;
       }
-
       /**
        * What the 2000-char ceiling cut. Not an error — the archetype's template
        * is carried by the reference IMAGE, and a squeeze here is the normal
@@ -602,6 +620,7 @@ export async function requestThumbnail(
       resolution =
         args.resolution ?? archetype?.resolution ?? DEFAULT_RESOLUTION;
     }
+    prompt += channelPromptNote;
 
     const requestedBackend = args.backend ?? configuredBackend();
 
@@ -794,8 +813,10 @@ export async function requestThumbnail(
         );
     }
 
+    imageInvocationStarted = true;
     const detailed = await requestImageDetailed(prompt, {
       format: args.format,
+      ...(args.requestGroupId ? { idempotencyKey: `thumbnail-${args.subjectId}-${args.requestGroupId}-${args.variantIndex ?? 0}` } : {}),
       context: `thumbnail:${args.subjectKind}:${args.subjectId}`,
       aspectRatio,
       ...(requestedBackend ? { backend: requestedBackend } : {}),
@@ -863,6 +884,21 @@ export async function requestThumbnail(
     // real bytes exactly as the sniffing step demanded.
     const outputPath = join(outputDir, `thumbnail-${record.id}.jpg`);
     await writeFile(outputPath, normalised.buffer);
+    if (args.subjectKind === "tutorial_job") {
+      // Advisory evidence is bound to exact output bytes. A failed checker must
+      // not discard a valid image or cause paid generation retries.
+      try {
+        const firstReference = referenceRefs[0];
+        const referenceBytes = firstReference?.startsWith("data:image/") && firstReference.includes(";base64,")
+          ? Buffer.from(firstReference.split(";base64,")[1]!, "base64") : undefined;
+        const quality = await inspectThumbnailQuality(normalised.buffer,
+          headlineText ?? [args.thumbnailTextTop, args.thumbnailTextBottom].filter(Boolean).join(" / "), referenceBytes,
+          undefined, { targetLanguage: recordLanguage, localized: kind === "localize" });
+        await writeFile(`${outputPath}.quality.json`, JSON.stringify(quality));
+      } catch {
+        console.warn(JSON.stringify({ message: "Thumbnail quality evidence unavailable; human review required", thumbnail_id: record.id }));
+      }
+    }
 
     // ── Honest provider attribution (fixes A2.5, §2.6) ──────────────────────
     // servedBy/chain/fallbackUsed come from the GATEWAY, not from guessing the
@@ -925,6 +961,7 @@ export async function requestThumbnail(
         outputPath: null,
         status: "failed",
         error: msg,
+        failureCertainty: imageInvocationStarted ? "uncertain" : "definite",
       };
     }
     console.error(
@@ -936,7 +973,7 @@ export async function requestThumbnail(
         error: msg,
       }),
     );
-    return { thumbnailId: "", outputPath: null, status: "failed", error: msg };
+    return { thumbnailId: "", outputPath: null, status: "failed", error: msg, failureCertainty: imageInvocationStarted ? "uncertain" : "definite" };
   }
 }
 

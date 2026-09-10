@@ -3,6 +3,7 @@ import { TutorialJobStatus } from "../../enums/tutorial-job-status.js";
 
 const EXPECTED = [
   "QUEUED",
+  "AWAITING_THUMBNAILS",
   "GENERATING_SCRIPT",
   "GENERATING_AUDIO",
   "READY_TO_RECORD",

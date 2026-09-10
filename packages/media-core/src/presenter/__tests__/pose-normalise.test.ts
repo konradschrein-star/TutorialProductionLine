@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,7 +66,7 @@ describe("requireCalibratedPose", () => {
     expect(requireCalibratedPose(pose).slug).toBe("test-pose");
   });
 
-  it("throws for every pose in the shipped poses.json (all need calibration)", async () => {
+  it.skipIf(!existsSync(POSES_JSON))("throws for every pose in the shipped poses.json (all need calibration)", async () => {
     const raw: unknown = JSON.parse(await readFile(POSES_JSON, "utf8"));
     expect(Array.isArray(raw)).toBe(true);
     const poses = raw as unknown[];

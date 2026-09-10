@@ -1,0 +1,22 @@
+import {describe,expect,it,vi} from 'vitest';
+vi.mock('../preserve-english-finals',async()=>{const actual=await vi.importActual<any>('../preserve-english-finals');return{...actual,sha256Text:(s:string)=>s.startsWith('{"version":"selected-thumbnail-preservation/1"')?'b4b5585e49e2822b0bdd24a4d907184de40c3f041725ab6fcb63b0255064467c':actual.sha256Text(s)}});
+import {sha256Text} from '../preserve-english-finals';
+import {SINGLE_THUMBNAIL as S} from '../single-thumbnail-policy';
+import {planSingleThumbnailPromotion} from '../single-thumbnail-promotion-plan';
+function fixture(){
+ const path='/opt/content-forge/media/thumbnails/'+S.jobId+'/synthetic.jpg';
+ const manifest=JSON.stringify({version:'selected-thumbnail-preservation/1',...S,account:'konrad.schrein@gmail.com',sourcePath:path,completedAt:'2026-09-09T00:00:00Z',mimeType:'image/jpeg',statToken:'synthetic'});
+ const row={jobId:S.jobId,thumbnailId:S.thumbnailId,manifestSha256:sha256Text(manifest),sequence:1,previousHash:'',stage:'verified',at:'2026-09-09T00:00:00Z',fileId:'1S5yw7OnPaJ0kgjwiHJo7yn2SjVhLrXmZ',sha256:S.sha256,bytes:S.bytes};
+ const input={manifest,ledger:JSON.stringify({...row,hash:sha256Text(JSON.stringify(row))})+'\n'};
+ const target:any={job:{id:S.jobId,language:'en',channel_id:'synthetic-channel',source_job_id:null,parent_job_id:null},thumbnail:{id:S.thumbnailId,subject_id:S.jobId,subject_kind:'tutorial_job',is_selected:true,language:'en',status:'completed',review_verdict:'not_reviewed',output_path:path},selectedCount:1,artifacts:[],versions:[]};
+ const proof={fileId:row.fileId,ownerMatches:true,ownedByMe:true,trashed:false,bytes:S.bytes,sha256:S.sha256,md5:S.md5,parentIds:[S.folderId],checkedAt:'2026-09-09T00:01:00Z'},local={jobId:S.jobId,safePath:true,parentDirectoryReady:true,state:'absent'},now=Date.parse('2026-09-09T00:02:00Z');return{input,target,proof,local,now};
+}
+const run=(s:ReturnType<typeof fixture>)=>planSingleThumbnailPromotion(s.input,s.target,s.proof,s.local,s.now);
+describe('fixed-one thumbnail promotion (synthetic manifest hash test double)',()=>{
+ it('plans one immutable receipt/current pointer without changing verdict or selection',()=>{const s=fixture(),before=JSON.stringify(s),p=run(s);expect(p.prior).toBeNull();expect(p.version.bytes).toBe(146123);expect(p.values.state).toBe('uploaded');expect(p.thumbnail.review_verdict).toBe('not_reviewed');expect(JSON.stringify(s)).toBe(before)});
+ it('rejects selection/review changes, duplicate selection and missing directories',()=>{for(const modify of [(s:any)=>s.target.thumbnail.is_selected=false,(s:any)=>s.target.thumbnail.review_verdict='approved',(s:any)=>s.target.selectedCount=2,(s:any)=>s.local.parentDirectoryReady=false]){const s=fixture();modify(s);expect(()=>run(s)).toThrow()}});
+ it('rejects wrong Drive identity, owner, destination and stale proof',()=>{for(const modify of [(s:any)=>s.proof.fileId='different',(s:any)=>s.proof.ownerMatches=false,(s:any)=>s.proof.parentIds=['elsewhere'],(s:any)=>s.proof.checkedAt='2026-09-08T00:00:00Z']){const s=fixture();modify(s);expect(()=>run(s)).toThrow('Drive proof')}});
+ it('rejects corrupt ledger and unrelated current artifact',()=>{const s=fixture();s.input.ledger=s.input.ledger.replace('"verified"','"uncertain"');expect(()=>run(s)).toThrow('ledger');const t=fixture();t.target.artifacts=[{owner_kind:'content_job'}];expect(()=>run(t)).toThrow('conflict')});
+ it('replans an exact applied pointer idempotently and rejects immutable contradictions',()=>{const s=fixture(),p=run(s);s.target.artifacts=[{id:p.artifactId,job_id:S.jobId,owner_kind:'tutorial_job',kind:'thumbnail',...p.values}];s.target.versions=[p.version];expect(run(s).artifactId).toBe(p.artifactId);s.target.versions=[{...p.version,bytes:1}];expect(()=>run(s)).toThrow('Immutable')});
+ it('rejects replacing any different prior path/pointer or repairing incomplete prior state',()=>{for(const change of [{drive_file_id:'other'},{vps_path:'/opt/content-forge/media/other.jpg'},{state:'skipped'}]){const s=fixture(),p=run(s);s.target.artifacts=[{id:p.artifactId,job_id:S.jobId,owner_kind:'tutorial_job',kind:'thumbnail',...p.values,...change}];s.target.versions=[p.version];expect(()=>run(s)).toThrow('replacement not authorized')}const s=fixture(),p=run(s);s.target.artifacts=[{id:p.artifactId,job_id:S.jobId,owner_kind:'tutorial_job',kind:'thumbnail',...p.values}];expect(()=>run(s)).toThrow('lacks exactly applied')});
+});

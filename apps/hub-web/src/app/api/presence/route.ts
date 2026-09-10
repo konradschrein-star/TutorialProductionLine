@@ -8,6 +8,7 @@ export async function POST() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const now = new Date();
+  const nowIso = now.toISOString();
   await db
     .update(users)
     .set({
@@ -15,8 +16,8 @@ export async function POST() {
       // after a long disconnect so offline time never inflates the metric.
       online_seconds_total: sql`${users.online_seconds_total} + CASE
         WHEN ${users.last_seen_at} IS NOT NULL
-         AND ${users.last_seen_at} > ${now}::timestamptz - interval '120 seconds'
-        THEN LEAST(90, GREATEST(0, EXTRACT(EPOCH FROM (${now}::timestamptz - ${users.last_seen_at}))::integer))
+         AND ${users.last_seen_at} > ${nowIso}::timestamptz - interval '120 seconds'
+        THEN LEAST(90, GREATEST(0, EXTRACT(EPOCH FROM (${nowIso}::timestamptz - ${users.last_seen_at}))::integer))
         ELSE 0 END`,
       last_seen_at: now,
     })

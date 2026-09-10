@@ -12,6 +12,7 @@ coverage/
 *.tsbuildinfo
 scratch/
 *.tgz
+.release/
 
 # Environment files
 .env

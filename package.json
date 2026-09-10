@@ -22,7 +22,9 @@
     "db:studio": "pnpm --filter @repo/db db:studio",
     "seed": "tsx scripts/seed-first-run.ts",
     "start:orchestrator": "node apps/worker-orchestrator/dist/index.js",
-    "test:create-job": "tsx scripts/create-test-job.ts"
+    "test:create-job": "tsx scripts/create-test-job.ts",
+    "tutorial:batch": "tsx scripts/tutorial-production-batch.ts",
+    "omar:tutorial-schedules": "tsx scripts/maintenance/configure-omar-weekly-schedules.ts"
   },
   "devDependencies": {
     "husky": "^9.1.7",

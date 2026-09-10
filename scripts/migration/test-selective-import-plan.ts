@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { planUserImport, planTutorialImport, planDerivativeArchive } from "./selective-import-plan";
+// Deliberately synthetic; no source account or secret values enter this test.
+const user = { id: "dummy-user", email: "dummy@example.test", name: "Synthetic", role: "TUTORIAL_VA", password_hash: "$2b$10$" + "A".repeat(53), is_active: true, default_tutorial_channel_id: "dummy-channel", youtube_cookies_ciphertext: "MUST_NOT_PROJECT" };
+const channels = new Set(["dummy-channel"]);
+const plannedUser = planUserImport(user, channels);
+assert.deepEqual(plannedUser.blockers, []); assert.equal(plannedUser.row.password_hash, user.password_hash); assert.equal(plannedUser.row.role, user.role); assert(!("youtube_cookies_ciphertext" in plannedUser.row));
+assert(planUserImport({ ...user, role: "UNKNOWN" }, channels).blockers.includes("unsupported_role_no_promotion"));
+assert(planUserImport({ ...user, password_hash: "plaintext" }, channels).blockers.includes("password_hash_not_supported_bcrypt"));
+const source = { id: "dummy-job", created_by: user.id, channel_id: "dummy-channel", status: "COMPLETED", language: "English", title: "Dummy", final_path: "/old/media/tutorial.mp4", va_review_status: "approved", intro_config: { oldFormat: true } };
+const targetJobColumns = new Set([...Object.keys(source).filter(key => key !== "intro_config"), "publication_approval", "localization_source_revision", "scheduled_for", "is_uploaded", "source_job_id", "upload_verified_at"]);
+const context = { targetJobColumns, userIds: new Set([user.id]), channelIds: channels, presetIds: new Set<string>(), sourceJobIds: new Set([source.id]), pathMappings: [{ from: "/old/media", to: "/new/media" }] };
+const planned = planTutorialImport(source, context);
+assert.equal(planned.disposition, "runtime_candidate"); assert.equal(planned.row.language, "en"); assert.equal(planned.row.final_path, "/new/media/tutorial.mp4"); assert.equal(planned.row.publication_approval, null); assert.equal(planned.row.is_uploaded, false); assert.equal(planned.approvedForDispatch, false); assert.deepEqual(planned.archive.sourceRow, source); assert(!("intro_config" in planned.row));
+assert.equal(planTutorialImport({ ...source, final_path: "/old/media-other/file.mp4" }, context).row.final_path, "/old/media-other/file.mp4", "Path remaps must respect directory boundaries");
+assert(planTutorialImport({ ...source, channel_id: null }, context).archiveOnlyReasons.includes("historical_unmapped_channel"));
+assert(planTutorialImport({ ...source, channel_id: null, status: "READY_TO_RECORD" }, context).archiveOnlyReasons.includes("active_job_requires_admin_routing"));
+assert.equal(planTutorialImport({ ...source, status: "GENERATING_SCRIPT" }, context).disposition, "requires_explicit_resume");
+assert.equal(planTutorialImport({ ...source, status: "UNKNOWN" }, context).row.status, "UNKNOWN"); assert.equal(planTutorialImport({ ...source, status: "UNKNOWN" }, context).disposition, "archive_only");
+assert.equal(planTutorialImport({ ...source, parent_job_id: "missing" }, context).disposition, "blocked_dependency");
+const derivative = { id: "dummy-derivative", source_job_id: source.id, language: "ja", status: "RENDERING", originalOnly: true };
+assert.deepEqual(planDerivativeArchive(derivative, context.sourceJobIds).archive.sourceRow, derivative);
+assert.equal(planDerivativeArchive(derivative, context.sourceJobIds).disposition, "archive_only");
+console.log(JSON.stringify({ syntheticOnly: true, exactHashAndRolePreserved: true, cookieCiphertextExcluded: true, rawArchiveLossless: true, missingRoutingNotGuessed: true, activeRoutingWorklist: true, noFabricatedApprovalOrPublication: true, dependencyChecks: true, unsupportedStatusPreserved: true, derivativeSourcePreserved: true, writes: 0 }));

@@ -3,9 +3,7 @@ import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
 import { getTutorialJobById } from "@repo/db";
-import { stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
+import { openTutorialAssetStream } from "@/lib/tutorial/media-access";
 
 export const dynamic = "force-dynamic";
 
@@ -51,82 +49,21 @@ export async function GET(
   const filename = `${safeTitle}-long-audio.mp3`;
 
   try {
-    // Verify the file exists on disk before attempting to stream it.
-    let fileStats: Awaited<ReturnType<typeof stat>>;
-    try {
-      fileStats = await stat(job.long_audio_path);
-    } catch {
-      return NextResponse.json(
-        { error: "Long audio file not found on disk" },
-        { status: 404 },
-      );
-    }
-    const fileSize = fileStats.size;
-    const rangeHeader = _req.headers.get("range");
-
-    // Without a validator a browser cannot use If-Range, so an interrupted
-    // download of a large multi-part voiceover has to restart from byte 0
-    // instead of resuming. That is most of "downloading is quite slow" on a
-    // long-haul link that drops connections at peak hours.
-    const validators = {
-      ETag: `"${fileSize}-${Math.floor(fileStats.mtimeMs)}"`,
-      "Last-Modified": fileStats.mtime.toUTCString(),
-      "Cache-Control": "private, no-cache",
-    };
-
-    if (rangeHeader) {
-      // Stream the requested byte range straight off disk (full requested range,
-      // not an artificial cap) so the first byte is instant (no "stuck at 0")
-      // and playback streams continuously (no per-chunk round-trips = no pauses).
-      const [startStr, endStr] = rangeHeader.replace("bytes=", "").split("-");
-      const start = parseInt(startStr ?? "0", 10);
-      const end = endStr
-        ? Math.min(parseInt(endStr, 10), fileSize - 1)
-        : fileSize - 1;
-
-      if (Number.isNaN(start) || start >= fileSize || start > end) {
-        return new NextResponse(null, {
-          status: 416,
-          headers: { "Content-Range": `bytes */${fileSize}` },
-        });
-      }
-
-      const nodeStream = createReadStream(job.long_audio_path, { start, end });
-      return new NextResponse(
-        Readable.toWeb(nodeStream) as unknown as ReadableStream,
-        {
-          status: 206,
-          headers: {
-            "Content-Type": "audio/mpeg",
-            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-            "Accept-Ranges": "bytes",
-            "Content-Length": (end - start + 1).toString(),
-            "Content-Disposition": `attachment; filename="${filename}"`,
-            ...validators,
-          },
-        },
-      );
-    }
-
-    // No Range header — stream the whole file.
-    const nodeStream = createReadStream(job.long_audio_path);
-    return new NextResponse(
-      Readable.toWeb(nodeStream) as unknown as ReadableStream,
-      {
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "Content-Length": fileSize.toString(),
-          "Accept-Ranges": "bytes",
-          "Content-Disposition": `attachment; filename="${filename}"`,
-          ...validators,
-        },
+    const media = await openTutorialAssetStream({ jobId: id, kind: null, path: job.long_audio_path }, { range: _req.headers.get("range"), ifNoneMatch: _req.headers.get("if-none-match") });
+    return new NextResponse(media.status === 304 ? null : media.stream, {
+      status: media.status,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        ...(media.status !== 304 ? { "Content-Length": String(media.contentLength) } : {}),
+        "Accept-Ranges": "bytes",
+        ...(media.contentRange ? { "Content-Range": media.contentRange } : {}),
+        ETag: media.etag,
+        "Last-Modified": media.lastModified,
+        "Cache-Control": "private, no-cache",
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
-    );
-  } catch (err) {
-    console.error("Failed to serve tutorial long audio", err);
-    return NextResponse.json(
-      { error: "Failed to read long audio file" },
-      { status: 500 },
-    );
+    });
+  } catch {
+    return NextResponse.json({ error: "Long audio is no longer available for this job. Restore the original narration; no archived audio revision exists." }, { status: 404 });
   }
 }

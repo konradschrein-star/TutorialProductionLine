@@ -209,6 +209,7 @@ export {
   getChannelPersona,
   upsertChannelPersona,
   getChannelThumbnailProfile,
+  getTutorialChannelProfile,
   upsertChannelThumbnailProfile,
   createThumbnailRecord,
   updateThumbnailRecord,

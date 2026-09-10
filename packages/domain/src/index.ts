@@ -262,3 +262,5 @@ export type {
 export { deriveLogoSubject } from "./tutorial-product-subject.js";
 
 export const DOMAIN_PACKAGE_VERSION = "0.1.0";
+export { TUTORIAL_TITLE_SUFFIXES_2026, buildGeneratedTutorialTitle, recommendTutorialTitleSuffix } from './tutorial-title-policy.js';
+export type { TutorialTitleSuffix } from './tutorial-title-policy.js';

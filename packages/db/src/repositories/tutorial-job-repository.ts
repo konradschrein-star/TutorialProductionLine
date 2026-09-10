@@ -1,11 +1,24 @@
-import { eq, and, desc, asc, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, isNull, sql } from "drizzle-orm";
 import { tutorialJobs } from "../schema/tutorial-jobs.js";
 import type { DrizzleClient } from "../client.js";
-import { fireTutorialStatusWebhook } from "../utils/tutorial-status-webhook.js";
 
 export type NewTutorialJob = typeof tutorialJobs.$inferInsert;
 export type TutorialJob = typeof tutorialJobs.$inferSelect;
 export type TutorialJobUpdate = Partial<Omit<TutorialJob, "id" | "created_at">>;
+
+/** Stable intake identity across HTTP timeouts and concurrent browser/KT requests. */
+export async function createOrReuseTutorialJob(db: DrizzleClient, data: NewTutorialJob): Promise<{ job: TutorialJob | null; created: boolean }> {
+  return db.transaction(async (tx) => {
+    if (data.keyword_ref) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-keyword-intake'),hashtext(${data.keyword_ref}))`);
+      const [existing] = await tx.select().from(tutorialJobs).where(and(eq(tutorialJobs.keyword_ref, data.keyword_ref), isNull(tutorialJobs.source_job_id))).orderBy(asc(tutorialJobs.created_at)).limit(1);
+      if (existing) return { job: existing.created_by === data.created_by && existing.channel_id === data.channel_id ? existing : null, created: false };
+    }
+    const [job] = await tx.insert(tutorialJobs).values(data).returning();
+    if (!job) throw new Error("Failed to create tutorial job");
+    return { job, created: true };
+  });
+}
 
 export async function createTutorialJob(
   db: DrizzleClient,
@@ -56,18 +69,8 @@ export async function updateTutorialJob(
     .where(eq(tutorialJobs.id, id))
     .returning();
   if (!row) throw new Error(`Tutorial job ${id} not found`);
-  // Video ERP: when this job is bound to a Keyword Tool keyword and its status
-  // just changed, mirror the transition back to KT. Single choke-point — every
-  // tutorial status transition routes through here (see splice-reconciler).
-  if (data.status !== undefined && row.keyword_ref) {
-    fireTutorialStatusWebhook({
-      keyword_ref: row.keyword_ref,
-      forge_job_id: row.id,
-      status: row.status,
-      title: row.title,
-      updated_at: row.updated_at,
-    });
-  }
+  // Migration 0096 transactionally records every writer's status transition.
+  // Delivery/retries happen outside this transaction; no fire-and-forget loss.
   return row;
 }
 

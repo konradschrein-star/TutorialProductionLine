@@ -1,28 +1,16 @@
 "use client";
-
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { LanguageFlag } from "@/components/language-flag";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_TARGET_LANGUAGES,
-  DEFAULT_STANDARD_LANGUAGES,
-  STANDARD_LANGUAGES,
-  type TargetLanguage,
 } from "@/lib/tutorial/languages";
-import { FlagIcon } from "@/lib/tutorial/flag-icon";
+import { localeProgress } from "@/lib/tutorial/review-workflow";
+import { boundedMissingLocales } from "@/lib/tutorial/localization-targets";
 import { toast } from "sonner";
-
-/**
- * Localize tab — the "another upload path" for translations. Lists completed
- * English tutorials; each shows a chip per target language (with flag + code).
- *
- * Bulk actions ("Translate everything missing" & row "Translate standard") strictly
- * fan out translations only for the 5 active Standard Languages (German, French,
- * Italian, Swedish) to prevent unintended token and compute explosion.
- *
- * Automatic fan-out is deliberately locked to those four languages. Additional
- * languages remain available as explicit, per-video actions.
- */
+import s from "./review-workspace.module.css";
 
 interface TranslationRef {
+  id?: string;
   language: string | null;
   status: string;
 }
@@ -31,489 +19,431 @@ interface SourceRow {
   title: string | null;
   language: string | null;
   createdAt: string | null;
+  mine?: boolean;
+  canAct?: boolean;
+  targetLanguages?: string[];
   translations: TranslationRef[];
 }
-
-type ChipState = "none" | "pending" | "done" | "failed";
-
-function stateFor(status: string | undefined): ChipState {
-  if (!status) return "none";
-  if (status === "COMPLETED") return "done";
-  if (status.startsWith("FAILED")) return "failed";
-  return "pending";
-}
-
-const CHIP_STYLE: Record<ChipState, React.CSSProperties> = {
-  none: {
-    background: "var(--v2-surface-3)",
-    color: "var(--v2-text-3)",
-    border: "1px dashed var(--v2-border-2)",
-  },
-  pending: {
-    background: "rgba(240,166,66,0.14)",
-    color: "#f0a642",
-    border: "1px solid rgba(240,166,66,0.4)",
-  },
-  done: {
-    background: "rgba(var(--v2-accent-rgb),0.16)",
-    color: "var(--v2-accent)",
-    border: "1px solid rgba(var(--v2-accent-rgb),0.5)",
-  },
-  failed: {
-    background: "rgba(239,68,68,0.14)",
-    color: "#ff8080",
-    border: "1px solid rgba(239,68,68,0.4)",
-  },
-};
-
-const card: React.CSSProperties = {
-  background: "var(--v2-surface-2)",
-  border: "1px solid var(--v2-border-1)",
-  borderRadius: 14,
-  padding: 18,
-};
+type Overview = { sources: SourceRow[]; canSeeEveryone?: boolean };
+const languageInfo = (code: string) =>
+  ALL_TARGET_LANGUAGES.find((language) => language.code === code) ?? {
+    code,
+    name: code.toUpperCase(),
+    native: code.toUpperCase(),
+    flag: "",
+  };
 
 export function LocalizePanel() {
   const [sources, setSources] = useState<SourceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [showAllLanguages, setShowAllLanguages] = useState(false);
-
-  const load = useCallback(() => {
-    fetch("/api/production/tutorial-translate")
-      .then((r) =>
-        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
-      )
-      .then((d: { sources: SourceRow[] }) => {
-        setSources(d.sources);
+  const [cutoff, setCutoff] = useState("");
+  const [batchLimit, setBatchLimit] = useState(5);
+  const [showExtra, setShowExtra] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [attentionOnly, setAttentionOnly] = useState(false);
+  const [scopeAll, setScopeAll] = useState(false);
+  const [canSeeEveryone, setCanSeeEveryone] = useState(false);
+  const inFlight = useRef(new Set<string>());
+  const requestVersion = useRef(0);
+  const load = useCallback(async () => {
+    const version = ++requestVersion.current;
+    try {
+      const response = await fetch(
+        `/api/production/tutorial-translate${scopeAll ? "?scope=all" : ""}`,
+      );
+      if (!response.ok)
+        throw new Error(
+          `Language overview could not load (HTTP ${response.status}).`,
+        );
+      const result = (await response.json()) as Overview;
+      if (version === requestVersion.current) {
+        setSources(result.sources);
+        setCanSeeEveryone(result.canSeeEveryone === true);
         setError(null);
-      })
-      .catch((e) => setError(String(e.message || e)));
-  }, []);
-
+      }
+    } catch (err) {
+      if (version === requestVersion.current)
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Language overview could not load.",
+        );
+    }
+  }, [scopeAll]);
   useEffect(() => {
-    load();
+    void load();
+    const timer = window.setInterval(() => void load(), 15000);
+    return () => {
+      clearInterval(timer);
+      requestVersion.current++;
+    };
   }, [load]);
-
-  const activeStandardLanguages: TargetLanguage[] = STANDARD_LANGUAGES;
-
-  // Aggregate progress strictly across every source × standard target language.
   const stats = useMemo(() => {
-    const total = (sources?.length ?? 0) * activeStandardLanguages.length;
-    let done = 0;
-    let pending = 0;
-    let failed = 0;
-    let missing = 0;
-    for (const s of sources ?? []) {
-      const byLang = new Map(s.translations.map((t) => [t.language, t.status]));
-      for (const l of activeStandardLanguages) {
-        const st = stateFor(byLang.get(l.code));
-        if (st === "done") done++;
-        else if (st === "pending") pending++;
-        else if (st === "failed") failed++;
+    let done = 0,
+      pending = 0,
+      attention = 0,
+      missing = 0;
+    for (const source of sources ?? [])
+      for (const language of (source.targetLanguages ?? []).map(languageInfo)) {
+        const matches = source.translations.filter(
+          (item) => item.language === language.code,
+        );
+        const state = localeProgress(matches[0]?.status);
+        if (
+          matches.length > 1 ||
+          state.kind === "attention" ||
+          state.kind === "waiting"
+        )
+          attention++;
+        else if (state.kind === "done") done++;
+        else if (state.kind === "pending") pending++;
         else missing++;
       }
-    }
-    return { total, done, pending, failed, missing };
-  }, [sources, activeStandardLanguages]);
-
-  // Auto-refresh while anything is still in flight.
-  useEffect(() => {
-    if (stats.pending === 0) return;
-    const id = setTimeout(load, 5000);
-    return () => clearTimeout(id);
-  }, [stats.pending, load]);
-
+    return {
+      done,
+      pending,
+      attention,
+      missing,
+      total: (sources ?? []).reduce((count, source) => count + (source.targetLanguages?.length ?? 0), 0),
+    };
+  }, [sources]);
   const enqueue = useCallback(
     async (
-      sourceJobId: string,
+      source: SourceRow,
       languages: string[],
       mode: "automatic" | "manual" = "manual",
     ) => {
-      if (languages.length === 0) return;
-      const key = sourceJobId + languages.join(",");
-      setBusy((b) => new Set(b).add(key));
+      const keys = languages.map((code) => `${source.id}:${code}`);
+      if (
+        !languages.length ||
+        source.canAct === false ||
+        keys.some((key) => inFlight.current.has(key))
+      )
+        return { queued: 0, failed: 0 };
+      keys.forEach((key) => inFlight.current.add(key));
+      setBusy(new Set(inFlight.current));
+      setErrors((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !keys.includes(key)),
+        ),
+      );
       try {
-        const res = await fetch("/api/production/tutorial-translate/enqueue", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourceJobId, languages, mode }),
-        });
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}));
-          throw new Error(j.error || `HTTP ${res.status}`);
-        }
-        load();
-      } catch (e) {
-        setError(String((e as Error).message));
+        const response = await fetch(
+          "/api/production/tutorial-translate/enqueue",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sourceJobId: source.id, languages, mode }),
+          },
+        );
+        const result = (await response.json()) as {
+          error?: string;
+          reasons?: string[];
+          enqueued?: string[];
+        };
+        if (!response.ok)
+          throw new Error(
+            [
+              result.error ?? `HTTP ${response.status}`,
+              ...(result.reasons ?? []),
+            ].join(" "),
+          );
+        const queued = result.enqueued?.length ?? 0;
+        if (mode === "manual")
+          toast.success(
+            queued
+              ? `${languages.map((code) => languageInfo(code).name).join(", ")} queued`
+              : "No new work queued. This language may already be in progress.",
+          );
+        await load();
+        return { queued, failed: 0 };
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Could not queue this language. Try again.";
+        setErrors((current) => ({
+          ...current,
+          ...Object.fromEntries(keys.map((key) => [key, message])),
+        }));
+        return { queued: 0, failed: languages.length };
       } finally {
-        setBusy((b) => {
-          const n = new Set(b);
-          n.delete(key);
-          return n;
-        });
+        keys.forEach((key) => inFlight.current.delete(key));
+        setBusy(new Set(inFlight.current));
       }
     },
     [load],
   );
-
-  // One click → strictly fan out only missing STANDARD languages (4 translated languages by default).
-  const translateAllMissingStandard = useCallback(async () => {
-    if (!sources || sources.length === 0) return;
+  const batchMissing = async () => {
+    if (!sources || bulkRunning || inFlight.current.size) return;
     setBulkRunning(true);
+    let queued = 0,
+      failed = 0;
     try {
-      for (const s of sources) {
-        const byLang = new Map(
-          s.translations.map((t) => [t.language, t.status]),
-        );
-        const missing = activeStandardLanguages
-          .filter((l) => !byLang.has(l.code))
-          .map((l) => l.code);
-        if (missing.length) await enqueue(s.id, missing, "automatic");
+      for (const { source, languages } of boundedMissingLocales(sources, cutoff, batchLimit)) {
+        for (const language of languages) {
+          const result = await enqueue(source, [language], "manual");
+          queued += result.queued;
+          failed += result.failed;
+        }
       }
-      toast.success(
-        `Enqueued standard translations (${activeStandardLanguages.map((l) => l.code.toUpperCase()).join(", ")}).`,
-      );
+      if (failed)
+        toast.warning(
+          `${queued} language versions queued; ${failed} requests need attention. See the affected tutorial below.`,
+        );
+      else toast.success(`${queued} language versions queued.`);
     } finally {
       setBulkRunning(false);
-      load();
     }
-  }, [sources, activeStandardLanguages, enqueue, load]);
-
-  const pct =
-    stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
-
+  };
+  const visible = (sources ?? []).filter(
+    (source) =>
+      (source.title ?? "")
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()) &&
+      (!attentionOnly ||
+        source.translations.some((item) =>
+          ["attention", "waiting"].includes(localeProgress(item.status).kind),
+        ) ||
+        Object.keys(errors).some((key) => key.startsWith(source.id + ":"))),
+  );
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header with the fixed four-language automatic set. */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <div
-            style={{ fontSize: 18, fontWeight: 700, color: "var(--v2-text-1)" }}
-          >
-            Localization Factory
-          </div>
-          <div
-            style={{ fontSize: 13, color: "var(--v2-text-3)", marginTop: 2 }}
-          >
-            Auto-translating into{" "}
-            <strong>
-              {activeStandardLanguages.length} standard languages:
-            </strong>{" "}
-            {activeStandardLanguages.map((l, i) => (
-              <span
-                key={l.code}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  marginRight: 4,
-                  fontWeight: 600,
-                  color: "var(--v2-text-1)",
-                }}
-              >
-                <FlagIcon code={l.code} /> {l.name}
-                {i < activeStandardLanguages.length - 1 ? "," : ""}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            onClick={() => setShowAllLanguages((v) => !v)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 600,
-              background: showAllLanguages
-                ? "rgba(var(--v2-accent-rgb),0.18)"
-                : "var(--v2-surface-3)",
-              color: showAllLanguages ? "var(--v2-accent)" : "var(--v2-text-2)",
-              border: "1px solid var(--v2-border-1)",
-              cursor: "pointer",
+    <div className={s.workspace}>
+      {canSeeEveryone && (
+        <label className={s.label}>
+          Work shown
+          <select
+            className={s.field}
+            value={scopeAll ? "all" : "mine"}
+            disabled={bulkRunning || busy.size > 0}
+            onChange={(event) => {
+              setSources(null);
+              setScopeAll(event.target.value === "all");
             }}
           >
-            {showAllLanguages
-              ? "Hide Extra Languages"
-              : "Show All 17 Languages"}
+            <option value="mine">My tutorials</option>
+            <option value="all">All VAs</option>
+          </select>
+        </label>
+      )}
+      <div className={s.actions} aria-label="Standard language progress">
+        <span className={s.badge}>{stats.done} videos produced</span>
+        <span className={s.badge}>{stats.pending} in progress</span>
+        <span className={s.badge}>{stats.attention} need attention</span>
+        <span className={s.badge}>{stats.missing} not started</span>
+      </div>
+      <div className={s.toolbar}>
+        <label className={s.label} style={{ flex: "1 1 280px" }}>
+          Find an English tutorial
+          <input
+            className={s.field}
+            type="search"
+            placeholder="Search tutorial titles"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+        <label className={s.actions}>
+          <input
+            type="checkbox"
+            checked={attentionOnly}
+            onChange={(event) => setAttentionOnly(event.target.checked)}
+          />{" "}
+          Needs attention only
+        </label>
+        <button className={s.button} onClick={() => void load()}>
+          Refresh statuses
+        </button>
+      </div>
+      <details className={s.panel}>
+        <summary>Backfill missing versions — bounded explicit run</summary>
+        <p>
+          Only destinations explicitly enabled by your Admin are eligible. This run uses the latest 60 loaded tutorials, not an unbounded historical scan.
+        </p>
+        <div className={s.actions}>
+          <label className={s.label}>Completed on or before (UTC)<input className={s.field} type="date" value={cutoff} disabled={bulkRunning} onChange={e => setCutoff(e.target.value)} /></label>
+          <label className={s.label}>Maximum new versions<input className={s.field} type="number" min={1} max={20} value={batchLimit} disabled={bulkRunning} onChange={e => setBatchLimit(Number(e.target.value))} /></label>
+        </div>
+        <p className={s.muted}>
+          Thumbnail approval and an assigned language channel are required.
+          Batch actions do not retry failed versions or change existing ones.
+        </p>
+        <button
+          className={s.button}
+          disabled={
+            bulkRunning || busy.size > 0 || !boundedMissingLocales(sources ?? [], cutoff, batchLimit).length || Boolean(error)
+          }
+          onClick={() => void batchMissing()}
+        >
+          {bulkRunning
+            ? "Submitting one language at a time…"
+            : `Queue up to ${batchLimit} missing versions`}
+        </button>
+      </details>
+      {error && (
+        <div className={`${s.notice} ${s.error}`} role="alert">
+          {error}{" "}
+          <button className={s.button} onClick={() => void load()}>
+            Try loading again
           </button>
         </div>
-      </div>
-
-      {/* Progress summary + global standard translation action */}
-      {sources && sources.length > 0 && (
-        <div
-          style={{
-            ...card,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ fontSize: 13, color: "var(--v2-text-2)" }}>
-              <strong style={{ color: "var(--v2-text-1)" }}>
-                {stats.done}/{stats.total}
-              </strong>{" "}
-              standard translations complete ({activeStandardLanguages.length}{" "}
-              target languages × {sources.length} videos)
-              {stats.pending > 0 && (
-                <span style={{ color: "#f0a642" }}>
-                  {" "}
-                  · {stats.pending} in progress
-                </span>
-              )}
-              {stats.failed > 0 && (
-                <span style={{ color: "#ff8080" }}>
-                  {" "}
-                  · {stats.failed} failed
-                </span>
-              )}
-            </div>
-            <button
-              onClick={translateAllMissingStandard}
-              disabled={bulkRunning || stats.missing === 0}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 8,
-                fontSize: 12.5,
-                fontWeight: 700,
-                background:
-                  stats.missing === 0
-                    ? "var(--v2-surface-3)"
-                    : "var(--v2-accent)",
-                color: stats.missing === 0 ? "var(--v2-text-3)" : "#000",
-                border: "none",
-                cursor:
-                  bulkRunning || stats.missing === 0 ? "default" : "pointer",
-                opacity: bulkRunning ? 0.6 : 1,
-              }}
-            >
-              {bulkRunning
-                ? "Enqueuing standard languages…"
-                : stats.missing === 0
-                  ? "All standard languages queued ✓"
-                  : `Translate standard missing (${stats.missing})`}
-            </button>
-          </div>
-          <div
-            style={{
-              height: 6,
-              borderRadius: 3,
-              background: "var(--v2-surface-3)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${pct}%`,
-                height: "100%",
-                background: "var(--v2-accent)",
-                transition: "width 0.4s",
-              }}
-            />
-          </div>
-        </div>
       )}
-
-      {/* Legend */}
-      <div
-        style={{
-          display: "flex",
-          gap: 16,
-          flexWrap: "wrap",
-          fontSize: 11,
-          color: "var(--v2-text-3)",
-        }}
-      >
-        {(["done", "pending", "failed", "none"] as ChipState[]).map((s) => (
-          <span
-            key={s}
-            style={{ display: "flex", alignItems: "center", gap: 6 }}
-          >
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 3,
-                ...CHIP_STYLE[s],
-              }}
-            />
-            {s === "none" ? "not started" : s === "pending" ? "in progress" : s}
-          </span>
-        ))}
-      </div>
-
-      {error && (
-        <div style={{ ...card, color: "#ff8080", fontSize: 13 }}>{error}</div>
-      )}
-
       {!sources && !error && (
-        <div style={{ ...card, color: "var(--v2-text-3)" }}>Loading…</div>
-      )}
-
-      {sources && sources.length === 0 && (
-        <div style={{ ...card, color: "var(--v2-text-3)", fontSize: 13 }}>
-          No completed English tutorials yet. Produce one in the Create → Studio
-          flow, then localize it here.
+        <div role="status" className={s.panel}>
+          Loading language versions…
         </div>
       )}
-
-      {/* Sources List */}
-      {sources && sources.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {sources.map((s) => {
-            const byLang = new Map(
-              s.translations.map((t) => [t.language, t.status]),
-            );
-            const missingStandard = activeStandardLanguages
-              .filter((l) => !byLang.has(l.code))
-              .map((l) => l.code);
-
-            const displayedLanguages = showAllLanguages
-              ? ALL_TARGET_LANGUAGES
-              : activeStandardLanguages;
-
-            return (
-              <div
-                key={s.id}
-                style={{
-                  ...card,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 220 }}>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: "var(--v2-text-1)",
-                    }}
-                  >
-                    {s.title ?? "Untitled"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--v2-text-3)" }}>
-                    source: {(s.language ?? "en").toUpperCase()} ·{" "}
-                    {s.createdAt
-                      ? new Date(s.createdAt).toLocaleDateString()
-                      : ""}
-                  </div>
-                </div>
-
-                {/* Language Chips */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {displayedLanguages.map((l) => {
-                    const st = stateFor(byLang.get(l.code));
-                    const clickable = st === "none" || st === "failed";
-                    const key = s.id + [l.code].join(",");
-                    const isStandard = DEFAULT_STANDARD_LANGUAGES.includes(
-                      l.code,
-                    );
-
-                    return (
-                      <button
-                        key={l.code}
-                        disabled={!clickable || busy.has(key)}
-                        onClick={() => enqueue(s.id, [l.code])}
-                        title={
-                          st === "none"
-                            ? `Translate to ${l.name} (${l.native})${isStandard ? " [Standard]" : ""}`
-                            : st === "failed"
-                              ? `Retry ${l.name}`
-                              : `${l.name}: ${st}`
-                        }
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 5,
-                          padding: "6px 11px",
-                          borderRadius: 8,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor:
-                            clickable && !busy.has(key) ? "pointer" : "default",
-                          opacity: busy.has(key) ? 0.5 : 1,
-                          ...CHIP_STYLE[st],
-                          ...(isStandard
-                            ? {}
-                            : { opacity: st === "none" ? 0.65 : 1 }),
-                        }}
-                      >
-                        <FlagIcon code={l.code} />
-                        {l.code.toUpperCase()}
-                        {st === "done"
-                          ? " ✓"
-                          : st === "pending"
-                            ? " …"
-                            : st === "failed"
-                              ? " ↻"
-                              : " +"}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Row Standard Translate Button */}
-                {missingStandard.length > 0 && (
-                  <button
-                    onClick={() => enqueue(s.id, missingStandard, "automatic")}
-                    disabled={busy.has(s.id + missingStandard.join(","))}
-                    style={{
-                      padding: "7px 14px",
-                      borderRadius: 8,
-                      fontSize: 12,
-                      fontWeight: 700,
-                      background: "var(--v2-accent)",
-                      color: "#000",
-                      border: "none",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Translate standard ({missingStandard.length})
-                  </button>
-                )}
-                <a
-                  href={`/thumbnails?tutorialJobId=${encodeURIComponent(s.id)}`}
-                  style={{
-                    padding: "7px 14px",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: "var(--v2-accent)",
-                    border: "1px solid rgba(var(--v2-accent-rgb),0.4)",
-                    textDecoration: "none",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Thumbnail pack
-                </a>
+      {sources && !visible.length && (
+        <div className={s.panel}>
+          <h3 className={s.sectionTitle}>
+            {sources.length
+              ? "No tutorials match these filters"
+              : "No completed English tutorials yet"}
+          </h3>
+          <p className={s.muted}>
+            {sources.length
+              ? "Clear your search or show all statuses."
+              : "Complete an English original, then approve its language thumbnails to begin localization."}
+          </p>
+        </div>
+      )}
+      {visible.map((source) => {
+        const extra = showExtra.has(source.id);
+        // Existing nonstandard work is never hidden just because extras are collapsed.
+        const languages = [...new Set([
+          ...(source.targetLanguages ?? []),
+          ...source.translations.map((item) => item.language).filter((language): language is string => Boolean(language && language !== "en")),
+        ])].map(languageInfo);
+        return (
+          <section
+            className={s.panel}
+            key={source.id}
+            aria-label={`Languages for ${source.title ?? "Untitled tutorial"}`}
+          >
+            <div className={s.toolbar}>
+              <div>
+                <h3 className={s.sectionTitle}>
+                  {source.title ?? "Untitled tutorial"}
+                </h3>
+                <p className={s.muted}>
+                  English original
+                  {source.createdAt
+                    ? ` · completed ${new Date(source.createdAt).toLocaleDateString()}`
+                    : ""}
+                  {source.mine === false ? " · another VA" : ""}
+                </p>
               </div>
-            );
-          })}
-        </div>
-      )}
+              <a className={s.link} href={`/thumbnails?jobId=${source.id}`}>
+                Open thumbnail pack
+              </a>
+            </div>
+            {source.canAct === false && (
+              <p className={s.muted}>
+                Read-only overview. The assigned producer or an Admin manages
+                these versions.
+              </p>
+            )}
+            <div className={s.actions} style={{ marginTop: 8, flexWrap: "wrap" }}>
+              {languages.map(language => { const matches = source.translations.filter(item => item.language === language.code); const state = localeProgress(matches[0]?.status); return <a key={language.code} className={s.localeFlag} data-state={matches.length > 1 ? "attention" : state.kind} href={`/thumbnails?jobId=${source.id}&language=${encodeURIComponent(language.code)}`} aria-label={`${language.name}: ${state.label}. Edit only this thumbnail.`} title={`${language.name}: ${state.label}`}><LanguageFlag language={language.code} /> {language.code.toUpperCase()}<span aria-hidden="true" className={s.localeDot} /></a>; })}
+              {!languages.length && <span className={s.muted}>No translation destinations configured for this channel.</span>}
+            </div>
+            {extra && <div className={s.localeRows}>
+              {languages.map((language) => {
+                const matches = source.translations.filter(
+                  (item) => item.language === language.code,
+                );
+                const translation = matches[0],
+                  state = localeProgress(translation?.status);
+                const key = `${source.id}:${language.code}`,
+                  working = busy.has(key),
+                  problem = errors[key];
+                const canQueue =
+                  Boolean(state.action) &&
+                  matches.length <= 1 &&
+                  source.canAct !== false &&
+                  Boolean(source.targetLanguages?.includes(language.code)) &&
+                  !bulkRunning &&
+                  !working &&
+                  !error;
+                return (
+                  <article className={s.localeRow} key={language.code} data-state={state.kind}>
+                    <div>
+                      <strong><LanguageFlag language={language.code} fallback={language.flag} /> {language.name}</strong>
+                      <div className={s.muted}>
+                        {language.native}
+                        {source.targetLanguages?.includes(language.code) ? " · enabled destination" : " · destination disabled"}
+                      </div>
+                    </div>
+                    <span className={s.badge} data-state={state.kind} title={state.kind === "done" ? "Production finished; review and delivery are tracked separately." : undefined}>
+                      {working
+                        ? "Submitting…"
+                        : matches.length > 1
+                          ? "Duplicate versions · Admin reconciliation needed"
+                          : state.label}
+                    </span>
+                    {problem && (
+                      <p
+                        id={`locale-error-${key}`}
+                        className={`${s.notice} ${s.error}`}
+                        role="alert"
+                      >
+                        {problem}
+                      </p>
+                    )}
+                    <div className={s.actions}>
+                      {state.action && (
+                        <button
+                          className={s.button}
+                          aria-describedby={
+                            problem ? `locale-error-${key}` : undefined
+                          }
+                          disabled={!canQueue}
+                          onClick={() => void enqueue(source, [language.code])}
+                        >
+                          {working
+                            ? "Submitting…"
+                            : state.action === "retry"
+                              ? `Generate missing ${language.name}`
+                              : `Generate missing ${language.name}`}
+                        </button>
+                      )}
+                      <a
+                        className={s.link}
+                        href={`/thumbnails?jobId=${source.id}&language=${encodeURIComponent(language.code)}`}
+                      >
+                        {state.kind === "waiting" || state.kind === "missing"
+                          ? "Prepare thumbnail"
+                          : "Edit thumbnail"}
+                      </a>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>}
+            {!extra && Object.entries(errors).filter(([key]) => key.startsWith(`${source.id}:`)).map(([key, message]) => <p key={key} role="alert" className={s.error}>{key.split(":").at(-1)?.toUpperCase()}: {message}</p>)}
+            <button
+              className={s.button}
+              style={{ marginTop: 16 }}
+              aria-expanded={extra}
+              onClick={() =>
+                setShowExtra((current) => {
+                  const next = new Set(current);
+                  if (next.has(source.id)) next.delete(source.id);
+                  else next.add(source.id);
+                  return next;
+                })
+              }
+            >
+              {extra
+                ? "Hide language actions"
+                : "Language actions & details"}
+            </button>
+          </section>
+        );
+      })}
     </div>
   );
 }

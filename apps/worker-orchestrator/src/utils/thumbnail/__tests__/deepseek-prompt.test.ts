@@ -24,5 +24,7 @@ describe("authorThumbnailPrompt", () => {
       .mock.calls[0];
     expect(prompt).toContain("Docker in 5 minutes");
     expect(prompt).toContain("Docker packages your app");
+    expect(prompt).toContain("readable at 320x180");
+    expect(prompt).not.toContain("Text must be black");
   });
 });

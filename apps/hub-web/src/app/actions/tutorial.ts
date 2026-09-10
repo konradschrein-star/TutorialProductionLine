@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { db } from "@/lib/db";
+import { db, tutorialPromptPresets } from "@/lib/db";
+import { and, eq } from "drizzle-orm";
 import {
   createPromptPreset,
   updatePromptPreset,
@@ -104,7 +105,17 @@ export async function updateTutorialPrompt(
   }
   try {
     const { id, ...data } = parsed.data;
-    await updatePromptPreset(db, id, data);
+    if (hasPermission(session, "manage:tutorial-settings")) {
+      await updatePromptPreset(db, id, data);
+    } else {
+      const updated = await db.update(tutorialPromptPresets).set(data).where(and(
+        eq(tutorialPromptPresets.id, id),
+        eq(tutorialPromptPresets.created_by, session.userId),
+        eq(tutorialPromptPresets.is_seeded, false),
+        eq(tutorialPromptPresets.is_default, false),
+      )).returning({ id: tutorialPromptPresets.id });
+      if (!updated.length) return { success: false, error: "Only an Admin can edit shared prompts. Create your own prompt instead." };
+    }
     revalidatePath("/tutorial-studio");
     return { success: true };
   } catch (e) {
@@ -134,16 +145,8 @@ export async function updateTutorialSettingsAction(
   input: unknown,
 ): Promise<ActionResult> {
   const session = await getSession();
-  // A producer VA may tune these workflow settings (edit:tutorial-workflow);
-  // manage:tutorial-settings (admin) also qualifies. Credentials/storage/alerts
-  // are elsewhere and stay admin-only.
-  if (
-    !session ||
-    !(
-      hasPermission(session, "manage:tutorial-settings") ||
-      hasPermission(session, "edit:tutorial-workflow")
-    )
-  ) {
+  // This row is shared across the entire installation, not a VA preference.
+  if (!session || !hasPermission(session, "manage:tutorial-settings")) {
     return { success: false, error: "Unauthorized" };
   }
   const parsed = UpdateSettingsSchema.safeParse(input);

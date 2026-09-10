@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { channels, db, tutorialJobs } from "@/lib/db";
+import { channels, db, tutorialJobs, tutorialJobEvents } from "@/lib/db";
 import { getSecret } from "@repo/db";
 import { getUploaderSettings } from "@/lib/uploader/settings";
 
@@ -45,12 +46,6 @@ const UPLOADER_STATES = new Set([
 ]);
 const VISIBILITIES = new Set(["scheduled", "public", "private", "unlisted"]);
 
-function safeDate(value: unknown): Date | null {
-  if (typeof value !== "string") return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 async function authorizedCallback(request: NextRequest): Promise<boolean> {
   const expected = await getSecret(db, "UPLOADER_CALLBACK_SECRET").catch(
     () => "",
@@ -66,14 +61,16 @@ async function authorizedCallback(request: NextRequest): Promise<boolean> {
 
 /**
  * Read the uploader's loopback-only, allow-listed operations dashboard. A
- * succeeded proof is also reconciled into tutorial_jobs, making this endpoint
- * the receipt seam the Studio UI was missing. Failure/uncertain states never
- * claim an upload and are left for a human to inspect.
+ * Dashboard observations are not revision-bound receipts. Never project them
+ * into verified publication state or mutate Studio's reserved publication time.
  */
 export async function GET() {
   const session = await getSession();
   if (!session || !hasPermission(session, "view:production")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (session.role !== "ADMIN") {
+    return NextResponse.json({ connected: false, error: "Uploader network details are Admin-only. Your Delivery rows show your own receipt state.", operationsUrl: "/uploader-ops/", channels: [], jobs: [], inspectionOnly: true });
   }
 
   const channelRows = await db
@@ -141,45 +138,10 @@ export async function GET() {
       };
     });
 
-    // Dashboard history is newest-first. Reconcile only the newest successful
-    // receipt for each source UUID, including a "-reconcile" operation.
-    const reconciled = new Set<string>();
-    for (const job of jobs) {
-      if (
-        job.state !== "succeeded" ||
-        !job.sourceJobId ||
-        !job.videoId ||
-        reconciled.has(job.sourceJobId)
-      )
-        continue;
-      reconciled.add(job.sourceJobId);
-      const scheduledAt = safeDate(job.scheduledFor);
-      const isActuallyPublic = job.visibility === "public";
-      const isScheduled =
-        job.visibility === "scheduled" || Boolean(scheduledAt);
-      const completedAt = safeDate(job.finishedAt) ?? new Date();
-      await db
-        .update(tutorialJobs)
-        .set({
-          // A proven save is an upload even when the video remains private.
-          // Reserve "scheduled" for a receipt with an actual publish time.
-          uploader_status: isScheduled ? "scheduled" : "uploaded",
-          youtube_visibility:
-            job.visibility ?? (isActuallyPublic ? "public" : "private"),
-          scheduled_for: scheduledAt,
-          is_uploaded: isActuallyPublic,
-          uploaded_at: isActuallyPublic ? completedAt : null,
-          youtube_published_at: isActuallyPublic ? completedAt : null,
-          uploader_last_callback_at: completedAt,
-          upload_verified_at: completedAt,
-          uploaded_by: "tutorial-uploader",
-          youtube_upload_url: `https://www.youtube.com/watch?v=${job.videoId}`,
-        })
-        .where(eq(tutorialJobs.id, job.sourceJobId));
-    }
-
     return NextResponse.json({
       connected: true,
+      inspectionOnly: true,
+      verification: "Unverified dashboard observations; use revision-bound receipts for delivery truth.",
       source: {
         state: text(raw.source?.state),
         message: text(raw.source?.message),
@@ -211,80 +173,29 @@ export async function GET() {
 }
 
 /**
- * Authenticated uploader callback. Events are idempotent by eventId and retain
- * scheduled/public truth separately, so a successful scheduled upload is not
- * falsely presented as already public.
+ * Preserve authenticated legacy callback evidence without claiming a verified
+ * upload. This protocol has no approved revision or manifest hash. Duplicate
+ * event IDs are durable across intervening callbacks and concurrent requests.
  */
 export async function POST(request: NextRequest) {
   if (!(await authorizedCallback(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as {
-    eventId?: unknown;
-    jobId?: unknown;
-    uploaderJobId?: unknown;
-    status?: unknown;
-    visibility?: unknown;
-    scheduledFor?: unknown;
-    youtubeVideoId?: unknown;
-    youtubeUrl?: unknown;
-    occurredAt?: unknown;
-  } | null;
-  const eventId = text(body?.eventId);
-  const jobId = text(body?.jobId);
-  const status = text(body?.status);
-  const visibility = text(body?.visibility);
-  if (!eventId || !jobId || !status || !UPLOADER_STATES.has(status)) {
-    return NextResponse.json(
-      { error: "eventId, jobId and a valid status are required" },
-      { status: 400 },
-    );
-  }
-  if (visibility && !VISIBILITIES.has(visibility)) {
-    return NextResponse.json({ error: "Invalid visibility" }, { status: 400 });
-  }
-
-  const [current] = await db
-    .select({ id: tutorialJobs.id, eventId: tutorialJobs.uploader_event_id })
-    .from(tutorialJobs)
-    .where(eq(tutorialJobs.id, jobId))
-    .limit(1);
-  if (!current)
-    return NextResponse.json({ error: "Tutorial not found" }, { status: 404 });
-  if (current.eventId === eventId) {
-    return NextResponse.json({ ok: true, duplicate: true, jobId, status });
-  }
-
-  const happenedAt = safeDate(body?.occurredAt) ?? new Date();
-  const scheduledFor = safeDate(body?.scheduledFor);
-  const videoId = text(body?.youtubeVideoId);
-  const suppliedUrl = text(body?.youtubeUrl);
-  const youtubeUrl =
-    suppliedUrl ??
-    (videoId && VIDEO_ID.test(videoId)
-      ? `https://www.youtube.com/watch?v=${videoId}`
-      : undefined);
-  const publicNow = status === "uploaded" && visibility === "public";
-
-  await db
-    .update(tutorialJobs)
-    .set({
-      uploader_status: status,
-      youtube_visibility:
-        visibility ?? (status === "scheduled" ? "scheduled" : undefined),
-      scheduled_for: scheduledFor ?? undefined,
-      uploader_job_id: text(body?.uploaderJobId) ?? undefined,
-      uploader_event_id: eventId,
-      uploader_last_callback_at: happenedAt,
-      youtube_upload_url: youtubeUrl,
-      is_uploaded: publicNow,
-      uploaded_at: publicNow ? happenedAt : undefined,
-      youtube_published_at: publicNow ? happenedAt : undefined,
-      upload_verified_at: publicNow ? happenedAt : undefined,
-      uploaded_by: "tutorial-uploader",
-    })
-    .where(eq(tutorialJobs.id, jobId));
-
-  return NextResponse.json({ ok: true, duplicate: false, jobId, status });
+  const parsed = z.object({ eventId: z.string().min(1).max(128), jobId: z.string().uuid(), uploaderJobId: z.string().max(128).optional(), status: z.string().refine((value) => UPLOADER_STATES.has(value)), visibility: z.string().refine((value) => VISIBILITIES.has(value)).optional(), scheduledFor: z.string().datetime().optional(), occurredAt: z.string().datetime().optional(), youtubeVideoId: z.string().regex(VIDEO_ID).optional(), youtubeUrl: z.string().url().max(1000).optional() }).safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Invalid callback identity, status or timestamp." }, { status: 400 });
+  const { eventId, jobId, ...observation } = parsed.data;
+  const payload = { ...observation, verified: false, reason: "Legacy callback has no approved asset revision or manifest hash." };
+  return db.transaction(async (tx) => {
+    const [current] = await tx.select({ id: tutorialJobs.id }).from(tutorialJobs).where(eq(tutorialJobs.id, jobId)).for("update");
+    if (!current) return NextResponse.json({ error: "Tutorial not found" }, { status: 404 });
+    const [existing] = await tx.select({ payload: tutorialJobEvents.payload }).from(tutorialJobEvents).where(and(eq(tutorialJobEvents.tutorial_job_id, jobId), eq(tutorialJobEvents.event_type, "external_observation"), eq(tutorialJobEvents.event_key, eventId)));
+    if (existing) {
+      const same = Object.keys(payload).length === Object.keys(existing.payload).length && Object.entries(payload).every(([key, value]) => existing.payload[key] === value);
+      if (!same) return NextResponse.json({ error: "This event ID already contains different evidence. Original observation retained." }, { status: 409 });
+      return NextResponse.json({ ok: true, duplicate: true, verified: false, jobId, status: observation.status });
+    }
+    await tx.insert(tutorialJobEvents).values({ tutorial_job_id: jobId, event_type: "external_observation", event_key: eventId, payload });
+    return NextResponse.json({ ok: true, duplicate: false, verified: false, jobId, status: observation.status, reconciliationRequired: true }, { status: 202 });
+  });
 }

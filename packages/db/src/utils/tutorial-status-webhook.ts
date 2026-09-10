@@ -26,7 +26,7 @@ export function fireTutorialStatusWebhook(
   // "seed:<id>" ref that has no counterpart on the Keyword Tool board. There is
   // nothing to advance there, and calling KT for one is pure noise — especially
   // when the fallback is being used precisely because KT is down.
-  if (input.keyword_ref.startsWith("seed:")) return;
+  if (!/^[1-9]\d*$/.test(input.keyword_ref)) return;
 
   const updatedIso =
     input.updated_at instanceof Date

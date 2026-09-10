@@ -1,4 +1,4 @@
-/* V2 Pulse Console — global styles */
+/* Tutorial Studio: restrained, media-first production workspace. */
 
 /* ══════════════════════════════════════════════════════════════════════════
    SECTION 1: DESIGN TOKENS
@@ -12,13 +12,13 @@
   --v2-accent-secondary: #d0ff85;
 }
 
-/* ── Surface scale (fixed — not theme-dependent) ──────────────────────── */
+/* ── Default dark surface scale; light mode overrides below ───────────── */
 :root {
-  --v2-bg:        #000000;   /* page background — pitch black */
-  --v2-surface-1: #0d0d0d;   /* card / panel */
-  --v2-surface-2: #151515;   /* button base, input, code */
-  --v2-surface-3: #1e1e1e;   /* button hover */
-  --v2-surface-4: #272727;   /* button pressed, thick divider */
+  --v2-bg:        #111318;
+  --v2-surface-1: #191c22;
+  --v2-surface-2: #22262e;
+  --v2-surface-3: #2d323b;
+  --v2-surface-4: #383e48;
 
   /* Borders */
   --v2-border-0: rgba(255,255,255,0.05);   /* hairline */
@@ -28,8 +28,8 @@
 
   /* Text */
   --v2-text-1: #eceae6;   /* primary */
-  --v2-text-2: #7e7690;   /* secondary — cool-purple tint */
-  --v2-text-3: #45404f;   /* muted / disabled */
+  --v2-text-2: #b3bac7;
+  --v2-text-3: #929baa;
 
   /* Semantic colors (independent of accent theme) */
   --v2-success:     #23decb;
@@ -53,7 +53,17 @@
 /* ── Light mode: redefine surface/text/border tokens (accent unchanged).
    Applied on the authenticated shell wrapper via data-theme="light"; CSS custom
    properties cascade to the whole subtree. ─────────────────────────────────── */
+.theme-blue[data-theme="light"] {
+  --v2-accent-rgb: 37, 99, 235;
+  --v2-accent: #2563eb;
+  --v2-accent-dim: #1d4ed8;
+  --v2-accent-secondary: #dbeafe;
+  --v2-on-accent: #ffffff;
+}
 [data-theme="light"] {
+  --v2-success: #087f6a;
+  --v2-warning: #a84b08;
+  --v2-error-soft: #b42318;
   --v2-bg:        #f7f7f8;
   --v2-surface-1: #ffffff;
   --v2-surface-2: #f2f2f4;
@@ -65,7 +75,7 @@
   --v2-border-3: rgba(20,20,30,0.26);
   --v2-text-1: #1b1b20;
   --v2-text-2: #55515f;
-  --v2-text-3: #8b8794;
+  --v2-text-3: #626978;
   --v2-muted:  #9a95a4;
 }
 
@@ -86,10 +96,10 @@
   border-radius: 7px;
   color: var(--v2-text-2);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  text-transform: none;
+  letter-spacing: normal;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -120,12 +130,12 @@
   background: var(--v2-accent);
   border: 1px solid var(--v2-accent);
   border-radius: 8px;
-  color: #000;
+  color: var(--v2-on-accent, #111318);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  text-transform: none;
+  letter-spacing: normal;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -139,7 +149,7 @@
     0 0 40px rgba(var(--v2-accent-rgb), 0.2),
     inset 0 1px 0 rgba(255,255,255,0.25);
   transform: translateY(-1px);
-  color: #000;
+  color: var(--v2-on-accent, #111318);
 }
 .v2-btn-accent:active {
   transform: translateY(0);
@@ -158,10 +168,10 @@
   border-radius: 6px;
   color: var(--v2-accent);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  text-transform: none;
+  letter-spacing: normal;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -326,14 +336,14 @@
 .v2-select {
   width: 100%;
   padding: 10px 32px 10px 12px;
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: var(--v2-surface-2);
   background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(170,255,0,0.6)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 16px;
   border: 1px solid rgba(var(--v2-accent-rgb), 0.2);
   border-radius: 6px;
-  color: #e5e2e1;
+  color: var(--v2-text-1);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -345,7 +355,7 @@
 }
 
 .v2-select:hover {
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--v2-surface-3);
   border-color: rgba(var(--v2-accent-rgb), 0.35);
 }
 
@@ -356,8 +366,8 @@
 }
 
 .v2-select option {
-  background-color: #1a1a1a;
-  color: #e5e2e1;
+  background-color: var(--v2-surface-2);
+  color: var(--v2-text-1);
   padding: 8px 12px;
 }
 
@@ -406,6 +416,70 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(var(--v2-accent-rgb), 0.35);
+}
+
+/* Workspace shell. Navigation lives in one rail, not a second row of CTAs. */
+.studio-shell { height: 100dvh; }
+.studio-sidebar { width: 224px; flex: 0 0 224px; display: flex; flex-direction: column; padding: 24px 12px 16px; background: var(--v2-surface-1); border-right: 1px solid var(--v2-border-1); }
+.studio-wordmark { display: flex; align-items: center; gap: 10px; padding: 0 8px 26px; font-size: 16px; font-weight: 700; color: var(--v2-text-1); text-decoration: none; letter-spacing: -.4px; }
+.studio-brand-icon { padding: 7px; border-radius: 8px; background: var(--v2-surface-2); color: var(--v2-accent); font-size: 22px; }
+.studio-wordmark-caption { display: block; color: var(--v2-text-3); font-size: 11px; font-weight: 400; letter-spacing: normal; margin-top: 4px; }
+.studio-desktop-nav { overflow-y: auto; flex: 1; min-height: 0; }
+.studio-nav-group { margin-bottom: 24px; }
+.studio-nav-label { padding: 0 12px; margin: 0 0 8px; font-size: 11px; font-weight: 600; color: var(--v2-text-3); }
+.studio-nav-link { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 2px 0; border-radius: 6px; text-decoration: none; color: var(--v2-text-2); font-size: 13px; font-weight: 500; transition: background 120ms, color 120ms; }
+.studio-nav-link .material-symbols-outlined { font-size: 19px; }
+.studio-nav-link:hover { background: var(--v2-surface-2); color: var(--v2-text-1); }
+.studio-nav-link[aria-current="page"] { background: rgba(var(--v2-accent-rgb), .10); color: var(--v2-accent); font-weight: 650; }
+.studio-account { display: flex; align-items: center; gap: 8px; padding: 16px 4px 0; border-top: 1px solid var(--v2-border-1); }
+.studio-account-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: var(--v2-surface-3); font-size: 12px; font-weight: 600; }
+.studio-account-name { flex: 1; min-width: 0; font-size: 11px; }
+.studio-account-name > span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.studio-account-name small { display: block; margin-top: 3px; color: var(--v2-text-3); font-size: 10px; }
+.studio-logout { display: grid; place-items: center; border-radius: 5px; width: 30px; height: 32px; color: var(--v2-text-2); cursor: pointer; }
+.studio-logout:hover { background: var(--v2-surface-2); }
+.studio-logout .material-symbols-outlined { font-size: 18px; }
+.studio-shell-content { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
+.studio-main { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; padding: 28px 32px; scroll-padding-block: 24px; }
+.studio-header { padding-inline: 32px; flex: 0 0 56px; }
+.studio-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.studio-page-heading h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -.7px; line-height: 1.25; }
+.studio-page-heading p { margin: 7px 0 0; font-size: 14px; line-height: 1.5; color: var(--v2-text-2); }
+.studio-mobile-nav { display: none; }
+.studio-queue-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border-block: 1px solid var(--v2-border-1); }
+.studio-queue-summary a { display: flex; flex-direction: column; gap: 8px; padding: 20px 16px; color: var(--v2-text-2); font-size: 13px; text-decoration: none; }
+.studio-queue-summary a:hover { background: var(--v2-surface-2); }
+.studio-queue-count { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--v2-text-1); letter-spacing: -1px; }
+.settings-channel-grid { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.studio-shell :where(a, button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 3px; }
+.studio-shell .v2-btn:hover, .studio-shell .v2-btn-outline:hover, .studio-shell .v2-glow:hover,
+.studio-shell .v2-btn-accent:hover, .studio-shell .v2-glow-primary:hover { box-shadow: none; transform: none; }
+.studio-shell .v2-btn-accent:active, .studio-shell .v2-glow-primary:active { box-shadow: none !important; }
+@media (max-width: 900px) {
+  .studio-sidebar { width: 196px; flex-basis: 196px; padding-inline: 8px; }
+  .studio-wordmark { font-size: 14px; gap: 7px; }
+  .studio-main { padding: 24px 20px; }
+  .studio-header { padding-inline: 20px; }
+  .studio-header-search { margin-inline: 16px; }
+  .settings-channel-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .studio-shell { flex-direction: column; }
+  .studio-sidebar { width: 100%; flex-basis: auto; flex-shrink: 0; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--v2-border-1); }
+  .studio-wordmark, .studio-desktop-nav, .studio-account { display: none; }
+  .studio-account { display: flex; position: absolute; right: 12px; top: 12px; padding: 0; border: 0; }
+  .studio-account-avatar, .studio-account-name { display: none; }
+  .studio-mobile-nav { display: flex; align-items: center; gap: 12px; padding-right: 40px; font-size: 12px; color: var(--v2-text-2); }
+  .studio-mobile-nav select { flex: 1; min-width: 0; min-height: 40px; }
+  .studio-header { flex-basis: 48px; padding-inline: 16px; }
+  .studio-header-search { max-width: 44px; margin-inline: 12px; }
+  .studio-header-search button { padding: 10px; justify-content: center; }
+  .studio-header-search button > span:not(:first-child) { display: none; }
+  .studio-main { padding: 20px 16px; }
+  .studio-page-heading h1 { font-size: 23px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-shell *, .studio-shell *::before, .studio-shell *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
 }
 
 /* ── Animations ───────────────────────────────────────────────────────── */

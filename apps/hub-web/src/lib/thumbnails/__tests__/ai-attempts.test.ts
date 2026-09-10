@@ -1,0 +1,4 @@
+import { expect, it } from "vitest";
+import { unresolvedAdmittedVariants } from "../ai-attempts";
+it("distinguishes an admitted result still pending from failed outcomes, without automatic retry", () => { expect(unresolvedAdmittedVariants([{ requestId: "batch", attempted: [0, 1] }], [{ requestId: "batch", index: 1, status: "failed", path: null }])).toEqual([{ requestId: "batch", variantIndex: 0, state: "awaiting_result_or_reconciliation" }, { requestId: "batch", variantIndex: 1, state: "reconciliation_required" }]); });
+it("does not mislabel active generation or saved images as lost outcomes", () => { expect(unresolvedAdmittedVariants([{ requestId: "batch", attempted: [0, 1, 2] }], [{ requestId: "batch", index: 0, status: "pending", path: null }, { requestId: "batch", index: 1, status: "generating", path: null }, { requestId: "batch", index: 2, status: "completed", path: "/saved.png" }])).toEqual([]); });

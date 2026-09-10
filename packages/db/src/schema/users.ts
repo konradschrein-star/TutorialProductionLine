@@ -44,6 +44,12 @@ export const users = pgTable("users", {
   online_seconds_total: bigint("online_seconds_total", { mode: "number" })
     .notNull()
     .default(0),
+  tutorial_record_hotkey: varchar("tutorial_record_hotkey", { length: 32 })
+    .notNull()
+    .default("F8"),
+  tutorial_playback_speed: varchar("tutorial_playback_speed", { length: 8 })
+    .notNull()
+    .default("1"),
   created_at: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -38,6 +38,7 @@ const DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files";
 /** appProperties keys — how we recognise our own files on re-runs. */
 export const APP_PROP_JOB_ID = "cfJobId";
 export const APP_PROP_KIND = "cfKind";
+export const APP_PROP_SOURCE_SHA256 = "cfSourceSha256";
 
 export interface DriveFile {
   id: string;
@@ -364,15 +365,20 @@ export class DriveClient {
   async findExistingArtifact(
     jobId: string,
     kind: string,
+    sourceSha256?: string,
   ): Promise<Attempt<DriveFile | null>> {
     const clauses = [
       `appProperties has { key='${APP_PROP_JOB_ID}' and value='${jobId}' }`,
       `appProperties has { key='${APP_PROP_KIND}' and value='${kind}' }`,
       "trashed = false",
     ];
+    if (sourceSha256 !== undefined) {
+      if (!/^[a-f0-9]{64}$/i.test(sourceSha256)) return { ok: false, error: storageError("bad_request", "Invalid source revision digest") };
+      clauses.push(`appProperties has { key='${APP_PROP_SOURCE_SHA256}' and value='${sourceSha256.toLowerCase()}' }`);
+    }
     const url = `${DRIVE_FILES_URL}?${new URLSearchParams({
       q: clauses.join(" and "),
-      fields: "files(id,name,webViewLink,size,md5Checksum,trashed)",
+      fields: "incompleteSearch,nextPageToken,files(id,name,webViewLink,size,md5Checksum,sha256Checksum,version,trashed)",
       pageSize: "5",
       spaces: "drive",
     }).toString()}`;
@@ -382,12 +388,13 @@ export class DriveClient {
 
     const parsed = DriveClient.parseJson<DriveFileListResponse>(res.value.text);
     if (!parsed.ok) return parsed;
+    if (parsed.value.incompleteSearch || parsed.value.nextPageToken || (parsed.value.files?.length ?? 0) > 1) return { ok: false, error: storageError("bad_request", "Multiple or incomplete Drive artifact matches require exact-ID reconciliation; no object selected") };
     return { ok: true, value: parsed.value.files?.[0] ?? null };
   }
 
   /**
-   * Delete a file we uploaded. Used to roll back a checksum mismatch — a
-   * corrupt Drive copy must not be left behind masquerading as the artefact.
+   * Explicit deletion only. Revision replacement must retain prior objects,
+   * including failed/unverified new copies pending manual reconciliation.
    */
   async deleteFile(fileId: string): Promise<Attempt<void>> {
     const res = await this.request({
@@ -433,6 +440,40 @@ export class DriveClient {
     const res = await this.request({ url, method: "GET" });
     if (!res.ok) return res;
     return DriveClient.parseJson<DriveFile>(res.value.text);
+  }
+
+  /** Exact-ID streaming download. No mid-stream retry or buffering: callers
+   * must discard partial bytes and re-verify on any error. Cancels on early exit.
+   */
+  async *streamFileContent(fileId: string, maxBytes: number): AsyncGenerator<Uint8Array> {
+    if (!fileId || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Invalid bounded Drive stream request");
+    const token = await this.tokens.getToken();
+    if (!token.ok) throw new Error(`Drive stream authentication failed: ${token.error.kind}`);
+    await this.limiter.acquire();
+    const response = await this.fetchImpl(`${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { method: "GET", headers: { authorization: `Bearer ${token.value.token}` } });
+    if (!response.ok) {
+      await response.body?.cancel();
+      if (response.status === 401) this.tokens.invalidate();
+      if (response.status === 429) this.limiter.penalise(5_000);
+      throw new Error(`Drive stream failed with HTTP ${response.status}`);
+    }
+    const length = response.headers.get("content-length");
+    if (length !== null && (!Number.isSafeInteger(Number(length)) || Number(length) < 0 || Number(length) > maxBytes)) {
+      await response.body?.cancel();
+      throw new Error("Drive stream exceeds declared read limit");
+    }
+    if (!response.body) throw new Error("Drive stream has no response body");
+    const reader = response.body.getReader();
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > maxBytes) throw new Error("Drive stream exceeded read limit");
+        yield chunk.value;
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
   }
 
   private async attemptReadFile(
@@ -592,6 +633,7 @@ export class DriveClient {
     sizeBytes: number;
     jobId: string;
     kind: string;
+    sourceSha256?: string;
   }): Promise<Attempt<string>> {
     const metadata = {
       name: args.filename,
@@ -599,6 +641,7 @@ export class DriveClient {
       appProperties: {
         [APP_PROP_JOB_ID]: args.jobId,
         [APP_PROP_KIND]: args.kind,
+        ...(args.sourceSha256 ? { [APP_PROP_SOURCE_SHA256]: args.sourceSha256 } : {}),
       },
     };
     const res = await this.request({
@@ -751,6 +794,7 @@ export class DriveClient {
     content: Buffer;
     jobId: string;
     kind: string;
+    sourceSha256?: string;
   }): Promise<Attempt<DriveFile>> {
     const boundary = `cf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const metadata = {
@@ -759,6 +803,7 @@ export class DriveClient {
       appProperties: {
         [APP_PROP_JOB_ID]: args.jobId,
         [APP_PROP_KIND]: args.kind,
+        ...(args.sourceSha256 ? { [APP_PROP_SOURCE_SHA256]: args.sourceSha256 } : {}),
       },
     };
     const body = Buffer.concat([

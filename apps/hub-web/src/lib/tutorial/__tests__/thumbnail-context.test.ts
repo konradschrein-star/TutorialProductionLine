@@ -12,12 +12,19 @@ const base = {
 };
 
 describe("resolveTutorialThumbnailVariant", () => {
-  it("keeps the variant's normalized language, channel and exact two lines", () => {
+  it("keeps the variant's normalized language, channel and exact headline blocks", () => {
     expect(resolveTutorialThumbnailVariant(base)).toEqual({
       language: "de",
       channelId: "channel-de",
       thumbnailTextTop: "JETZT STARTEN",
       thumbnailTextBottom: "SCHRITT FÜR SCHRITT",
+    });
+  });
+
+  it("supports one independently positioned headline block", () => {
+    expect(resolveTutorialThumbnailVariant({ ...base, thumbnailTextBottom: null })).toMatchObject({
+      thumbnailTextTop: "JETZT STARTEN",
+      thumbnailTextBottom: "",
     });
   });
 
@@ -27,10 +34,6 @@ describe("resolveTutorialThumbnailVariant", () => {
     [
       { ...base, channelLanguage: "fr" },
       "tutorial language does not match its channel language",
-    ],
-    [
-      { ...base, thumbnailTextBottom: null },
-      "localized two-line thumbnail copy is incomplete",
     ],
   ])("fails closed for inconsistent state", (input, message) => {
     expect(() => resolveTutorialThumbnailVariant(input)).toThrow(message);

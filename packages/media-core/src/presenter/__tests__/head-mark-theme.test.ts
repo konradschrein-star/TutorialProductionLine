@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +24,7 @@ const HEAD_MARK_SVG = join(
 );
 
 describe("themeHeadMarkSvg", () => {
-  it("resolves both variables in the real head-mark.svg", async () => {
+  it.skipIf(!existsSync(HEAD_MARK_SVG))("resolves both variables in the real head-mark.svg", async () => {
     const svg = await readFile(HEAD_MARK_SVG, "utf8");
     const themed = themeHeadMarkSvg(svg, {
       markBg: "#0a4174",

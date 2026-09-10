@@ -65,6 +65,8 @@ export type TutorialGeneratePayload = z.infer<
 
 export const TutorialSplicePayloadSchema = z.object({
   jobId: z.string().uuid(),
+  sourceRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  thumbnailId: z.string().uuid().optional(),
 });
 export type TutorialSplicePayload = z.infer<typeof TutorialSplicePayloadSchema>;
 
@@ -79,26 +81,17 @@ export type TutorialSplicePayload = z.infer<typeof TutorialSplicePayloadSchema>;
  */
 export const TutorialTranslatePayloadSchema = z.object({
   sourceJobId: z.string().uuid(),
-  targetLanguage: z.enum([
-    "de",
-    "fr",
-    "it",
-    "es",
-    "nl",
-    "sv",
-    "no",
-    "da",
-    "pt",
-    "pl",
-    "cs",
-    "ru",
-    "ar",
-    "zh",
-    "ja",
-    "ko",
-    "id",
-  ]),
-});
+  purpose: z.enum(["video", "thumbnail-copy"]).optional(),
+  sourceRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  thumbnailId: z.string().uuid().optional(),
+  // The destination is configuration-driven. Restrict it to the same compact
+  // BCP-47 shape accepted by channel setup, but do not make adding a channel
+  // require a worker release just to extend a source-code enum.
+  targetLanguage: z
+    .string()
+    .regex(/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/)
+    .max(10),
+}).refine((payload) => payload.targetLanguage !== "en" || payload.purpose === "thumbnail-copy", { message: "English is only valid for thumbnail copy, not video translation." });
 export type TutorialTranslatePayload = z.infer<
   typeof TutorialTranslatePayloadSchema
 >;

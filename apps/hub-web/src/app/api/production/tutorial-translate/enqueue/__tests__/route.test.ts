@@ -37,33 +37,33 @@ describe("POST /api/production/tutorial-translate/enqueue language scope", () =>
     mockHasPermission.mockReturnValue(true);
   });
 
-  it("rejects non-standard languages in automatic fan-out", async () => {
+  it("rejects malformed language codes before querying", async () => {
     const response = await POST(
       request({
         sourceJobId: SOURCE_JOB_ID,
-        languages: ["de", "nl"],
+        languages: ["de", "not a locale"],
         mode: "automatic",
       }),
     );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/restricted to de, fr, it, sv/i),
+      error: expect.stringMatching(/language codes/i),
     });
   });
 
-  it("rejects unknown automatic targets instead of silently dropping them", async () => {
+  it("rejects non-BCP-style separators before querying", async () => {
     const response = await POST(
       request({
         sourceJobId: SOURCE_JOB_ID,
-        languages: ["de", "xx"],
+        languages: ["de", "pt_BR"],
         mode: "automatic",
       }),
     );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/restricted to de, fr, it, sv/i),
+      error: expect.stringMatching(/language codes/i),
     });
   });
 

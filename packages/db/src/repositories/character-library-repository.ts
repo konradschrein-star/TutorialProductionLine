@@ -241,16 +241,19 @@ export async function setCharacterChannels(
     is_primary?: boolean;
   }>,
 ): Promise<void> {
-  await db
-    .delete(characterChannels)
-    .where(eq(characterChannels.character_id, characterId));
-  if (bindings.length === 0) return;
-  await db.insert(characterChannels).values(
-    bindings.map((b) => ({
-      character_id: characterId,
-      channel_id: b.channel_id,
-      role: b.role ?? "host",
-      is_primary: b.is_primary ?? true,
-    })),
-  );
+  await db.transaction(async (tx) => {
+    // Serialize replacement of this identity, including the empty-binding case.
+    await tx.select({ id: characters.id }).from(characters)
+      .where(eq(characters.id, characterId)).for("update");
+    const existing = await tx.select().from(characterChannels)
+      .where(eq(characterChannels.character_id, characterId));
+    const values = bindings.map((b) => {
+      const previous = existing.find((e) => e.channel_id === b.channel_id);
+      return { character_id: characterId, channel_id: b.channel_id,
+        role: b.role ?? previous?.role ?? "host",
+        is_primary: b.is_primary ?? previous?.is_primary ?? true };
+    });
+    await tx.delete(characterChannels).where(eq(characterChannels.character_id, characterId));
+    if (values.length) await tx.insert(characterChannels).values(values);
+  });
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { currentReviewQaDetail, reviewQaEvidence } from "@/lib/tutorial/review-qa";
 import { and, desc, eq, gte, isNotNull, isNull, inArray, sql } from "drizzle-orm";
-import { access } from "node:fs/promises";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -10,52 +11,18 @@ import {
   thumbnails,
   storageArtifacts,
 } from "@/lib/db";
-import {
-  isActiveTutorialUploadLanguage,
-  normalizeTutorialLanguage,
-} from "@repo/contracts";
+import { normalizeTutorialLanguage } from "@repo/contracts";
 import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
+import { reviewMediaAvailability } from "@/lib/tutorial/media-availability";
+import { getHubConfig } from "@/lib/config";
+import { loadStorageConfigFromDatabase } from "@repo/storage";
 
 export const dynamic = "force-dynamic";
 
-/**
- * The VA's end-of-day review list.
- *
- * The owner's instruction, verbatim: "At end of day the VA sees all their jobs
- * (this is deliberately motivating — they see how much they produced), and
- * approves or disapproves each."
- *
- * That "deliberately motivating" is a design constraint, not a nicety. The list
- * is what the VA produced TODAY, newest first, with the count front and centre.
- * It is not a work queue and it must never read like one: nothing here is
- * blocking, an unreviewed job stays exactly as it is forever, and the VA can
- * close the tab having pressed nothing without consequence.
- *
- * SCOPE: "THEIR jobs" is load-bearing and was not implemented — the list
- * returned every VA's output to every VA. Four tutorial VAs produce into this
- * table concurrently, so each of them was scrolling three other people's work
- * and the "you finished N videos" count was the team's, not theirs. It now
- * filters to created_by = the caller. ADMIN/MANAGER may pass scope=all for
- * oversight; a VA cannot, whatever they put in the query string.
- *
- * Under /api/production because that prefix is already on the middleware
- * bypass list and every handler beneath it self-authenticates (see the RANKING
- * route's note). Authorises on the tutorial grants, so a TUTORIAL_VA can use it
- * without being handed `create:job` and with it every other format.
- */
+/** Final review is an explicit approval step. Rework preserves all existing assets. */
 
 /** Default window. "Today" for a VA who works past midnight is still today. */
-const DEFAULT_LOOKBACK_HOURS = 18;
-
-async function fileExists(path: string | null): Promise<boolean> {
-  if (!path) return false;
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const DEFAULT_LOOKBACK_HOURS = 0;
 
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await getSession();
@@ -64,29 +31,45 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const url = new URL(request.url);
+  const requestedId = url.searchParams.get("jobId");
+  if (requestedId !== null && !z.string().uuid().safeParse(requestedId).success) return NextResponse.json({ error: "This review link contains an invalid tutorial ID." }, { status: 400 });
   const hoursRaw = Number(url.searchParams.get("hours"));
   const hours =
     Number.isFinite(hoursRaw) && hoursRaw > 0 && hoursRaw <= 24 * 30
       ? hoursRaw
       : DEFAULT_LOOKBACK_HOURS;
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const includeReviewed = url.searchParams.get("reviewed") === "1";
+  const beforeAt = url.searchParams.get("beforeAt");
+  const beforeId = url.searchParams.get("beforeId");
+  if ((beforeAt || beforeId) && (!z.string().datetime().safeParse(beforeAt).success || !z.string().uuid().safeParse(beforeId).success)) return NextResponse.json({ error: "Invalid review page cursor" }, { status: 400 });
 
   const canSeeEveryone =
     session.role === "ADMIN" ||
     session.role === "MANAGER" ||
     hasPermission(session, "manage:tutorial-settings");
   const wantsEveryone = url.searchParams.get("scope") === "all";
-  const scopeAll = canSeeEveryone && wantsEveryone;
+  const scopeAll = canSeeEveryone && (wantsEveryone || Boolean(requestedId));
+  if (requestedId) {
+    const [target] = await db.select({ id: tutorialJobs.id, createdBy: tutorialJobs.created_by, status: tutorialJobs.status, sourceJobId: tutorialJobs.source_job_id, language: tutorialJobs.language }).from(tutorialJobs).where(eq(tutorialJobs.id, requestedId)).limit(1);
+    if (!target || (!canSeeEveryone && target.createdBy !== session.userId)) return NextResponse.json({ error: "The linked tutorial was not found or you do not have access to it." }, { status: 404 });
+    if (target.status !== "COMPLETED" || target.sourceJobId || normalizeTutorialLanguage(target.language) !== "en") return NextResponse.json({ error: "This tutorial is not ready for final review. Final review requires a completed English original." }, { status: 409 });
+  }
 
-  const rows = await db
+  const fetchedRows = await db
     .select({
       id: tutorialJobs.id,
+      cursorAt: tutorialJobs.created_at,
       title: tutorialJobs.title,
       language: tutorialJobs.language,
       channelId: tutorialJobs.channel_id,
       channelName: channels.name,
       completedAt: tutorialJobs.completed_at,
       finalPath: tutorialJobs.final_path,
+      qaRecordingPath: tutorialJobs.recording_path,
+      qaAudioPath: tutorialJobs.audio_path,
+      qaRecordedAt: tutorialJobs.recorded_at,
+      qaScriptDigest: sql<string>`md5(coalesce(${tutorialJobs.script_text}, ''))`,
       durationS: tutorialJobs.recording_duration_s,
       reviewStatus: tutorialJobs.va_review_status,
       reviewedAt: tutorialJobs.va_reviewed_at,
@@ -102,19 +85,26 @@ export async function GET(request: Request): Promise<NextResponse> {
     .where(
       and(
         eq(tutorialJobs.status, "COMPLETED"),
-        isNotNull(tutorialJobs.completed_at),
-        gte(tutorialJobs.completed_at, since),
+        ...(requestedId ? [eq(tutorialJobs.id, requestedId)] : [
+          ...(hours > 0 ? [gte(tutorialJobs.completed_at, since)] : []),
+          ...(includeReviewed ? [] : [isNull(tutorialJobs.va_review_status)]),
+          ...(beforeAt && beforeId ? [sql`(${tutorialJobs.created_at}, ${tutorialJobs.id}) < (${beforeAt}::timestamptz, ${beforeId}::uuid)`] : []),
+        ]),
         // Only the ENGLISH originals the VA actually recorded. Localized
         // children (source_job_id set) reuse the same recorded background and
         // are auto-delivered, so they never need a separate approval — showing
-        // them would make the VA re-approve the same video in four languages.
+        // them would make the VA re-approve the same video for every locale.
         isNull(tutorialJobs.source_job_id),
         sql`lower(trim(${tutorialJobs.language})) in ('en', 'english')`,
         ...(scopeAll ? [] : [eq(tutorialJobs.created_by, session.userId)]),
       ),
     )
-    .orderBy(desc(tutorialJobs.completed_at))
-    .limit(200);
+    .orderBy(desc(tutorialJobs.created_at), desc(tutorialJobs.id))
+    .limit(201);
+  const rows = fetchedRows.slice(0,200);
+  const tail = rows.at(-1);
+  const nextCursor = !requestedId && fetchedRows.length > 200 && tail ? { beforeAt: tail.cursorAt, beforeId: tail.id } : null;
+  if (requestedId && rows.length !== 1) return NextResponse.json({ error: "The linked tutorial changed or is no longer available for final review." }, { status: 409 });
 
   const ids = rows.map((r) => r.id);
 
@@ -158,6 +148,7 @@ export async function GET(request: Request): Promise<NextResponse> {
             language: thumbnails.language,
             channelId: thumbnails.channel_id,
             status: thumbnails.status,
+            reviewVerdict: thumbnails.review_verdict,
             createdAt: thumbnails.created_at,
           })
           .from(thumbnails)
@@ -186,6 +177,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     })),
   ];
   const thumbBySubject = new Map<string, string>();
+  const approvedThumbSubjects = new Set<string>();
   for (const owner of thumbnailOwners) {
     const selection = assessTutorialThumbnailSelection(
       owner,
@@ -193,6 +185,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
     if (selection.thumbnail) {
       thumbBySubject.set(owner.id, selection.thumbnail.id);
+      if (thumbRows.find(thumbnail => thumbnail.id === selection.thumbnail!.id)?.reviewVerdict === "acceptable") approvedThumbSubjects.add(owner.id);
     }
   }
 
@@ -206,6 +199,12 @@ export async function GET(request: Request): Promise<NextResponse> {
             jobId: storageArtifacts.job_id,
             kind: storageArtifacts.kind,
             driveFileId: storageArtifacts.drive_file_id,
+            ownerKind: storageArtifacts.owner_kind,
+            state: storageArtifacts.state,
+            vpsPath: storageArtifacts.vps_path,
+            checksumSha256: storageArtifacts.checksum_sha256,
+            bytes: storageArtifacts.bytes,
+            verifiedAt: storageArtifacts.verified_at,
           })
           .from(storageArtifacts)
           .where(
@@ -215,29 +214,27 @@ export async function GET(request: Request): Promise<NextResponse> {
             ),
           )
       : [];
-  const inDrive = new Set(
-    artRows
-      .filter((a) => a.kind === "final_video" && a.driveFileId)
-      .map((a) => a.jobId),
-  );
+  const driveConfiguration = ids.length ? await loadStorageConfigFromDatabase(db) : null;
+  const availability = await Promise.all(rows.map(r => reviewMediaAvailability(r.id, r.finalPath, artRows, {
+    allowedRoots: [getHubConfig().LOCAL_MEDIA_ROOT], maxBytes: 8 * 1024 ** 3, driveConfigured: driveConfiguration?.enabled === true,
+  })));
 
-  // Whether the MP4 is still on disk decides whether the player can open it.
-  // 1,177 tutorial rows have no file, so "COMPLETED" alone does not mean
-  // playable and the UI must say which it is rather than showing a dead player.
-  const playable = await Promise.all(rows.map((r) => fileExists(r.finalPath)));
-
-  const jobs = rows.map((r, i) => ({
+  const jobs = rows.map((r, i) => {
+    const qaDetail = currentReviewQaDetail(r.qaDetail, { completedAt: r.completedAt?.toISOString() ?? null, finalPath: r.finalPath, recordingPath: r.qaRecordingPath, audioPath: r.qaAudioPath, recordedAt: r.qaRecordedAt?.toISOString() ?? null, scriptDigest: r.qaScriptDigest });
+    return {
     id: r.id,
     title: r.title,
+    channelId: r.channelId,
     channelName: r.channelName,
     completedAt: r.completedAt?.toISOString() ?? null,
     durationSeconds: r.durationS !== null ? Number(r.durationS) : null,
     reviewStatus: r.reviewStatus,
     reviewedAt: r.reviewedAt?.toISOString() ?? null,
-    qaStatus: r.qaStatus,
+    qaStatus: qaDetail ? r.qaStatus : null,
+    qaEvidence: reviewQaEvidence(qaDetail),
     qaSummary:
-      r.qaDetail && typeof r.qaDetail === "object"
-        ? ((r.qaDetail as { summary?: string }).summary ?? null)
+      qaDetail && typeof qaDetail === "object"
+        ? ((qaDetail as { summary?: string }).summary ?? null)
         : null,
     thumbnailId: thumbBySubject.get(r.id) ?? null,
     thumbnailVariants: [
@@ -246,31 +243,35 @@ export async function GET(request: Request): Promise<NextResponse> {
         language: "en",
         title: r.title,
         thumbnailId: thumbBySubject.get(r.id) ?? null,
+        thumbnailApproved: approvedThumbSubjects.has(r.id),
       },
       ...variantRows
         .filter(
           (variant) =>
             variant.sourceJobId === r.id &&
-            isActiveTutorialUploadLanguage(
-              normalizeTutorialLanguage(variant.language),
-            ),
+            Boolean(normalizeTutorialLanguage(variant.language) && normalizeTutorialLanguage(variant.language) !== "en"),
         )
         .map((variant) => ({
           id: variant.id,
           language: normalizeTutorialLanguage(variant.language)!,
           title: variant.title,
           thumbnailId: thumbBySubject.get(variant.id) ?? null,
+          thumbnailApproved: approvedThumbSubjects.has(variant.id),
         })),
     ],
     hasThumbnail: thumbBySubject.has(r.id),
-    inDrive: inDrive.has(r.id),
+    // Compatibility label: a receipt, never proof of rehashed current bytes.
+    inDrive: availability[i]?.receiptRecorded ?? false,
     hasDescription: Boolean(r.description),
     hasTags: Array.isArray(r.tags) && r.tags.length > 0,
-    playable: playable[i] ?? false,
+    ...availability[i],
     mine: r.createdBy === session.userId,
-  }));
+    };
+  });
 
   return NextResponse.json({
+    requestedJobId: requestedId,
+    nextCursor,
     hours,
     scope: scopeAll ? "all" : "mine",
     canSeeEveryone,

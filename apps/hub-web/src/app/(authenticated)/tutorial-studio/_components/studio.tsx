@@ -1,7 +1,14 @@
 "use client";
+import layout from "./production-layout.module.css";
+import {
+  isParkedTutorialMode,
+  recordSessionKey,
+  recoverScriptDraft,
+  shouldRestoreRecordSelection,
+} from "@/lib/tutorial/record-session";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { V2Button, GlassCard } from "../../_components";
@@ -15,6 +22,7 @@ import { useRecordingUploads } from "./upload-queue";
 import type { TutorialJob, TutorialSettingsRow, Thumbnail } from "@repo/db";
 
 interface StudioProps {
+  userId?: string;
   jobs: TutorialJob[];
   settings: TutorialSettingsRow;
   onChange: () => void;
@@ -57,8 +65,8 @@ function DriveDeliveryStatus({ delivered }: { delivered: boolean }) {
     <span
       title={
         delivered
-          ? "Delivered to Google Drive automatically."
-          : "Not yet delivered. The Drive uploader picks this up on its own — no action needed."
+          ? "Delivery to Google Drive has been recorded."
+          : "Drive delivery has not been confirmed. Check Delivery for approval, connection and upload status."
       }
       style={{
         display: "inline-flex",
@@ -71,13 +79,13 @@ function DriveDeliveryStatus({ delivered }: { delivered: boolean }) {
         fontWeight: 600,
         border: `1px solid ${delivered ? "#22c55e55" : "#6b728055"}`,
         background: delivered ? "#22c55e14" : "transparent",
-        color: delivered ? "#22c55e" : "#9ca3af",
+        color: delivered ? "#22c55e" : "var(--v2-text-2)",
       }}
     >
       <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
         {delivered ? "cloud_done" : "cloud_sync"}
       </span>
-      {delivered ? "In Google Drive" : "Delivering to Drive…"}
+      {delivered ? "In Google Drive" : "Drive delivery not confirmed"}
     </span>
   );
 }
@@ -126,7 +134,6 @@ function isSegmentChild(j: TutorialJob): boolean {
 function isTranslationChild(j: TutorialJob): boolean {
   return j.source_job_id !== null;
 }
-
 
 /** Successfully-finished / intentionally-stopped jobs. These are safe to hide
  * from the active worklist by default (behind the "show completed" toggle) —
@@ -251,6 +258,11 @@ const HAS_RECORDING_STATUSES = new Set([
 
 function jobHasRecording(j: TutorialJob | null): boolean {
   if (!j) return false;
+  if (
+    j.va_review_status === "rework_requested" &&
+    j.status === "READY_TO_RECORD"
+  )
+    return false;
   return Boolean(j.recording_path) || HAS_RECORDING_STATUSES.has(j.status);
 }
 
@@ -544,7 +556,7 @@ function PartRecordingControls({
             alignItems: "center",
             gap: 6,
             padding: "8px 12px",
-            border: `1.5px dashed ${isDragActive ? "var(--v2-accent)" : "rgba(255,255,255,0.25)"}`,
+            border: `1.5px dashed ${isDragActive ? "var(--v2-accent)" : "var(--v2-border-1)"}`,
             borderRadius: 8,
             cursor: "pointer",
             background: isDragActive
@@ -576,7 +588,7 @@ function PartRecordingControls({
  * /api/production/jobs/[id]/thumbnail routes (gated view:production /
  * create:tutorial-job, so tutorial VAs can use them).
  */
-function StudioThumbnailPanel({ jobId }: { jobId: string }) {
+function StudioThumbnailPanel({ jobId, aiEnabled }: { jobId: string; aiEnabled: boolean }) {
   const [thumbs, setThumbs] = useState<Thumbnail[] | null>(null);
   const [regenerating, setRegenerating] = useState(false);
 
@@ -608,9 +620,8 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
     return () => clearInterval(iv);
   }, [pending, load]);
 
-  const current =
-    (thumbs ?? []).find((t) => t.is_selected && t.status === "completed") ??
-    (thumbs ?? []).find((t) => t.status === "completed");
+  const current = (thumbs ?? []).find((t) => t.is_selected && t.status === "completed");
+  const hasUnselectedVariants = (thumbs ?? []).some((t) => t.status === "completed");
 
   async function handleRegenerate() {
     setRegenerating(true);
@@ -668,9 +679,9 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
             width: "100%",
             aspectRatio: "16 / 9",
             borderRadius: 8,
-            border: "1px dashed var(--v2-border, #333)",
+            border: "1px dashed var(--v2-border-1)",
             background:
-              "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0 10px, rgba(255,255,255,0.045) 10px 20px)",
+              "repeating-linear-gradient(45deg, var(--v2-surface-2) 0 10px, var(--v2-surface-3) 10px 20px)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -703,13 +714,15 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
               ? "Loading…"
               : pending
                 ? "Generating… this panel will update automatically."
-                : "Thumbnails are in the workings — automatic generation is being set up. You can still try generating one manually below."}
+                : hasUnselectedVariants
+                  ? "Variants are ready. Open Thumbnail Studio to select and approve one."
+                  : "No thumbnail selected yet. Open Thumbnail Studio to create and approve your language pack."}
           </div>
         </div>
       )}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <V2Button
+        {aiEnabled && <V2Button
           variant="outline"
           size="md"
           onClick={handleRegenerate}
@@ -723,8 +736,11 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
             : current
               ? "Regenerate"
               : "Generate"}
-        </V2Button>
-        <a href={`/thumbnails?jobId=${jobId}`} style={{ textDecoration: "none" }}>
+        </V2Button>}
+        <a
+          href={`/thumbnails?jobId=${jobId}`}
+          style={{ textDecoration: "none" }}
+        >
           <V2Button variant="ghost" size="md">
             <span
               className="material-symbols-outlined"
@@ -741,6 +757,7 @@ function StudioThumbnailPanel({ jobId }: { jobId: string }) {
 }
 
 export function ProductionStudio({
+  userId,
   jobs,
   settings,
   onChange,
@@ -771,8 +788,56 @@ export function ProductionStudio({
 
   const router = useRouter();
   const [selected, setSelected] = useState<TutorialJob | null>(null);
+  const searchParams = useSearchParams();
+  const linkedJobId = searchParams.get("jobId");
+  const currentTab = searchParams.get("tab");
+  function chooseJob(job: TutorialJob) {
+    setSelected(job);
+    if (userId)
+      try {
+        sessionStorage.setItem(recordSessionKey(userId), job.id);
+      } catch {}
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "studio");
+    params.set("jobId", job.id);
+    router.replace(`/tutorial-studio?${params}`, { scroll: false });
+  }
+  useEffect(() => {
+    if (!shouldRestoreRecordSelection(currentTab, linkedJobId, userId) || !userId) return;
+    try {
+      const saved = sessionStorage.getItem(recordSessionKey(userId));
+      if (saved && /^[a-f0-9-]{36}$/i.test(saved))
+        router.replace(`/tutorial-studio?tab=studio&jobId=${saved}`, {
+          scroll: false,
+        });
+    } catch {}
+  }, [currentTab, linkedJobId, userId, router]);
+  useEffect(() => {
+    if (!linkedJobId) return;
+    const controller = new AbortController();
+    void fetch(`/api/production/jobs/${encodeURIComponent(linkedJobId)}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(data.error ?? "Could not open this tutorial");
+        setSelected(data.job);
+        setShowCompleted(true);
+        if (userId)
+          try {
+            sessionStorage.setItem(recordSessionKey(userId), data.job.id);
+          } catch {}
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          toast.error(
+            error instanceof Error ? error.message : "Could not open tutorial",
+          );
+      });
+    return () => controller.abort();
+  }, [linkedJobId, userId]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [sendingToStitcher, setSendingToStitcher] = useState(false);
 
   const handleDelete = async (job: TutorialJob) => {
     if (
@@ -804,6 +869,7 @@ export function ProductionStudio({
   const [speed, setSpeed] = useState<number>(() =>
     clampSpeed(Number(settings?.default_playback_speed ?? SPEED_MIN)),
   );
+  const [personalDefaults, setPersonalDefaults] = useState<{ recordHotkey: string; playbackSpeed: number } | null>(null);
   /** True once the VA has explicitly acknowledged that the stored take was
    *  performed at a different speed than the slider now shows. */
   const [takeSpeedMismatch, setTakeSpeedMismatch] = useState<number | null>(
@@ -814,8 +880,20 @@ export function ProductionStudio({
   // in-progress edit is not clobbered by the 5s job poll; it only resyncs when
   // the job actually changes or a fresh script is generated (see the effect).
   const [scriptDraft, setScriptDraft] = useState("");
+  const [draftNotice, setDraftNotice] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hotkey = settings?.record_hotkey ?? "F8";
+  const hotkey = personalDefaults?.recordHotkey ?? settings?.record_hotkey ?? "F8";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/me/tutorial-preferences", { signal: controller.signal })
+      .then(async response => response.ok ? response.json() : null)
+      .then(data => {
+        if (!controller.signal.aborted && data) setPersonalDefaults({ recordHotkey: data.recordHotkey ?? "F8", playbackSpeed: clampSpeed(Number(data.playbackSpeed ?? 1)) });
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [userId]);
 
   // Keep selected in sync with latest job data
   const selectedJob = selected
@@ -824,12 +902,58 @@ export function ProductionStudio({
 
   // Load the editable script when the job changes or its script is (re)generated.
   useEffect(() => {
-    setScriptDraft(selectedJob?.script_text ?? "");
-  }, [selectedJob?.id, selectedJob?.script_text]);
+    const base = selectedJob?.script_text ?? "";
+    let draft: string | null = null;
+    if (userId && selectedJob)
+      try {
+        draft = recoverScriptDraft(
+          sessionStorage.getItem(recordSessionKey(userId, selectedJob.id)),
+          base,
+        );
+      } catch {}
+    setScriptDraft(draft ?? base);
+    setDraftNotice(
+      draft !== null && draft !== base
+        ? "Your unsaved draft was restored in this tab. Save it before regenerating audio."
+        : "",
+    );
+  }, [selectedJob?.id, selectedJob?.script_text, userId]);
+  function editDraft(value: string) {
+    setScriptDraft(value);
+    if (!userId || !selectedJob) return;
+    try {
+      const key = recordSessionKey(userId, selectedJob.id);
+      if (value === (selectedJob.script_text ?? "")) {
+        sessionStorage.removeItem(key);
+        setDraftNotice("");
+      } else {
+        sessionStorage.setItem(
+          key,
+          JSON.stringify({ base: selectedJob.script_text ?? "", draft: value }),
+        );
+        setDraftNotice(
+          "Draft saved in this browser tab only. Save script to apply it to production.",
+        );
+      }
+    } catch {
+      setDraftNotice(
+        "This browser could not keep a draft. Save your script before leaving.",
+      );
+    }
+  }
 
   const scriptDirty =
     !!selectedJob?.script_text &&
     scriptDraft.trim() !== (selectedJob.script_text ?? "").trim();
+  useEffect(() => {
+    if (!scriptDirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [scriptDirty]);
 
   /**
    * Persist the VA's edited script, then re-synthesize the audio from it. The
@@ -853,6 +977,11 @@ export function ProductionStudio({
         const b = (await save.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error ?? `Save failed (${save.status})`);
       }
+      if (userId)
+        try {
+          sessionStorage.removeItem(recordSessionKey(userId, selectedJob.id));
+        } catch {}
+      setDraftNotice("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       return;
@@ -911,14 +1040,17 @@ export function ProductionStudio({
       const last = Number(window.localStorage.getItem(SPEED_LAST_KEY));
       if (Number.isFinite(mine) && mine > 0) resolved = mine;
       else if (Number.isFinite(last) && last > 0) resolved = last;
+      else if (personalDefaults?.playbackSpeed != null) resolved = personalDefaults.playbackSpeed;
       else if (settings?.default_playback_speed != null) {
         resolved = Number(settings.default_playback_speed);
       }
+    } else if (personalDefaults?.playbackSpeed != null) {
+      resolved = personalDefaults.playbackSpeed;
     } else if (settings?.default_playback_speed != null) {
       resolved = Number(settings.default_playback_speed);
     }
     setSpeed(clampSpeed(resolved));
-  }, [selected?.id]);
+  }, [selected?.id, personalDefaults?.playbackSpeed]);
 
   // Persist every slider change to localStorage so the next job opens at
   // the same speed. Cheap write; no debounce needed.
@@ -1002,13 +1134,14 @@ export function ProductionStudio({
     }
   }
 
-  /** Per-VA default (per browser profile — there is no per-user column). */
-  function saveMyDefaultSpeed() {
+  /** Per-account default, mirrored locally for immediate offline-safe reuse. */
+  async function saveMyDefaultSpeed() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SPEED_DEFAULT_KEY, String(speed));
-    toast.success(
-      `${speed.toFixed(2)}× is now your default for new jobs on this machine.`,
-    );
+    const response = await fetch("/api/me/tutorial-preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recordHotkey: hotkey, playbackSpeed: speed }) });
+    if (!response.ok) return toast.error("The browser saved this speed, but the account default could not be updated.");
+    setPersonalDefaults(previous => ({ recordHotkey: previous?.recordHotkey ?? hotkey, playbackSpeed: speed }));
+    toast.success(`${speed.toFixed(2)}× is now your default on every device.`);
   }
 
   // Countdown: seconds to wait after Start before audio actually plays.
@@ -1271,45 +1404,15 @@ export function ProductionStudio({
       uploading || !selectedJob || selectedJob.status !== "READY_TO_RECORD",
   });
 
-  async function handleSendToStitcher(parentId: string) {
-    setSendingToStitcher(true);
-    try {
-      const res = await fetch(
-        `/api/production/jobs/${parentId}/send-to-stitcher`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      const body = (await res.json()) as { stitch_job_id?: string };
-      toast.success("Sent to stitcher. Review the options and press Start…");
-      onChange();
-      // Deep-link to the new DRAFT so the stitcher opens it in "finish" mode
-      // (parts prefilled, full options panel, one Start button).
-      router.push(
-        body.stitch_job_id
-          ? `/tutorial-studio/video-stitcher?job=${body.stitch_job_id}`
-          : "/tutorial-studio/video-stitcher",
-      );
-    } catch (e) {
-      toast.error(
-        `Send to stitcher failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    } finally {
-      setSendingToStitcher(false);
-    }
-  }
-
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "280px 1fr",
         gap: 20,
         alignItems: "start",
         minHeight: 500,
       }}
+      className={layout.record}
     >
       {/* Left: job list */}
       <GlassCard style={{ padding: 16 }}>
@@ -1348,10 +1451,10 @@ export function ProductionStudio({
                 gap: 4,
                 background: showCompleted
                   ? "rgba(var(--v2-accent-rgb), 0.15)"
-                  : "rgba(255,255,255,0.04)",
+                  : "var(--v2-surface-2)",
                 border: showCompleted
                   ? "1px solid rgba(var(--v2-accent-rgb), 0.4)"
-                  : "1px solid rgba(255,255,255,0.08)",
+                  : "1px solid var(--v2-surface-2)",
                 borderRadius: 999,
                 padding: "3px 9px",
                 fontSize: 10,
@@ -1394,12 +1497,15 @@ export function ProductionStudio({
               error
             </span>
             <span
-              style={{ fontSize: 12, color: "var(--v2-text-1)", fontWeight: 600 }}
+              style={{
+                fontSize: 12,
+                color: "var(--v2-text-1)",
+                fontWeight: 600,
+              }}
             >
-              {failedJobs.length}{" "}
-              {failedJobs.length === 1 ? "video" : "videos"} failed to
-              process — open {failedJobs.length === 1 ? "it" : "them"} below to
-              see why and retry. Nothing was silently lost.
+              {failedJobs.length} {failedJobs.length === 1 ? "video" : "videos"}{" "}
+              failed to process — open {failedJobs.length === 1 ? "it" : "them"}{" "}
+              below to see why and retry. Nothing was silently lost.
             </span>
           </div>
         )}
@@ -1436,16 +1542,16 @@ export function ProductionStudio({
             {readyJobs.map((j) => (
               <div key={j.id} style={{ position: "relative" }}>
                 <button
-                  onClick={() => setSelected(j)}
+                  onClick={() => chooseJob(j)}
                   style={{
                     background:
                       selectedJob?.id === j.id
                         ? "rgba(var(--v2-accent-rgb), 0.15)"
-                        : "rgba(255,255,255,0.03)",
+                        : "var(--v2-surface-2)",
                     border:
                       selectedJob?.id === j.id
                         ? "1px solid rgba(var(--v2-accent-rgb), 0.4)"
-                        : "1px solid rgba(255,255,255,0.06)",
+                        : "1px solid var(--v2-border-1)",
                     borderRadius: 8,
                     padding: "10px 36px 10px 12px",
                     textAlign: "left",
@@ -1475,7 +1581,7 @@ export function ProductionStudio({
                       style={{
                         marginTop: 6,
                         height: 3,
-                        background: "rgba(255,255,255,0.07)",
+                        background: "var(--v2-surface-2)",
                         borderRadius: 2,
                         overflow: "hidden",
                       }}
@@ -1554,6 +1660,27 @@ export function ProductionStudio({
           >
             Select a job from the list to begin recording
           </p>
+        </GlassCard>
+      ) : isParkedTutorialMode(selectedJob.mode) ? (
+        <GlassCard style={{ padding: 24 }}>
+          <h2 style={{ fontSize: 18, marginTop: 0 }}>{selectedJob.title}</h2>
+          <p>
+            This is a historical long-form workflow. Stitching and segment
+            production are not available in Tutorial Studio.
+          </p>
+          <p style={{ color: "var(--v2-text-2)" }}>
+            The original record is preserved. Prepare a standard tutorial to
+            continue new production.
+          </p>
+          {selectedJob.final_path && (
+            <a
+              href={`/api/production/jobs/${selectedJob.id}/download?inline=1`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open existing video
+            </a>
+          )}
         </GlassCard>
       ) : isStitchParent(selectedJob) ? (
         // ── SIX_MIN_STITCH parent view ────────────────────────────────────
@@ -1641,7 +1768,7 @@ export function ProductionStudio({
                   <div
                     style={{
                       height: 4,
-                      background: "rgba(255,255,255,0.08)",
+                      background: "var(--v2-surface-2)",
                       borderRadius: 2,
                       marginBottom: 16,
                       overflow: "hidden",
@@ -1680,7 +1807,7 @@ export function ProductionStudio({
                           alignItems: "center",
                           justifyContent: "space-between",
                           padding: "10px 14px",
-                          background: "rgba(255,255,255,0.04)",
+                          background: "var(--v2-surface-2)",
                           borderRadius: 8,
                           gap: 12,
                         }}
@@ -1724,7 +1851,7 @@ export function ProductionStudio({
                                 : "outline"
                             }
                             size="sm"
-                            onClick={() => setSelected(child)}
+                            onClick={() => chooseJob(child)}
                           >
                             {child.status === "READY_TO_RECORD"
                               ? "Record"
@@ -1802,7 +1929,7 @@ export function ProductionStudio({
 
           {/* Thumbnail panel for the completed stitched video */}
           {selectedJob.status === "COMPLETED" && (
-            <StudioThumbnailPanel jobId={selectedJob.id} />
+            <StudioThumbnailPanel jobId={selectedJob.id} aiEnabled={settings.thumbnail_generation_mode === "ai"} />
           )}
 
           {/* Parent failed-stitch state */}
@@ -1907,39 +2034,6 @@ export function ProductionStudio({
                   </V2Button>
                 </a>
               )}
-
-              {selectedJob.status === "READY_TO_STITCH" && (
-                <V2Button
-                  variant="accent"
-                  size="md"
-                  onClick={() => handleSendToStitcher(selectedJob.id)}
-                  disabled={sendingToStitcher}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 16 }}
-                  >
-                    movie
-                  </span>
-                  {sendingToStitcher ? "Sending…" : "Send to stitcher"}
-                </V2Button>
-              )}
-
-              {selectedJob.status === "SENT_TO_STITCHER" && (
-                <V2Button
-                  variant="outline"
-                  size="md"
-                  onClick={() => router.push("/tutorial-studio/video-stitcher")}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: 16 }}
-                  >
-                    open_in_new
-                  </span>
-                  Open in Video Stitcher
-                </V2Button>
-              )}
             </div>
           </GlassCard>
 
@@ -1986,7 +2080,7 @@ export function ProductionStudio({
                   <div
                     style={{
                       height: 4,
-                      background: "rgba(255,255,255,0.08)",
+                      background: "var(--v2-surface-2)",
                       borderRadius: 2,
                       marginBottom: 16,
                       overflow: "hidden",
@@ -2063,7 +2157,7 @@ export function ProductionStudio({
                           alignItems: "center",
                           justifyContent: "space-between",
                           padding: "10px 14px",
-                          background: "rgba(255,255,255,0.04)",
+                          background: "var(--v2-surface-2)",
                           borderRadius: 8,
                           gap: 12,
                           flexWrap: "wrap",
@@ -2187,7 +2281,7 @@ export function ProductionStudio({
                       background: "rgba(99,102,241,0.12)",
                       border: "1px solid rgba(99,102,241,0.25)",
                       fontSize: 11,
-                      color: "#a5b4fc",
+                      color: "var(--v2-accent)",
                       fontWeight: 500,
                     }}
                   >
@@ -2225,8 +2319,8 @@ export function ProductionStudio({
                         selectedJob.tts_provider_used &&
                         selectedJob.tts_provider_used !==
                           selectedJob.tts_provider
-                          ? "#fcd34d"
-                          : "#86efac",
+                          ? "var(--v2-warning)"
+                          : "var(--v2-success)",
                       fontWeight: 500,
                     }}
                     title={
@@ -2363,7 +2457,7 @@ export function ProductionStudio({
                         <div
                           style={{
                             height: 6,
-                            background: "rgba(255,255,255,0.08)",
+                            background: "var(--v2-surface-2)",
                             borderRadius: 3,
                             overflow: "hidden",
                           }}
@@ -2449,7 +2543,7 @@ export function ProductionStudio({
                   style={{
                     fontSize: 12,
                     color: "var(--v2-text-1)",
-                    background: "rgba(0,0,0,0.3)",
+                    background: "var(--v2-surface-2)",
                     padding: 12,
                     borderRadius: 6,
                     whiteSpace: "pre-wrap",
@@ -2555,14 +2649,14 @@ export function ProductionStudio({
               <>
                 <textarea
                   value={scriptDraft}
-                  onChange={(e) => setScriptDraft(e.target.value)}
+                  onChange={(e) => editDraft(e.target.value)}
                   spellCheck
                   disabled={!!regenerating}
                   style={{
                     width: "100%",
                     minHeight: 240,
                     resize: "vertical",
-                    background: "rgba(0,0,0,0.3)",
+                    background: "var(--v2-surface-2)",
                     border: scriptDirty
                       ? "1px solid var(--v2-accent)"
                       : "1px solid var(--v2-border-1)",
@@ -2580,7 +2674,9 @@ export function ProductionStudio({
                 <div
                   style={{
                     fontSize: 11,
-                    color: scriptDirty ? "var(--v2-accent)" : "var(--v2-text-2)",
+                    color: scriptDirty
+                      ? "var(--v2-accent)"
+                      : "var(--v2-text-2)",
                     marginTop: 4,
                   }}
                 >
@@ -2588,6 +2684,18 @@ export function ProductionStudio({
                     ? "Unsaved edits — hit Save & Regenerate Audio to re-voice them."
                     : "Edit the narration directly, then Save & Regenerate Audio to re-synthesize it."}
                 </div>
+                {draftNotice && (
+                  <p
+                    role="status"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--v2-text-2)",
+                      margin: "8px 0 0",
+                    }}
+                  >
+                    {draftNotice}
+                  </p>
+                )}
               </>
             ) : (
               <p style={{ color: "var(--v2-text-2)", fontSize: 12 }}>
@@ -2595,7 +2703,14 @@ export function ProductionStudio({
               </p>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 12,
+                flexWrap: "wrap",
+              }}
+            >
               <V2Button
                 variant="outline"
                 size="sm"
@@ -2749,7 +2864,7 @@ export function ProductionStudio({
                       style={{
                         marginTop: 8,
                         fontSize: 11,
-                        color: "#fca5a5",
+                        color: "var(--v2-error)",
                         background: "rgba(239,68,68,0.08)",
                         border: "1px solid rgba(239,68,68,0.25)",
                         borderRadius: 6,
@@ -2851,7 +2966,7 @@ export function ProductionStudio({
                       style={{
                         height: 10,
                         borderRadius: 5,
-                        background: "rgba(255,255,255,0.12)",
+                        background: "var(--v2-surface-2)",
                         overflow: "hidden",
                         position: "relative",
                       }}
@@ -2920,8 +3035,8 @@ export function ProductionStudio({
                   Press{" "}
                   <kbd
                     style={{
-                      background: "rgba(255,255,255,0.1)",
-                      border: "1px solid rgba(255,255,255,0.2)",
+                      background: "var(--v2-surface-2)",
+                      border: "1px solid var(--v2-border-1)",
                       borderRadius: 4,
                       padding: "1px 6px",
                       fontFamily: "monospace",
@@ -2981,7 +3096,7 @@ export function ProductionStudio({
                     style={{
                       width: 56,
                       background: "var(--v2-surface-2)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      border: "1px solid var(--v2-border-1)",
                       borderRadius: 6,
                       padding: "4px 8px",
                       color: "var(--v2-text-1)",
@@ -3060,7 +3175,7 @@ export function ProductionStudio({
                         style={{
                           height: 8,
                           borderRadius: 4,
-                          background: "rgba(255,255,255,0.1)",
+                          background: "var(--v2-surface-2)",
                           overflow: "hidden",
                         }}
                       >
@@ -3163,7 +3278,7 @@ export function ProductionStudio({
                 style={{
                   border: isDragActive
                     ? "2px dashed var(--v2-accent)"
-                    : "2px dashed rgba(255,255,255,0.15)",
+                    : "2px dashed var(--v2-border-1)",
                   borderRadius: 12,
                   padding: "32px 24px",
                   textAlign: "center",
@@ -3202,7 +3317,7 @@ export function ProductionStudio({
                       style={{
                         marginTop: 8,
                         height: 4,
-                        background: "rgba(255,255,255,0.1)",
+                        background: "var(--v2-surface-2)",
                         borderRadius: 2,
                         overflow: "hidden",
                       }}
@@ -3325,7 +3440,7 @@ export function ProductionStudio({
 
           {/* Thumbnail panel for the completed video */}
           {selectedJob.status === "COMPLETED" && (
-            <StudioThumbnailPanel jobId={selectedJob.id} />
+            <StudioThumbnailPanel jobId={selectedJob.id} aiEnabled={settings.thumbnail_generation_mode === "ai"} />
           )}
 
           {/* Failed state */}

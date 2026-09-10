@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -12,12 +12,16 @@ import {
   storageArtifacts,
   thumbnails,
   tutorialJobs,
+  tutorialUploadDispatches,
+  tutorialThumbnailDrafts,
 } from "@/lib/db";
 import {
   THUMBNAIL_PACK_LANGUAGES,
-  assessThumbnailPackJob,
+  assessThumbnailDraft,
 } from "@/lib/tutorial/thumbnail-pack";
 import { resolveTutorialThumbnailVariant } from "@/lib/tutorial/thumbnail-context";
+import { readThumbnailLayout } from '@/lib/thumbnails/layout-document';
+import { validateProceduralHeadlines } from '@/lib/thumbnails/procedural-policy';
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +30,8 @@ const MAX_LAYOUT_CHARS = 50_000;
 
 /**
  * Store a browser-composited thumbnail as a first-class selected thumbnail for
- * one completed localized tutorial. The server normalizes every image to a
+ * one localized tutorial draft. Rendering the video is not a prerequisite.
+ * The server normalizes every image to a
  * bounded 1280x720 JPEG before the Drive/uploader handoff can see it.
  */
 export async function POST(
@@ -39,6 +44,7 @@ export async function POST(
   }
 
   const { id } = await params;
+  const form = await request.formData().catch(() => null);
   const [job] = await db
     .select({
       id: tutorialJobs.id,
@@ -73,6 +79,17 @@ export async function POST(
   if (job.createdBy !== session.userId && !privileged) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  for (const [field, key] of [["thumbnailTextTop", "top"], ["thumbnailTextBottom", "bottom"]] as const) {
+    const submitted = form?.get(key);
+    if (submitted !== null && submitted !== undefined) {
+      if (typeof submitted !== "string" || (key === "top" && !submitted.trim()) || submitted.trim().length > 48) {
+        return NextResponse.json({ error: "Headline 1 is required; each headline may contain up to 48 characters." }, { status: 400 });
+      }
+      job[field] = submitted.trim() || null;
+    }
+  }
+  const headlineWordCount = [job.thumbnailTextTop, job.thumbnailTextBottom].filter(Boolean).join(" ").trim().split(/\s+/).filter(Boolean).length;
+  if (headlineWordCount < 1 || headlineWordCount > 4) return NextResponse.json({ error: "Use no more than four words across the thumbnail headline." }, { status: 400 });
   let thumbnailContext;
   try {
     thumbnailContext = resolveTutorialThumbnailVariant(job);
@@ -86,7 +103,7 @@ export async function POST(
     );
   }
   const jobLanguage = thumbnailContext.language;
-  if (!THUMBNAIL_PACK_LANGUAGES.some((language) => language === jobLanguage)) {
+  if (!/^[a-z]{2}(?:-[a-z]{2})?$/.test(jobLanguage)) {
     return NextResponse.json(
       {
         error:
@@ -96,7 +113,7 @@ export async function POST(
     );
   }
 
-  const assessment = assessThumbnailPackJob({
+  const assessment = assessThumbnailDraft({
     jobId: job.id,
     language: jobLanguage,
     title: job.title,
@@ -111,14 +128,13 @@ export async function POST(
   if (!assessment.ready) {
     return NextResponse.json(
       {
-        error: "Localized job is not publication-ready",
+        error: "Localized thumbnail copy is incomplete",
         reasons: assessment.reasons,
       },
       { status: 409 },
     );
   }
 
-  const form = await request.formData().catch(() => null);
   const file = form?.get("file");
   const layout = form?.get("layout");
   if (!(file instanceof File)) {
@@ -147,8 +163,23 @@ export async function POST(
       { status: 400 },
     );
   }
+  let layoutHeadlineLines: string[] = [];
   try {
-    JSON.parse(layoutJson);
+    const document = JSON.parse(layoutJson);
+    const parsedLayout = readThumbnailLayout(layoutJson);
+    if (!parsedLayout) return NextResponse.json({ error: "Layout document is incomplete or invalid. Reload the editor and retry." }, { status: 400 });
+    const reason = validateProceduralHeadlines(parsedLayout.elements);
+    if (reason) return NextResponse.json({error:reason},{status:400});
+    layoutHeadlineLines = parsedLayout.elements
+      .filter(layer => layer.type === 'TEXT' && layer.text?.trim())
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+      .map(layer => layer.text!.trim());
+    const top = layoutHeadlineLines[0] ?? '';
+    const bottom = layoutHeadlineLines.slice(1).join(' ');
+    if (top !== (job.thumbnailTextTop??'') || bottom !== (job.thumbnailTextBottom??'')) return NextResponse.json({error:'Layout headline and submitted copy differ. Reload the editor and retry.'},{status:400});
+    if (document?.aspectRatio && document.aspectRatio !== "16:9") {
+      return NextResponse.json({ error: "Tutorial delivery requires a 16:9 layout. Portrait exports would be cropped; switch to 16:9 and review the layout." }, { status: 400 });
+    }
   } catch {
     return NextResponse.json(
       { error: "Layout document is invalid JSON" },
@@ -157,7 +188,7 @@ export async function POST(
   }
 
   const mediaRoot =
-    process.env["THUMBNAIL_MEDIA_DIR"] ?? "/opt/content-forge/media/thumbnails";
+    process.env["THUMBNAIL_MEDIA_DIR"] ?? join(process.env["LOCAL_MEDIA_ROOT"] ?? "/opt/content-forge/media", "thumbnails");
   const dir = join(mediaRoot, job.id);
   await mkdir(dir, { recursive: true });
   const outputPath = join(dir, `manual-layout-${randomUUID()}.jpg`);
@@ -180,6 +211,27 @@ export async function POST(
     // failed selection could leave a completed row pointing at a file removed
     // by the catch block below.
     const selected = await db.transaction(async (transaction) => {
+      const rootId = job.sourceJobId ?? job.id;
+      await transaction.select({ id: tutorialJobs.id }).from(tutorialJobs)
+        .where(eq(tutorialJobs.id, rootId)).limit(1).for("update");
+      const family = await transaction.select({ id: tutorialJobs.id, uploaded: tutorialJobs.is_uploaded, uploaderStatus: tutorialJobs.uploader_status })
+        .from(tutorialJobs).where(or(eq(tutorialJobs.id, rootId), eq(tutorialJobs.source_job_id, rootId)));
+      const [dispatch] = await transaction.select({ id: tutorialUploadDispatches.id }).from(tutorialUploadDispatches)
+        .where(inArray(tutorialUploadDispatches.tutorial_job_id, family.map((row) => row.id))).limit(1);
+      if (dispatch || family.some((row) => row.uploaded || row.uploaderStatus)) {
+        throw new Error("Delivery has already started. Reconcile the external upload before replacing approved assets.");
+      }
+      const expectedBase = form?.get("baseThumbnailId");
+      if (typeof expectedBase === "string") {
+        const current = await transaction.select({ id: thumbnails.id }).from(thumbnails).where(and(eq(thumbnails.subject_kind, "tutorial_job"), eq(thumbnails.subject_id, job.id), eq(thumbnails.is_selected, true)));
+        if (current.length > 1 || (current[0]?.id ?? "") !== expectedBase) throw new Error("Selected thumbnail changed in another editor. Reload before approving; no approved image was replaced.");
+      }
+      const expectedDraft = form?.get("draftRevision");
+      if (typeof expectedDraft === "string") {
+        const revision = Number(expectedDraft);
+        const [draft] = await transaction.select().from(tutorialThumbnailDrafts).where(eq(tutorialThumbnailDrafts.tutorial_job_id, job.id));
+        if (!Number.isSafeInteger(revision) || revision < 0 || revision !== (draft?.revision ?? 0)) throw new Error("A newer draft was saved elsewhere. Reload before approving.");
+      }
       await transaction
         .update(thumbnails)
         .set({ is_selected: false })
@@ -187,6 +239,7 @@ export async function POST(
           and(
             eq(thumbnails.subject_kind, "tutorial_job"),
             eq(thumbnails.subject_id, job.id),
+            eq(thumbnails.language, jobLanguage),
           ),
         );
       const [record] = await transaction
@@ -202,9 +255,7 @@ export async function POST(
           aspect_ratio: "16:9",
           resolution: "1280x720",
           title: job.title,
-          headline_text: [job.thumbnailTextTop, job.thumbnailTextBottom]
-            .filter(Boolean)
-            .join("\n"),
+          headline_text: layoutHeadlineLines.join("\n"),
           headline_source: "operator",
           generation_kind: "edit",
           output_path: outputPath,
@@ -218,9 +269,9 @@ export async function POST(
         })
         .returning();
       if (!record) throw new Error("Could not persist thumbnail record");
-      return record;
-    });
-    await db
+      // Keep artifact bookkeeping atomic with selection. If this fails the
+      // transaction rolls back before the catch removes the new export.
+      await transaction
       .update(storageArtifacts)
       .set({
         state: "pending",
@@ -235,10 +286,20 @@ export async function POST(
           eq(storageArtifacts.kind, "thumbnail"),
         ),
       );
+      await transaction.update(tutorialJobs).set({
+        thumbnail_text_top: job.thumbnailTextTop, thumbnail_text_bottom: job.thumbnailTextBottom,
+      }).where(eq(tutorialJobs.id, job.id));
+      await transaction.update(tutorialJobs).set({
+        va_review_status: null, va_reviewed_at: null, va_reviewed_by: null,
+      }).where(eq(tutorialJobs.id, job.sourceJobId ?? job.id));
+      await transaction.delete(tutorialThumbnailDrafts).where(eq(tutorialThumbnailDrafts.tutorial_job_id,job.id));
+      return record;
+    });
     return NextResponse.json({
       thumbnailId: selected.id,
       language: jobLanguage,
       selected: selected.is_selected,
+      draftRevision: 0,
     });
   } catch (error) {
     await rm(outputPath, { force: true }).catch(() => undefined);

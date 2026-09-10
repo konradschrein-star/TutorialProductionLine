@@ -14,6 +14,7 @@ import {
   normalizeTutorialLanguage,
 } from "@repo/contracts";
 import { getUploaderSettings } from "@/lib/uploader/settings";
+import { UPLOADER_DISCOVERY_HOLD } from "@/lib/uploader/discovery-safety";
 import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
 import {
   DispatchGateError,
@@ -142,10 +143,9 @@ export async function GET(request: NextRequest) {
   const byJob = new Map<string, typeof artifacts>();
   for (const artifact of artifacts)
     byJob.set(artifact.jobId, [...(byJob.get(artifact.jobId) ?? []), artifact]);
-  const executable =
-    settings.enabled &&
-    settings.executionMode === "live" &&
-    !settings.requireManualRelease;
+  // A read-only snapshot cannot serialize approval/correction/pause with an
+  // external start. Never let the legacy discovery contract bypass admission.
+  const executable = false;
 
   return NextResponse.json({
     version: 1,
@@ -155,6 +155,8 @@ export async function GET(request: NextRequest) {
       uploaderEnabled: settings.enabled,
       requireManualRelease: settings.requireManualRelease,
       executable,
+      inspectionOnly: true,
+      reason: UPLOADER_DISCOVERY_HOLD,
     },
     jobs: jobs.map((job) => {
       const files = byJob.get(job.id) ?? [];
@@ -163,7 +165,7 @@ export async function GET(request: NextRequest) {
           .filter((file) => file.state === "uploaded" && file.driveFileId)
           .map((file) => file.kind),
       );
-      const missing: string[] = [];
+      const missing: string[] = [UPLOADER_DISCOVERY_HOLD];
       const selection = assessTutorialThumbnailSelection(
         job,
         thumbnailRows.filter((thumbnail) => thumbnail.subjectId === job.id),

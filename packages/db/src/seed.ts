@@ -143,26 +143,9 @@ async function seed() {
     console.log(`[seed] Created user: ${user.email} (${user.role})`);
   }
 
-  // Upsert production accounts (idempotent — safe to re-run)
-  const prodAccounts = [
-    { email: "konrad.schrein@gmail.com", name: "Konrad", role: "ADMIN" as const, password: "testva1234" },
-    { email: "dualaryan@gmail.com",      name: "Aryan",  role: "ADMIN" as const, password: "drowssapon42!" },
-    { email: "va1@yt.com", name: "VA 1", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
-    { email: "va2@yt.com", name: "VA 2", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
-    { email: "va3@yt.com", name: "VA 3", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
-    { email: "va4@yt.com", name: "VA 4", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
-    { email: "va5@yt.com", name: "VA 5", role: "PRODUCTION_VA" as const, password: "drowssapon42!" },
-    { email: "omar@tutorialstudio.com",     name: "Omar",     role: "ADMIN" as const, password: "admin123" },
-    { email: "jeen@tutorialstudio.com",     name: "Jeen",     role: "ADMIN" as const, password: "admin123" },
-    { email: "nalu@tutorialstudio.com",     name: "Nalu",     role: "TUTORIAL_VA" as const, password: "TutorialVA1_2026!" },
-    { email: "lorraine@tutorialstudio.com", name: "Lorraine", role: "TUTORIAL_VA" as const, password: "TutorialVA2_2026!" },
-  ];
-  for (const u of prodAccounts) {
-    const passwordHash = await bcrypt.hash(u.password, 10);
-    await db.insert(users).values({ email: u.email, name: u.name, role: u.role, passwordHash, is_active: true })
-      .onConflictDoUpdate({ target: users.email, set: { name: u.name, role: u.role, passwordHash, is_active: true } });
-    console.log(`[seed] Upserted: ${u.email} (${u.role})`);
-  }
+  // Production identities never belong in a repository seed. Create or reset
+  // those accounts through the authenticated Admin flow so plaintext
+  // credentials cannot be committed, logged, or reapplied by a seed rerun.
 
   console.log("[seed] Seed completed successfully!");
   console.log("\nTest user credentials:");

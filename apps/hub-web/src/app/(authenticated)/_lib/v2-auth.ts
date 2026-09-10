@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { verifyToken } from '@/lib/auth/jwt';
+import { getSession as getCurrentSession } from '@/lib/auth/session';
 import type { JWTPayload } from '@/lib/auth/jwt';
 
 /**
@@ -8,12 +7,7 @@ import type { JWTPayload } from '@/lib/auth/jwt';
  * Redirects to /login if no valid session exists.
  */
 export async function getSession(): Promise<JWTPayload> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('hub_session')?.value;
-  if (!token) redirect('/login');
-  try {
-    return await verifyToken(token);
-  } catch {
-    redirect('/login');
-  }
+  const session = await getCurrentSession();
+  if (!session) redirect('/login');
+  return session;
 }

@@ -1,65 +1,13 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
-import { channels, db } from "@/lib/db";
+import { db } from "@/lib/db";
 import { getTutorialJobById } from "@repo/db";
-import { normalizeTutorialLanguage } from "@repo/contracts";
-import { deriveLogoSubject } from "@repo/domain";
-import { createRedisConnection, createThumbnailQueue } from "@repo/queue";
 import { listThumbnailsForSubject } from "@/lib/repositories/thumbnail-studio-repository";
-import type { Thumbnail } from "@repo/db";
-import { getV1Runtime } from "@/app/api/_lib/runtime";
-import { resolveTutorialThumbnailVariant } from "@/lib/tutorial/thumbnail-context";
-
-export const dynamic = "force-dynamic";
-
-/**
- * GET  /api/production/jobs/[id]/thumbnail   — list this tutorial job's thumbnails
- * POST /api/production/jobs/[id]/thumbnail   — regenerate (same reference)
- *
- * Production-scoped mirror of /api/jobs/[id]/thumbnail. A separate route exists
- * because the tutorial Studio is used by TUTORIAL_VA / PRODUCTION_VA, who have
- * `view:production` + `create:tutorial-job` but NOT the `view:settings` /
- * `edit:job` the generic thumbnail routes require. The auto-enqueued tutorial
- * thumbnail is stored with subject_kind "tutorial_job" and subject_id = the
- * (parent) tutorial job id — see processors/tutorial/{splice,stitch}.ts.
- */
-
-/**
- * Regeneration options. All optional, so the historical empty-body POST
- * ("regenerate with the same reference") keeps working unchanged.
- */
-const Body = z.object({
-  /** Swap the reference style. Omitted keeps the current archetype. */
-  archetypeId: z.string().uuid().optional(),
-  /** What the operator wants changed. Requires a base thumbnail. */
-  instructions: z.string().min(1).max(2000).optional(),
-  /**
-   * regenerate — rebuild from the archetype reference + the instruction
-   * iterate    — edit the existing image, applying only the deltas
-   */
-  mode: z.enum(["same", "changes", "iterate"]).default("same"),
-});
-
-function pickCurrentThumbnail(
-  rows: Thumbnail[],
-  language: string,
-  channelId: string,
-): Thumbnail | undefined {
-  const owned = rows.filter(
-    (row) =>
-      normalizeTutorialLanguage(row.language) === language &&
-      row.channel_id === channelId,
-  );
-  const selectedCompleted = owned.find(
-    (row) => row.is_selected && row.status === "completed",
-  );
-  if (selectedCompleted) return selectedCompleted;
-  return owned.find((row) => row.status === "completed");
-}
+import { POST as generateEnglishCandidates } from "./ai/route";
 
 export async function GET(
   _req: NextRequest,
@@ -86,7 +34,6 @@ export async function GET(
   const isOwner = job.created_by === session.userId;
   const isPrivileged =
     hasPermission(session, "manage:tutorial-settings") ||
-    hasPermission(session, "manage:thumbnails") ||
     session.role === "ADMIN" ||
     session.role === "MANAGER";
   if (!isOwner && !isPrivileged) {
@@ -97,150 +44,24 @@ export async function GET(
   return NextResponse.json(rows);
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+/** Compatibility adapter. All paid requests use the same guarded five-option service. */
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (
-    !session ||
-    (!hasPermission(session, "create:tutorial-job") &&
-      !hasPermission(session, "manage:thumbnails"))
-  ) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const { id } = await params;
+  if (!session || !hasPermission(session, "manage:thumbnails")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const { id } = await context.params;
   const job = await getTutorialJobById(db, id);
-  if (!job) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const isOwner = job.created_by === session.userId;
-  const isPrivileged =
-    hasPermission(session, "manage:tutorial-settings") ||
-    hasPermission(session, "manage:thumbnails") ||
-    session.role === "ADMIN" ||
-    session.role === "MANAGER";
-  if (!isOwner && !isPrivileged) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const [channel] = job.channel_id
-    ? await db
-        .select({ language: channels.language })
-        .from(channels)
-        .where(eq(channels.id, job.channel_id))
-        .limit(1)
-    : [];
-  let thumbnailContext;
-  try {
-    thumbnailContext = resolveTutorialThumbnailVariant({
-      id: job.id,
-      sourceJobId: job.source_job_id,
-      language: job.language,
-      channelId: job.channel_id,
-      channelLanguage: channel?.language ?? null,
-      thumbnailTextTop: job.thumbnail_text_top,
-      thumbnailTextBottom: job.thumbnail_text_bottom,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Thumbnail variant is not configured safely",
-        reasons: [error instanceof Error ? error.message : String(error)],
-      },
-      { status: 409 },
-    );
-  }
-
-  // NOTE: a missing channel is NOT a rejection reason. The format + global
-  // archetype rules can serve the request on their own (DECISIONS §3.2.8), and
-  // 95% of completed tutorials have no channel — this hard-reject made the
-  // "regenerate" button unusable for almost every job. Mirrors the same fix in
-  // worker-render/src/utils/enqueue-thumbnail.ts (plan A2.6). channel_id flows
-  // through as null and requestThumbnail() handles it.
-
-  // Reuse the most recent completed thumbnail's archetype so a regenerate
-  // stays on-brand; the worker will re-derive everything else.
-  const parsed = Body.safeParse(await req.json().catch(() => ({})));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.message }, { status: 400 });
-  }
-  const body = parsed.data;
-
-  const existing = await listThumbnailsForSubject("tutorial_job", id);
-  const current = pickCurrentThumbnail(
-    existing,
-    thumbnailContext.language,
-    thumbnailContext.channelId,
-  );
-
-  if (body.mode !== "same" && !current) {
-    return NextResponse.json(
-      { error: "no base thumbnail to regenerate from" },
-      { status: 400 },
-    );
-  }
-  if (body.mode !== "same" && !body.instructions) {
-    return NextResponse.json(
-      { error: "instructions are required for this mode" },
-      { status: 400 },
-    );
-  }
-
-  // generationKind is ALWAYS explicit. The engine infers it from the other
-  // fields when omitted, and that inference resolves to "original" — which is
-  // how the operator's typed instruction used to be silently discarded.
-  const payload =
-    body.mode === "same"
-      ? {
-          generationKind: "original" as const,
-          archetypeId: body.archetypeId ?? current?.archetype_id ?? undefined,
-        }
-      : {
-          generationKind:
-            body.mode === "iterate"
-              ? ("iterate" as const)
-              : ("regenerate" as const),
-          parentThumbnailId: current!.id,
-          instructions: body.instructions,
-          ...(body.mode === "changes" && body.archetypeId
-            ? { archetypeId: body.archetypeId }
-            : {}),
-        };
-
-  const logoSubject = deriveLogoSubject(job.title);
-
-  const { redisUrl } = getV1Runtime();
-  const conn = createRedisConnection({ url: redisUrl, mode: "queue" });
-  try {
-    const queue = createThumbnailQueue(conn);
-    await queue.add(
-      "thumbnail",
-      {
-        subjectKind: "tutorial_job",
-        subjectId: id,
-        format: "TUTORIAL_STUDIO",
-        channelId: thumbnailContext.channelId,
-        title: job.title,
-        topic: job.title,
-        // The product this tutorial is about. The auto-enqueue in the splice
-        // and stitch processors passes the same thing; without it here a VA's
-        // manual regenerate would produce a LESS branded thumbnail than the
-        // automatic one, which is the wrong way round for the button they
-        // press when the automatic result was not good enough.
-        ...(logoSubject !== null ? { logoSubject } : {}),
-        language: thumbnailContext.language,
-        thumbnailTextTop: thumbnailContext.thumbnailTextTop,
-        thumbnailTextBottom: thumbnailContext.thumbnailTextBottom,
-        ...payload,
-      },
-      { jobId: `tutorial-thumb-regen-${id}-${randomUUID()}`, attempts: 2 },
-    );
-  } finally {
-    await conn.quit();
-  }
-
-  return NextResponse.json({ ok: true });
+  if (!job || (job.created_by !== session.userId && !["ADMIN", "MANAGER"].includes(session.role) && !hasPermission(session, "manage:tutorial-settings"))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const parsed = z.object({ requestId: z.string().uuid().optional(), instructions: z.string().max(2000).optional(), mode: z.enum(["same", "changes", "iterate"]).default("same"), archetypeId: z.string().uuid().optional() }).safeParse(await request.json().catch(() => ({})));
+  if (!parsed.success) return NextResponse.json({ error: "Invalid generation options" }, { status: 400 });
+  if (parsed.data.archetypeId) return NextResponse.json({ error: "Use the shared reference settings to change archetypes, then generate English options in the thumbnail workspace." }, { status: 409 });
+  const candidates = await listThumbnailsForSubject("tutorial_job", id);
+  const owned = candidates.filter(item => item.language === job.language && item.channel_id === job.channel_id && item.status === "completed");
+  const parent = owned.find(item => item.is_selected) ?? owned[0];
+  if (parsed.data.mode !== "same" && (!parent || !parsed.data.instructions?.trim())) return NextResponse.json({ error: "Choose a completed image and describe changes first." }, { status: 409 });
+  const payload = { top: job.thumbnail_text_top ?? "", bottom: job.thumbnail_text_bottom ?? "", instructions: parsed.data.instructions ?? "", ...(parsed.data.mode !== "same" ? { parentThumbnailId: parent!.id } : {}) };
+  // Empty-body legacy clients get deterministic identity, so network retries do
+  // not buy another batch. The modern UI supplies an explicit new UUID.
+  const hash = createHash("sha256").update(JSON.stringify({ id, title: job.title, channel: job.channel_id, ...payload })).digest("hex");
+  const requestId = parsed.data.requestId ?? `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
+  return generateEnglishCandidates(new NextRequest(request.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, requestId }) }), { params: Promise.resolve({ id }) });
 }

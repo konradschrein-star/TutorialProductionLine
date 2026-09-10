@@ -140,7 +140,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   // Uploader. Fixes a bad thumbnail before publishing and selects which one
   // ships — and nothing else. The Tutorial Studio route opens for the
   // Thumbnails tab only; every production API still checks view:production.
-  UPLOADER_VA: ["manage:thumbnails"],
+  UPLOADER_VA: ["manage:thumbnails", "view:upload-queue", "upload:youtube-video"],
   // Sales/customer demo. Every grant is read-only; mutation routes require a
   // create/edit/manage/delete permission and therefore remain forbidden.
   VIEWER: [
@@ -239,6 +239,10 @@ export function canAccessRoute(
 
   if (effectivePath.startsWith("/channels")) {
     return hasPermission(session, "view:channels");
+  }
+
+  if (effectivePath === "/characters" || effectivePath.startsWith("/characters/")) {
+    return hasPermission(session, "view:settings");
   }
 
   if (effectivePath.startsWith("/settings")) {

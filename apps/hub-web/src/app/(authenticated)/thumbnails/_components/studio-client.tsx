@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { registerWorkspaceNavigationGuard } from "@/lib/workspace-navigation-guard";
 import { useRouter } from "next/navigation";
 import { ArchetypeGallery } from "./archetype-gallery";
 import { ArchetypeEditor } from "./archetype-editor";
@@ -8,7 +9,7 @@ import { GeneratePanel } from "./generate-panel";
 import { LibraryPanel } from "./library-panel";
 import { BrandingForm, type ChannelBrandingData } from "./branding-form";
 import { Composer } from "./composer";
-import { ProductionThumbnails } from "../../tutorial-studio/_components/thumbnails";
+import { ThumbnailBatchGrid } from "../../tutorial-studio/_components/thumbnail-batch-grid";
 import type { ThumbnailArchetype } from "@repo/db";
 import type { ActiveFormat } from "@/lib/formats";
 import type { ChannelOption } from "@/components/thumbnails/types";
@@ -23,8 +24,8 @@ import type { ChannelOption } from "@/components/thumbnails/types";
  */
 
 const TABS = [
-  { id: "videos", label: "Videos", icon: "smart_display" },
-  { id: "composer", label: "Composer", icon: "dashboard_customize" },
+  { id: "videos", label: "Language matrix", icon: "view_week" },
+  { id: "composer", label: "Thumbnail editor", icon: "dashboard_customize" },
   { id: "archetypes", label: "Archetypes", icon: "grid_view" },
   { id: "generate", label: "Generate", icon: "auto_awesome" },
   { id: "library", label: "Library", icon: "photo_library" },
@@ -33,12 +34,13 @@ const TABS = [
 
 // Tabs that depend on the AI/media-gateway infra (image-provider keys, worker).
 // The Composer is the primary offline tool; these are the optional AI flow.
-const AI_TABS: readonly TabId[] = ["archetypes", "generate", "library", "branding"];
+const AI_TABS: readonly TabId[] = ["generate"];
 
-type TabId = (typeof TABS)[number]["id"];
+export type ThumbnailStudioTabId = (typeof TABS)[number]["id"];
+type TabId = ThumbnailStudioTabId;
 
-const TEXT_1 = "#e5e2e1";
-const TEXT_2 = "#cdc3d7";
+const TEXT_1 = "var(--v2-text-1)";
+const TEXT_2 = "var(--v2-text-2)";
 
 interface Props {
   archetypes: ThumbnailArchetype[];
@@ -46,6 +48,7 @@ interface Props {
   formats: ActiveFormat[];
   channelData: Record<string, ChannelBrandingData>;
   initialJobId: string | null;
+  initialTab: ThumbnailStudioTabId;
   canConfigure: boolean;
 }
 
@@ -55,14 +58,18 @@ export function ThumbnailStudioClient({
   formats,
   channelData,
   initialJobId,
+  initialTab,
   canConfigure,
 }: Props) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabId>(initialJobId ? "composer" : "videos");
+  const [tab, setTab] = useState<TabId>(initialJobId ? "composer" : initialTab);
   const [activeJobId, setActiveJobId] = useState<string | null>(initialJobId);
   const [editing, setEditing] = useState<ThumbnailArchetype | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [generateWith, setGenerateWith] = useState<string | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  function leaveEditor() { return !hasUnsavedChanges || window.confirm("Leave this thumbnail draft? Unsaved edits will be lost. Use Save draft first to keep them without approving."); }
+  useEffect(() => registerWorkspaceNavigationGuard(() => !hasUnsavedChanges || window.confirm("Leave this thumbnail draft? Unsaved edits will be lost. Use Save draft first to keep them without approving.")), [hasUnsavedChanges]);
 
   const globalCount = archetypes.filter((a) => a.channel_id === null).length;
   const visibleTabs = TABS.filter(
@@ -80,11 +87,11 @@ export function ThumbnailStudioClient({
   }
 
   return (
-    <div style={{ maxWidth: 1440, margin: "0 auto", padding: "20px 0 48px" }}>
+    <div style={{ width: "100%", minWidth: 0, margin: "0 auto", padding: "12px 0 48px" }}>
       {/* Header */}
       <div
         style={{
-          display: "flex",
+          display: tab === "composer" && activeJobId ? "none" : "flex",
           alignItems: "flex-end",
           justifyContent: "space-between",
           gap: 16,
@@ -104,11 +111,11 @@ export function ThumbnailStudioClient({
           >
             Thumbnail Studio
           </h1>
-          <p style={{ fontSize: 12.5, color: TEXT_2, margin: 0 }}>
-            Choose a finished video, compose its language thumbnails, then approve them for delivery.
+          <p style={{ fontSize: 14, color: TEXT_2, margin: 0, lineHeight: 1.5 }}>
+            Compare languages. Edit together or individually. Approve one tutorial at a time.
           </p>
         </div>
-        <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+        {canConfigure && <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
           <Stat value={archetypes.length} label="Archetypes" />
           <Stat value={globalCount} label="Global" accent />
           <Stat value={channels.length} label="Channels" />
@@ -141,7 +148,7 @@ export function ThumbnailStudioClient({
             </span>
             Overview
           </a>
-        </div>
+        </div>}
       </div>
 
       {/* Tabs */}
@@ -149,7 +156,7 @@ export function ThumbnailStudioClient({
         style={{
           display: "flex",
           gap: 4,
-          marginBottom: 18,
+          marginBottom: tab === "composer" && activeJobId ? 8 : 18,
           borderBottom: "1px solid rgba(var(--v2-accent-rgb), 0.14)",
           paddingBottom: 2,
           flexWrap: "wrap",
@@ -161,28 +168,31 @@ export function ThumbnailStudioClient({
             <button
               key={t.id}
               type="button"
+              aria-pressed={on}
               onClick={() => {
+                if (t.id !== tab && tab === "composer" && !leaveEditor()) return;
                 setTab(t.id);
                 if (t.id === "videos" && activeJobId) {
                   setActiveJobId(null);
                   router.replace("/thumbnails", { scroll: false });
+                } else if (!activeJobId) {
+                  router.replace(`/thumbnails?tab=${t.id}`, { scroll: false });
                 }
               }}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                padding: "9px 14px",
+                padding: "12px 16px",
+                minHeight: 44,
                 border: "none",
                 borderBottom: `2px solid ${on ? "var(--v2-accent)" : "transparent"}`,
                 background: on
                   ? "rgba(var(--v2-accent-rgb), 0.09)"
                   : "transparent",
                 color: on ? "var(--v2-accent)" : TEXT_2,
-                fontSize: 11.5,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
+                fontSize: 14,
+                fontWeight: 600,
                 cursor: "pointer",
                 borderRadius: "6px 6px 0 0",
               }}
@@ -200,15 +210,15 @@ export function ThumbnailStudioClient({
       </div>
 
       {tab === "composer" && (activeJobId ? (
-        <Composer jobId={activeJobId} />
+        <Composer jobId={activeJobId} onDirtyChange={setHasUnsavedChanges} onBack={() => { if (!leaveEditor()) return; setHasUnsavedChanges(false); setTab("videos"); setActiveJobId(null); router.replace("/thumbnails", { scroll: false }); }} />
       ) : (
-        <div style={{ padding: 36, border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, textAlign: "center", color: TEXT_2 }}>
+        <div style={{ padding: 36, border: "1px solid var(--v2-border-2)", borderRadius: 10, textAlign: "center", color: TEXT_2 }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_1 }}>Choose a video before composing</div>
-          <div style={{ marginTop: 7, fontSize: 12 }}>Every thumbnail must belong to a finished video. Open one from the Videos tab.</div>
-          <button type="button" onClick={() => setTab("videos")} style={{ marginTop: 16, padding: "9px 16px", borderRadius: 7, border: 0, background: "var(--v2-accent)", color: "#081000", fontWeight: 800, cursor: "pointer" }}>Choose video</button>
+          <div style={{ marginTop: 7, fontSize: 14 }}>Open a recorded tutorial from the language matrix. Localized videos do not need to be finished first.</div>
+          <button type="button" className="v2-btn" onClick={() => { setTab("videos"); router.replace("/thumbnails?tab=videos", { scroll: false }); }} style={{ marginTop: 16 }}>Choose tutorial</button>
         </div>
       ))}
-      {tab === "videos" && <ProductionThumbnails initialJobId={activeJobId} />}
+      {tab === "videos" && <ThumbnailBatchGrid />}
 
       {/* AI generation depends on media-gateway infra that is not always
           present. The Composer above is the primary, fully-offline tool; the
@@ -222,10 +232,10 @@ export function ThumbnailStudioClient({
             padding: "9px 12px",
             marginBottom: 14,
             borderRadius: 8,
-            background: "rgba(255,190,80,0.1)",
-            border: "1px solid rgba(255,190,80,0.28)",
-            color: "#ffc978",
-            fontSize: 11.5,
+            background: "var(--v2-surface-2)",
+            border: "1px solid var(--v2-border-2)",
+            color: TEXT_2,
+            fontSize: 13,
             lineHeight: 1.4,
           }}
         >

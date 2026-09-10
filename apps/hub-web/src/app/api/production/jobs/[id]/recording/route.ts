@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createWriteStream, createReadStream } from "node:fs";
-import { mkdir, stat, unlink } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { createWriteStream } from "node:fs";
+import { mkdir, unlink } from "node:fs/promises";
+import { openTutorialAssetStream } from "@/lib/tutorial/media-access";
 import { join, extname } from "node:path";
 import Busboy from "busboy";
 import { getSession } from "@/lib/auth/session";
@@ -278,62 +278,20 @@ export async function GET(
     "video/mp4";
 
   try {
-    const fileStats = await stat(job.recording_path);
-    const fileSize = fileStats.size;
-    const rangeHeader = req.headers.get("range");
-
-    if (rangeHeader) {
-      // Stream the requested byte range straight off disk. Recordings can be up
-      // to MAX_FILE_SIZE (10 GB); the previous Buffer.allocUnsafe(chunkSize)
-      // allocated the ENTIRE file when the browser opened with `Range: bytes=0-`
-      // (chunkSize === fileSize), OOM-ing hub-web for all users.
-      const [startStr, endStr] = rangeHeader.replace("bytes=", "").split("-");
-      const start = parseInt(startStr ?? "0", 10);
-      const end = endStr
-        ? Math.min(parseInt(endStr, 10), fileSize - 1)
-        : fileSize - 1;
-
-      if (Number.isNaN(start) || start >= fileSize || start > end) {
-        return new NextResponse(null, {
-          status: 416,
-          headers: { "Content-Range": `bytes */${fileSize}` },
-        });
-      }
-
-      const nodeStream = createReadStream(job.recording_path, { start, end });
-      return new NextResponse(
-        Readable.toWeb(nodeStream) as unknown as ReadableStream,
-        {
-          status: 206,
-          headers: {
-            "Content-Type": contentType,
-            "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-            "Accept-Ranges": "bytes",
-            "Content-Length": (end - start + 1).toString(),
-            "Cache-Control": "no-store",
-          },
-        },
-      );
-    }
-
-    const nodeStream = createReadStream(job.recording_path);
-    return new NextResponse(
-      Readable.toWeb(nodeStream) as unknown as ReadableStream,
-      {
-        headers: {
-          "Content-Type": contentType,
-          "Content-Length": fileSize.toString(),
-          "Accept-Ranges": "bytes",
-          "Cache-Control": "no-store",
-        },
+    const media = await openTutorialAssetStream({ jobId: job.source_job_id ?? job.id, kind: "raw_recording", path: job.recording_path }, { range: req.headers.get("range") });
+    return new NextResponse(media.stream, {
+      status: media.status,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": String(media.contentLength),
+        "Accept-Ranges": "bytes",
+        ...(media.contentRange ? { "Content-Range": media.contentRange } : {}),
+        "Content-Disposition": "inline",
+        "Cache-Control": "no-store",
       },
-    );
-  } catch (err) {
-    console.error("Failed to serve recording", err);
-    return NextResponse.json(
-      { error: "Failed to read recording file" },
-      { status: 500 },
-    );
+    });
+  } catch {
+    return NextResponse.json({ error: "Recording unavailable locally and no verified current archive could be restored." }, { status: 404 });
   }
 }
 

@@ -1,9 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join, extname, basename } from "node:path";
-import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { join, dirname, resolve } from "node:path";
+import { characterUploadPaths, commitCharacterImage } from '@/lib/characters/image-path';
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import {
@@ -80,6 +79,9 @@ export async function POST(
       { status: 400 },
     );
   }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ error: "file exceeds 25 MB" }, { status: 400 });
+  }
   const bytes = Buffer.from(await file.arrayBuffer());
   if (bytes.length === 0) {
     return NextResponse.json({ error: "empty file" }, { status: 400 });
@@ -88,31 +90,24 @@ export async function POST(
     return NextResponse.json({ error: "file exceeds 25 MB" }, { status: 400 });
   }
 
-  const outDir = join(CHARACTER_MEDIA_DIR, id);
-  const origDir = join(outDir, "originals");
-  await mkdir(origDir, { recursive: true });
-
-  const safeStem = basename(file.name, extname(file.name))
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
   const sortOrder =
     character.images.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
-  const stamp = randomUUID().slice(0, 8);
-  const originalPath = join(
-    origDir,
-    `${String(sortOrder).padStart(2, "0")}-${stamp}${extname(file.name).toLowerCase() || ".jpg"}`,
-  );
-  const refPath = join(
-    outDir,
-    `${String(sortOrder).padStart(2, "0")}-${safeStem || stamp}.jpg`,
-  );
-
-  const scratch = join(tmpdir(), `cf-char-${stamp}`);
+  const { outDir, originalPath, refPath, scratch } = characterUploadPaths(CHARACTER_MEDIA_DIR, id, file.name, sortOrder);
+  let ownsScratch = false;
   try {
-    await writeFile(originalPath, bytes);
-    const norm = await normaliseCharacterReference(originalPath, refPath);
+    const root = resolve(CHARACTER_MEDIA_DIR);
+    if (await realpath(root) !== root) throw new Error('Unsafe character media root');
+    for (const directory of [outDir, dirname(originalPath)]) {
+      await mkdir(directory).catch((e) => { if (e.code !== 'EEXIST') throw e; });
+      if (await realpath(directory) !== directory) throw new Error('Unsafe character media directory');
+    }
+    await mkdir(scratch);
+    ownsScratch = true;
+    await writeFile(originalPath, bytes, { flag: 'wx' });
+    const stagedPath = join(scratch, 'reference.jpg');
+    const norm = await normaliseCharacterReference(originalPath, stagedPath);
+    // Atomic create-only commit: even a collision cannot alter historic bytes.
+    await commitCharacterImage(stagedPath, refPath);
     const { pose, expression } = parsePoseFromFilename(file.name);
     const image = await addCharacterImage({
       character_id: id,
@@ -128,17 +123,14 @@ export async function POST(
       sort_order: sortOrder,
     });
     return NextResponse.json({ image }, { status: 201 });
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       {
-        error:
-          err instanceof Error
-            ? `Could not prepare that image as an i2i reference: ${err.message}`
-            : "normalisation failed",
+        error: "Could not prepare this reference image. Check the image format and ask an admin to verify image storage. Existing images were not replaced.",
       },
       { status: 500 },
     );
   } finally {
-    await rm(scratch, { recursive: true, force: true }).catch(() => {});
+    if (ownsScratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }

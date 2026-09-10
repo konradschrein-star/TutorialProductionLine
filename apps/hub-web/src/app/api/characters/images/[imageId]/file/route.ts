@@ -5,6 +5,7 @@ import { extname } from "node:path";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getCharacterImageById } from "@/lib/repositories/character-library-repository";
+import { resolveCharacterImagePath } from '@/lib/characters/image-path';
 
 /**
  * GET /api/characters/images/[imageId]/file
@@ -37,10 +38,11 @@ export async function GET(
 
   let buffer: Buffer;
   try {
-    buffer = await readFile(row.image_path);
+    const path = await resolveCharacterImagePath(process.env.CHARACTER_MEDIA_DIR ?? '/opt/content-forge/media/characters', row.image_path);
+    buffer = await readFile(path);
   } catch {
     return NextResponse.json(
-      { error: `File missing on disk: ${row.image_path}` },
+      { error: 'Character image unavailable. Ask an admin to check the preserved image.', code: 'CHARACTER_IMAGE_UNAVAILABLE' },
       { status: 404 },
     );
   }

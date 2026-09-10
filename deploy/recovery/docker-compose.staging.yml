@@ -1,0 +1,66 @@
+name: tutorial-recovery-staging
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: tutorial_staging_cf_20260908
+      POSTGRES_USER: tutorial_staging
+      POSTGRES_PASSWORD: ${STAGING_DB_PASSWORD:?Set a unique staging database password}
+    volumes:
+      - database:/var/lib/postgresql/data
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U tutorial_staging -d tutorial_staging_cf_20260908"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes', --maxmemory, 128mb, --maxmemory-policy, noeviction]
+    volumes:
+      - queue:/data
+    mem_limit: 192m
+    cpus: 0.25
+    restart: unless-stopped
+  web:
+    image: ${STUDIO_IMAGE:?Set an exact tested image tag}
+    env_file: runtime.env
+    environment:
+      DATABASE_URL: postgresql://tutorial_staging:${STAGING_DB_PASSWORD}@postgres:5432/tutorial_staging_cf_20260908
+      REDIS_URL: redis://redis:6379
+      STORAGE_DRIVE_ENABLED: 'false'
+      TUTORIAL_PUBLICATION_RECOVERY_ENABLED: 'false'
+      TUTORIAL_AUTOMATIC_DELIVERY_RECOVERY_ENABLED: 'false'
+      TUTORIAL_RETENTION_ENABLED: 'false'
+      # Preserve imported absolute media references; host files remain isolated.
+      LOCAL_MEDIA_ROOT: /opt/content-forge/media
+      THUMBNAIL_MEDIA_DIR: /opt/content-forge/media/thumbnails
+      COOKIE_SECURE: 'true'
+    ports:
+      - '127.0.0.1:3118:3000'
+    volumes:
+      - ./media:/opt/content-forge/media
+      - ./drive-secrets:/run/secrets/drive:ro
+    mem_limit: 1536m
+    cpus: 1.5
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    # No workers or uploader are started by this staging definition. Importing
+    # production records must never resume queued live work during rehearsal.
+volumes:
+  database:
+  queue:
+networks:
+  default:
+    internal: true

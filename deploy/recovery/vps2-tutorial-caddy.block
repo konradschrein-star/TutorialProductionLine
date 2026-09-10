@@ -1,0 +1,24 @@
+tutorials.schreinercontentsystems.com {
+	encode gzip zstd
+
+	request_body {
+		max_size 2GB
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	reverse_proxy tutorial-recovery-staging-web-1:3000 {
+		flush_interval -1
+		header_up -CF-Connecting-IP
+		header_up X-Forwarded-For {http.request.remote.host}
+		transport http {
+			read_timeout 60m
+			write_timeout 60m
+		}
+	}
+}

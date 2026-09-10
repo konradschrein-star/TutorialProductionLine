@@ -3,15 +3,22 @@
 import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import { V2Button } from "../../_components";
+import { KeywordDirectIntake } from "./keyword-direct-intake";
 
 /**
  * Keywords tab: Directly embeds the authoritative Keyword Tool board (Video ERP)
  * with complete Admin iframe controls.
  */
 
-export function ProductionKeywords() {
+function KeywordToolPanel() {
   const [url, setUrl] = useState<string | null>(null);
+  const [boardUrl, setBoardUrl] = useState<string | null>(null);
+  const [adminUrl, setAdminUrl] = useState<string | null>(null);
+  const [canAdmin, setCanAdmin] = useState(false);
+  const [view, setView] = useState<"board" | "admin">("board");
+  const [ssoReady, setSsoReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [integration, setIntegration] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -28,7 +35,13 @@ export function ProductionKeywords() {
         return r.json();
       })
       .then((d) => {
+        setIntegration(d.integration ?? "configured");
         setUrl(d.url as string);
+        setBoardUrl((typeof d.boardUrl === "string" ? d.boardUrl : d.url) as string);
+        setAdminUrl(typeof d.adminUrl === "string" ? d.adminUrl : null);
+        setCanAdmin(Boolean(d.canAdmin));
+        setView("board");
+        setSsoReady(false);
         setErr(null);
       })
       .catch((e) => {
@@ -49,6 +62,12 @@ export function ProductionKeywords() {
     if (url) {
       window.open(url, "_blank", "noopener,noreferrer");
     }
+  };
+
+  const switchView = (next: "board" | "admin") => {
+    if (next === "admin" && (!canAdmin || !adminUrl)) return;
+    setView(next);
+    setUrl(next === "admin" ? adminUrl : boardUrl);
   };
 
   if (err) {
@@ -76,9 +95,15 @@ export function ProductionKeywords() {
     );
   }
 
+  if (integration === "disabled" || integration === "unconfigured") {
+    return <div style={{ padding: 24, color: "var(--v2-text-2)", fontSize: 14 }}>
+      {integration === "disabled" ? "Keyword Tool is switched off for this workspace." : "Keyword Tool has not been connected yet."} Your administrator can connect the existing board. Tutorial preparation remains available.
+    </div>;
+  }
+
   if (!url) {
     return (
-      <div style={{ padding: 24, color: "#888", fontSize: 13 }}>
+      <div style={{ padding: 24, color: "var(--v2-text-2)", fontSize: 13 }}>
         Loading Keyword Tool board…
       </div>
     );
@@ -95,9 +120,9 @@ export function ProductionKeywords() {
           flexWrap: "wrap",
           gap: 8,
           padding: "8px 14px",
-          background: "rgba(255,255,255,0.03)",
+          background: "var(--v2-surface-2)",
           borderRadius: 8,
-          border: "1px solid rgba(255,255,255,0.08)",
+          border: "1px solid var(--v2-border-1)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -106,13 +131,16 @@ export function ProductionKeywords() {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: "#4ade80",
-              boxShadow: "0 0 8px #4ade80",
+              background: "var(--v2-text-3)",
             }}
           />
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
-            Keyword Tool (Video ERP)
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--v2-text-1)" }}>
+            Keyword Tool · {view === "admin" ? "Admin console" : "VA board"}
           </span>
+          {canAdmin && <div role="group" aria-label="Keyword Tool view" style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+            <V2Button variant={view === "board" ? "accent" : "outline"} size="sm" onClick={() => switchView("board")}>VA board</V2Button>
+            <V2Button variant={view === "admin" ? "accent" : "outline"} size="sm" disabled={!ssoReady} title={ssoReady ? "Open the complete Keyword Tool admin console" : "Establishing Keyword Tool sign-in…"} onClick={() => switchView("admin")}>Admin console</V2Button>
+          </div>}
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -147,16 +175,28 @@ export function ProductionKeywords() {
         key={reloadKey}
         ref={iframeRef}
         src={url}
+        onLoad={() => setSsoReady(true)}
         title="Keyword Tool board"
         style={{
           width: "100%",
           height: isFullscreen ? "90vh" : "calc(100vh - 250px)",
           minHeight: isFullscreen ? 800 : 650,
-          border: "1px solid var(--v2-border, #222)",
+          border: "1px solid var(--v2-border-1)",
           borderRadius: 12,
-          background: "#0a0a0a",
+          background: "var(--v2-surface-1)",
         }}
       />
     </div>
   );
+}
+
+export function ProductionKeywords({ channels }: { channels: Array<{ id: string; name: string; language: string }> }) {
+  const [section, setSection] = useState<"tool" | "import">("tool");
+  return <div style={{ display: "grid", gap: 14 }}>
+    <div role="tablist" aria-label="Keyword intake method" style={{ display: "flex", gap: 4, padding: 4, width: "fit-content", border: "1px solid var(--v2-border-1)", borderRadius: 10, background: "var(--v2-surface-2)" }}>
+      <button role="tab" aria-selected={section === "tool"} type="button" onClick={() => setSection("tool")} style={{ minHeight: 40, padding: "8px 14px", border: 0, borderRadius: 7, background: section === "tool" ? "var(--v2-accent)" : "transparent", color: section === "tool" ? "var(--v2-on-accent, #081018)" : "var(--v2-text-2)", fontWeight: 750, cursor: "pointer" }}>Keyword Tool</button>
+      <button role="tab" aria-selected={section === "import"} type="button" onClick={() => setSection("import")} style={{ minHeight: 40, padding: "8px 14px", border: 0, borderRadius: 7, background: section === "import" ? "var(--v2-accent)" : "transparent", color: section === "import" ? "var(--v2-on-accent, #081018)" : "var(--v2-text-2)", fontWeight: 750, cursor: "pointer" }}>CSV & manual intake</button>
+    </div>
+    <div role="tabpanel">{section === "tool" ? <KeywordToolPanel /> : <KeywordDirectIntake channels={channels} />}</div>
+  </div>;
 }

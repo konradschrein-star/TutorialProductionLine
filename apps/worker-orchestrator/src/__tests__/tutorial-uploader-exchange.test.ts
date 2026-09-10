@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+const mediaLease = vi.hoisted(() => ({ run: vi.fn(async (_input: unknown, consume: () => Promise<unknown>) => consume()) }));
+vi.mock("../utils/tutorial/media-inputs.js", () => ({ withTutorialPublicationInputs: mediaLease.run }));
 import {
   canonicalTutorialUploaderJob,
   tutorialUploaderReceiptFileName,
@@ -67,6 +69,12 @@ function candidate(
     videoPath: "/media/video.mp4",
     thumbnailId: THUMBNAIL_ID,
     thumbnailPath: "/media/thumbnail.png",
+    approvedAssetSnapshot: {
+      version: 1, revision: "a".repeat(64), uploaderChannelKey: "tutorial_english",
+      identity: { jobId: TUTORIAL_JOB_ID, videoPath: "/media/video.mp4", thumbnailId: THUMBNAIL_ID, thumbnailPath: "/media/thumbnail.png", title: ATTRIBUTES.title, description: ATTRIBUTES.description, tags: ATTRIBUTES.tags },
+      video: { sha256: digest(Buffer.from("video-content")), size: Buffer.byteLength("video-content") },
+      thumbnail: { sha256: digest(Buffer.from("thumbnail-content")), size: Buffer.byteLength("thumbnail-content") },
+    },
     ...overrides,
   };
 }
@@ -380,6 +388,39 @@ function makeReceipt(
 }
 
 describe("Tutorial Studio uploader Drive publication", () => {
+  it("does not inspect or write Drive when exact approved media cannot be restored", async () => {
+    const repository = new FakeRepository(); const drive = new FakeDrive(); const inspect = vi.fn(inspectFromMap);
+    mediaLease.run.mockRejectedValueOnce(new Error("Verified archive unavailable"));
+    await expect(publishTutorialUploaderCandidate(repository,drive,OPTIONS,candidate(),{inspectLocalAsset:inspect})).rejects.toThrow("archive unavailable");
+    expect(inspect).not.toHaveBeenCalled();expect(drive.operations).toEqual([]);
+  });
+  it("holds the media lease until both uploads and publication bookkeeping finish", async () => {
+    const repository = new FakeRepository(); const drive = new FakeDrive(); let active = false;
+    mediaLease.run.mockImplementationOnce(async (_input,consume)=>{active=true;try{return await consume();}finally{active=false;}});
+    const originalPut=drive.putLocalFile.bind(drive);vi.spyOn(drive,"putLocalFile").mockImplementation(async args=>{expect(active).toBe(true);return originalPut(args);});
+    const originalMark=repository.markPublished.bind(repository);vi.spyOn(repository,"markPublished").mockImplementation(async record=>{expect(active).toBe(true);return originalMark(record);});
+    await publishTutorialUploaderCandidate(repository,drive,OPTIONS,candidate(),{inspectLocalAsset:inspectFromMap});expect(active).toBe(false);expect(repository.published).toHaveLength(1);
+  });
+  it("defers NOWAIT review contention without failure receipts, Drive writes, or retry state consumption", async () => {
+    const repository = new FakeRepository();const drive=new FakeDrive();repository.publishCandidates=[candidate()];
+    vi.spyOn(repository,"markPublishing").mockRejectedValueOnce({cause:{code:"55P03"}});
+    const first=await runTutorialUploaderExchangeOnce(repository,drive,OPTIONS,{inspectLocalAsset:inspectFromMap});
+    expect(first.publishFailed).toBe(0);expect(first.published).toBe(0);expect(repository.failures).toEqual([]);expect(drive.operations).toEqual([]);
+    const second=await runTutorialUploaderExchangeOnce(repository,drive,OPTIONS,{inspectLocalAsset:inspectFromMap});expect(second.published).toBe(1);
+  });
+  it("rejects missing or stale final approval before any Drive writes", async () => {
+    for (const job of [candidate({ approvedAssetSnapshot: null }), candidate({ attributes: { ...ATTRIBUTES, title: "Changed after review" } }), candidate({ channelKey: "different_channel" })]) {
+      const repository = new FakeRepository(); const drive = new FakeDrive();
+      await expect(publishTutorialUploaderCandidate(repository, drive, OPTIONS, job, { inspectLocalAsset: inspectFromMap })).rejects.toMatchObject({ code: "approved_assets_changed" });
+      expect(drive.operations).toEqual([]);
+      expect(repository.frozen).toEqual([]);
+    }
+  });
+  it("rejects replaced bytes even before the first exchange manifest is frozen", async () => {
+    const repository = new FakeRepository(); const drive = new FakeDrive();
+    await expect(publishTutorialUploaderCandidate(repository, drive, OPTIONS, candidate(), { inspectLocalAsset: async (path, role) => ({ ...await inspectFromMap(path, role), sha256: "f".repeat(64) }) })).rejects.toMatchObject({ code: "approved_assets_changed" });
+    expect(drive.operations).toEqual([]);
+  });
   it("freezes the identity, uploads both assets first, and writes exact canonical job.json last", async () => {
     const repository = new FakeRepository();
     const job = candidate();

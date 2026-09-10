@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -9,6 +9,8 @@ import {
   thumbnails,
   tutorialJobs,
   tutorialUploadDispatches,
+  systemSettings,
+  tutorialSourceRevision,
 } from "@/lib/db";
 import {
   assertLocalDispatchAsset,
@@ -17,6 +19,8 @@ import {
   validateDispatchCandidate,
 } from "@/lib/tutorial/uploader-dispatch";
 import { assessTutorialThumbnailSelection } from "@/lib/tutorial/thumbnail-selection";
+import { verifyPublicationApproval } from "@/lib/tutorial/verify-publication-approval";
+import { mayAccessDelivery } from "@/lib/tutorial/delivery-access";
 
 export const dynamic = "force-dynamic";
 
@@ -78,23 +82,11 @@ export async function POST(
   }
   const tutorialJobId = parsedId.data;
 
-  // A repeated click is a read of the original request, never a second upload.
-  const [alreadyRequested] = await db
-    .select()
-    .from(tutorialUploadDispatches)
-    .where(eq(tutorialUploadDispatches.tutorial_job_id, tutorialJobId))
-    .limit(1);
-  if (alreadyRequested) {
-    return NextResponse.json({
-      success: true,
-      idempotent: true,
-      dispatch: dispatchView(alreadyRequested),
-    });
-  }
-
-  const [job] = await db
+  return db.transaction(async (tx) => {
+  const loadJob = () => tx
     .select({
       id: tutorialJobs.id,
+      createdBy: tutorialJobs.created_by,
       status: tutorialJobs.status,
       isUploaded: tutorialJobs.is_uploaded,
       sourceJobId: tutorialJobs.source_job_id,
@@ -113,6 +105,7 @@ export async function POST(
     .leftJoin(channels, eq(channels.id, tutorialJobs.channel_id))
     .where(eq(tutorialJobs.id, tutorialJobId))
     .limit(1);
+  let [job] = await loadJob();
 
   if (!job) {
     return NextResponse.json(
@@ -121,11 +114,43 @@ export async function POST(
     );
   }
 
+  const privileged = session.role === "ADMIN" || session.role === "MANAGER" ||
+    hasPermission(session, "manage:tutorial-settings");
+  if (!privileged && !await mayAccessDelivery(session, { created_by: job.createdBy, channel_id: job.channelId })) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Serialize dispatch with source review/rework. Locales share the English
+  // approval but do not wait for another locale's render to finish.
+  const [source] = await tx.select().from(tutorialJobs)
+    .where(eq(tutorialJobs.id, job.sourceJobId ?? tutorialJobId)).limit(1).for("update");
+  if (!source || source.status !== "COMPLETED" || source.va_review_status !== "approved") {
+    return NextResponse.json({ error: "Final review approval is required before delivery.", code: "review_required" }, { status: 409 });
+  }
+  [job] = await loadJob();
+  if (!job || (!privileged && !await mayAccessDelivery(session, { created_by: job.createdBy, channel_id: job.channelId }))) return NextResponse.json({ error: "Tutorial changed or is no longer accessible." }, { status: 409 });
+  // Do not disclose an existing dispatch before checking ownership.
+  const [alreadyRequested] = await tx.select().from(tutorialUploadDispatches)
+    .where(eq(tutorialUploadDispatches.tutorial_job_id, tutorialJobId)).limit(1);
+  if (alreadyRequested) {
+    return NextResponse.json({ success: true, idempotent: true, dispatch: dispatchView(alreadyRequested) });
+  }
+
   try {
+    let approvedSnapshot;
+    try {
+      const sourceRevision = tutorialSourceRevision(source);
+      const sourceApproval = await verifyPublicationApproval(tx, source, sourceRevision);
+      const [variant] = await tx.select().from(tutorialJobs).where(eq(tutorialJobs.id, tutorialJobId));
+      if (!variant) throw new Error("Tutorial no longer exists.");
+      approvedSnapshot = source.id === tutorialJobId ? sourceApproval : await verifyPublicationApproval(tx, variant, sourceRevision);
+    } catch {
+      return NextResponse.json({ error: "Current video, thumbnail and metadata revisions must pass final review before delivery. Restore missing assets or repeat final review.", code: "asset_review_required" }, { status: 409 });
+    }
     const attributes = validateDispatchCandidate(job, parsedRequest.data);
     await assertLocalDispatchAsset(job.finalPath!, "video");
 
-    const selectedThumbnails = await db
+    const selectedThumbnails = await tx
       .select({
         id: thumbnails.id,
         language: thumbnails.language,
@@ -153,8 +178,14 @@ export async function POST(
     const selectedThumbnailPath = selectedThumbnail.outputPath!;
     await assertLocalDispatchAsset(selectedThumbnailPath, "thumbnail");
 
+    // Hashing may take time for large videos. Do not delay an Admin pause
+    // while inspecting files; serialize only the final admission decision.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('tutorial-dispatch-admission'))`);
+    const [control] = await tx.select({ paused: systemSettings.tutorialDispatchPaused }).from(systemSettings).where(eq(systemSettings.id, "singleton"));
+    if (control?.paused) return NextResponse.json({ error: "New uploader dispatches are paused by an Admin. Existing external uploads have not been cancelled.", code: "dispatch_paused" }, { status: 409 });
+
     const idempotencyKey = `tutorial:${tutorialJobId}:upload:r1`;
-    const inserted = await db
+    const inserted = await tx
       .insert(tutorialUploadDispatches)
       .values({
         tutorial_job_id: tutorialJobId,
@@ -164,6 +195,7 @@ export async function POST(
         video_path: job.finalPath!.trim(),
         thumbnail_id: selectedThumbnail.id,
         thumbnail_path: selectedThumbnailPath,
+        approved_asset_snapshot: { ...approvedSnapshot, uploaderChannelKey: job.uploaderChannelKey!.trim() },
         state: "requested",
         attributes,
         requested_by: session.userId,
@@ -176,7 +208,7 @@ export async function POST(
     const dispatch =
       inserted[0] ??
       (
-        await db
+        await tx
           .select()
           .from(tutorialUploadDispatches)
           .where(eq(tutorialUploadDispatches.tutorial_job_id, tutorialJobId))
@@ -209,4 +241,5 @@ export async function POST(
       { status: 500 },
     );
   }
+  });
 }

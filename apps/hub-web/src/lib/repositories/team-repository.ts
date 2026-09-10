@@ -162,6 +162,7 @@ export async function updateUser(
     email: string;
     name: string;
     role: string;
+    passwordHash: string;
   }>
 ): Promise<User | null> {
   const updateData: any = {
